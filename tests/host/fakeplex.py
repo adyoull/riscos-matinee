@@ -19,18 +19,47 @@ PIN_POLLS = {"n": 0}
 PART = bytes((i * 7 + (i >> 11)) & 255 for i in range(5 * 1024 * 1024))
 # a small valid baseline JPEG would do for the tests' purposes; the bytes
 # only have to arrive intact
-JPEG = b"\xff\xd8\xff\xe0" + b"PLEXRO-TEST-JPEG" * 8 + b"\xff\xd9"
+def jpeg(url):
+    """A stand-in JPEG: the right first and last bytes, and the picture's
+    address inside (so each poster is different)."""
+    return b"\xff\xd8\xff\xe0" + b"PLEXRO-TEST-JPEG" + url.encode() + b"\xff\xd9"
+
+
+SUBSEL = {}                 # part id -> the subtitle stream chosen (PUT /library/parts)
+
+
+def streams(m):
+    """A film's streams as the metadata of one item gives them: video,
+    sound, and for Big Buck Bunny three subtitle tracks."""
+    rk = int(m["ratingKey"])
+    pid = 11000 + rk
+    st = [{"id": rk * 10 + 1, "streamType": 1, "codec": m["Media"][0]["videoCodec"]},
+          {"id": rk * 10 + 2, "streamType": 2, "codec": m["Media"][0]["audioCodec"], "selected": True}]
+    if rk == 101:
+        st += [{"id": 1001, "streamType": 3, "codec": "srt", "language": "English",
+                "displayTitle": "English (SRT)", "extendedDisplayTitle": "English (SRT)"},
+               {"id": 1002, "streamType": 3, "codec": "srt", "language": "English", "key": "/library/streams/1002",
+                "displayTitle": "English (SRT External)", "extendedDisplayTitle": "English (SRT External)"},
+               {"id": 1003, "streamType": 3, "codec": "pgs", "language": "French", "forced": True,
+                "displayTitle": "French Forced (PGS)"}]
+    for x in st:
+        if x["streamType"] == 3 and SUBSEL.get(pid) == x["id"]:
+            x["selected"] = True
+    return st
 
 
 def movie(rk, title, year, vcodec, w, h, kbps, acodec="aac", container="mp4", profile="high",
           fps="24p", size=3500000000, offset=None, views=0):
     m = {"ratingKey": str(rk), "key": "/library/metadata/%d" % rk, "type": "movie",
          "title": title, "year": year, "thumb": "/library/metadata/%d/thumb/1700000000" % rk,
+         "art": "/library/metadata/%d/art/1700000000" % rk, "contentRating": "PG", "rating": 7.5,
+         "summary": "%s: a test film. " % title + "It goes on for a while, so the details panel has "
+                    "to wrap it over several lines, as a real summary would. " * 3,
          "duration": 5400000, "viewCount": views,
          "Media": [{"container": container, "videoCodec": vcodec, "audioCodec": acodec,
                     "width": w, "height": h, "bitrate": kbps, "audioChannels": 6,
                     "videoProfile": profile, "videoFrameRate": fps,
-                    "Part": [{"key": "/library/parts/11/%d/file.%s" % (rk, container),
+                    "Part": [{"id": 11000 + rk, "key": "/library/parts/11/%d/file.%s" % (rk, container),
                               "file": "/media/films/%s (%d).%s" % (title, year, container),
                               "size": size}]}]}
     if offset:
@@ -47,6 +76,17 @@ MOVIES = [
     movie(106, "Dvd Rip", 1999, "mpeg2video", 720, 576, 5000, acodec="ac3", container="mpeg",
           profile="main", fps="PAL", size=4700000000, views=1),
 ]
+
+
+def episodes():
+    eps = []
+    for i in range(1, 7):
+        e = movie(210 + i, "Episode \u2018%d\u2019" % i, 2020, "h264", 1280, 720, 3000)
+        e.update({"type": "episode", "index": i, "parentIndex": 1, "year": None,
+                  "grandparentTitle": "Space Show", "grandparentArt": "/library/metadata/20/art/1"})
+        del e["art"]
+        eps.append(e)
+    return eps
 
 
 class H(BaseHTTPRequestHandler):
@@ -89,6 +129,19 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/v2/pins":
             PIN_POLLS["n"] = 0
             return self.send(201, {"id": 4242, "code": "ABCD", "authToken": None})
+        self.send(404, {})
+
+    def do_PUT(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n)
+        u = urlsplit(self.path)
+        self.record(body)
+        if self.token() != SERVER:
+            return self.send(401, {})
+        if u.path.startswith("/library/parts/"):
+            q = parse_qs(u.query)
+            SUBSEL[int(u.path.rsplit("/", 1)[1])] = int(q.get("subtitleStreamID", ["0"])[0])
+            return self.send(200, raw=b"")
         self.send(404, {})
 
     def do_GET(self):
@@ -151,20 +204,22 @@ class H(BaseHTTPRequestHandler):
                 {"ratingKey": "21", "key": "/library/metadata/21/children", "type": "season",
                  "title": "Series 1", "index": 1, "leafCount": 6, "viewedLeafCount": 2}]}})
         if p == "/library/metadata/21/children":
-            eps = []
-            for i in range(1, 7):
-                e = movie(210 + i, "Episode \u2018%d\u2019" % i, 2020, "h264", 1280, 720, 3000)
-                e.update({"type": "episode", "index": i, "parentIndex": 1, "year": None,
-                          "grandparentTitle": "Space Show"})
-                eps.append(e)
-            return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": eps}})
+            return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": episodes()}})
         if p == "/library/onDeck":
             e = movie(213, "Episode Three", 2020, "h264", 1280, 720, 3000, offset=600000)
             e.update({"type": "episode", "index": 3, "parentIndex": 1, "grandparentTitle": "Space Show",
                       "grandparentThumb": "/library/metadata/20/thumb/1"})
             return self.send(200, {"MediaContainer": {"title1": "On Deck", "Metadata": [e]}})
         if p == "/photo/:/transcode":
-            return self.send(200, raw=JPEG, ctype="image/jpeg")
+            return self.send(200, raw=jpeg((q.get("url") or [""])[0]), ctype="image/jpeg")
+        if p.startswith("/library/metadata/") and p.count("/") == 3:
+            rk = p.rsplit("/", 1)[1]
+            for m in MOVIES + episodes():
+                if m["ratingKey"] == rk:
+                    m = json.loads(json.dumps(m))
+                    m["Media"][0]["Part"][0]["Stream"] = streams(m)
+                    return self.send(200, {"MediaContainer": {"size": 1, "Metadata": [m]}})
+            return self.send(404, {})
         if p in ("/:/scrobble", "/:/unscrobble"):
             return self.send(200, raw=b"")
         if p.startswith("/library/parts/11/101/"):

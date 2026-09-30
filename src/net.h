@@ -29,6 +29,10 @@ void net_init(const char *user_agent);
    before giving up. 0 on success; else an error, described in err. */
 int net_fetch(const char *url, const char *headers, const char *post, net_buf *out,
               int timeout_ms, char *err, size_t errlen);
+/* The same with another method ("PUT", "DELETE"...): body is a form, or
+   NULL for none (a short one is sent anyway, so there's a Content-Length) */
+int net_send(const char *url, const char *headers, const char *method, const char *body,
+             net_buf *out, int timeout_ms, char *err, size_t errlen);
 void net_buf_free(net_buf *b);
 
 /* A download read a piece at a time */

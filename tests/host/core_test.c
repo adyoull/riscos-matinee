@@ -337,6 +337,45 @@ int main(int argc, char **argv)
         CHECK(!s && strstr(err, "sign in"), "a bad token says to sign in again: %s", err);
         c.token[0] ^= 1;
     }
+    /* ---- one video's details, and its subtitles */
+    {
+        plex_list d;
+        play_t p;
+        const plex_item *bb = find(&films, "Big Buck Bunny");
+        CHECK(bb && !strcmp(bb->art, "/library/metadata/101/art/1700000000") && bb->year == 2008 &&
+              bb->rating == 7.5 && !strcmp(bb->content_rating, "PG") && bb->summary &&
+              bb->nsubs == 0, "details from the list (no subtitle tracks there)");
+        CHECK(bb && plex_details(&c, bb, &d) == 0 && d.n == 1, "details: %s", c.err);
+        if (d.n == 1) {
+            const plex_item *it = &d.v[0];
+            CHECK(it->part_id == 11101 && it->nsubs == 3, "part %ld, %d subtitle tracks", it->part_id, it->nsubs);
+            CHECK(it->nsubs == 3 && !strcmp(it->subs[0].title, "English (SRT)") && !it->subs[0].external &&
+                  it->subs[1].external && !strcmp(it->subs[1].key, "/library/streams/1002") &&
+                  it->subs[2].forced && !strcmp(it->subs[2].codec, "pgs"), "the tracks");
+            CHECK(plex_sub_selected(it) == -1, "none chosen");
+            CHECK(caps_play(&c, it, &k1080, 1, 0, &p) == 0 && p.direct, "no subtitles: direct play");
+            CHECK(plex_set_subtitle(&c, it, 1002) == 0, "choose subtitles: %s", c.err);
+            plex_list_free(&d);
+        }
+        log = server_log();
+        {
+            const cJSON *r = last(log, "/library/parts/11101");
+            CHECK(r && !strcmp(cJSON_GetObjectItem(r, "method")->valuestring, "PUT") &&
+                  !strcmp(qv(r, "subtitleStreamID"), "1002") && !strcmp(qv(r, "allParts"), "1") &&
+                  !strcmp(hdr(r, "X-Plex-Token"), "SRV-TOKEN"), "PUT /library/parts/11101?subtitleStreamID=1002");
+        }
+        cJSON_Delete(log);
+        CHECK(plex_details(&c, bb, &d) == 0 && d.n == 1 && plex_sub_selected(&d.v[0]) == 1, "the choice kept");
+        if (d.n == 1) {
+            CHECK(caps_play(&c, &d.v[0], &k1080, 1, 0, &p) == 0 && !p.direct && strstr(p.url, "subtitles=burn") &&
+                  strstr(p.why, "subtitles burnt in: English (SRT External)"), "chosen: converted, burnt in: %s", p.why);
+            CHECK(plex_set_subtitle(&c, &d.v[0], 0) == 0, "none again");
+            plex_list_free(&d);
+        }
+        CHECK(plex_details(&c, bb, &d) == 0 && d.n == 1 && plex_sub_selected(&d.v[0]) == -1, "none chosen again");
+        plex_list_free(&d);
+    }
+
     plex_list_free(&top);
     plex_list_free(&films);
     plex_list_free(&tv);

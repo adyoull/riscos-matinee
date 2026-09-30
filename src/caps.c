@@ -123,6 +123,14 @@ int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow
        stream too (FFmpeg's HLS reader passes its headers on) */
     plex_headers(c, c->token, out->headers, sizeof(out->headers));
 
+    /* Reel can't yet be told which subtitles to show (or given a file of
+       them), so a video with subtitles chosen is converted and the server
+       burns them into the picture */
+    if (allow_direct && plex_sub_selected(it) >= 0) {
+        allow_direct = 0;
+        snprintf(why, sizeof(why), "subtitles burnt in: %s", it->subs[plex_sub_selected(it)].title);
+    } else if (!allow_direct)
+        snprintf(why, sizeof(why), "direct play is off");
     if (allow_direct && caps_direct_ok(k, it, why, sizeof(why))) {
         out->direct = 1;
         snprintf(out->url, sizeof(out->url), "%s%s", c->base, it->part_key);
@@ -131,8 +139,6 @@ int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow
         snprintf(out->key, sizeof(out->key), "plex:%s/%s", c->server_id, it->rating_key);
         return 0;
     }
-    if (!allow_direct)
-        snprintf(why, sizeof(why), "direct play is off");
     {
         char extra[1400], extra_esc[2800], path[128], path_esc[256], sid[32];
         char tok_esc[512], id_esc[128], prod_esc[64];

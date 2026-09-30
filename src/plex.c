@@ -365,9 +365,34 @@ static void media(plex_item *it, const cJSON *m)
     parts = cJSON_GetObjectItemCaseSensitive(m0, "Part");
     p0 = cJSON_IsArray(parts) ? cJSON_GetArrayItem(parts, 0) : NULL;
     if (p0) {
+        const cJSON *st;
+        int n = 0;
         it->part_key = dup_s(jstr(p0, "key"));
         it->part_file = dup_s(jstr(p0, "file"));
         it->part_size = (int64_t)jnum(p0, "size", 0);
+        it->part_id = (long)jnum(p0, "id", 0);
+        /* subtitle tracks (only the metadata of one item has Stream) */
+        cJSON_ArrayForEach(st, cJSON_GetObjectItemCaseSensitive(p0, "Stream"))
+            if (jnum(st, "streamType", 0) == 3)
+                n++;
+        if (n && (it->subs = calloc(n, sizeof(plex_sub))) != NULL) {
+            cJSON_ArrayForEach(st, cJSON_GetObjectItemCaseSensitive(p0, "Stream")) {
+                plex_sub *sb;
+                const char *t;
+                if (jnum(st, "streamType", 0) != 3)
+                    continue;
+                sb = &it->subs[it->nsubs++];
+                sb->id = (long)jnum(st, "id", 0);
+                sb->codec = dup_s(jstr(st, "codec"));
+                sb->language = dup_s(jstr(st, "language"));
+                t = jstr(st, "extendedDisplayTitle") ? jstr(st, "extendedDisplayTitle") : jstr(st, "displayTitle");
+                sb->title = dup_s(t ? t : sb->language ? sb->language : "Subtitles");
+                sb->forced = jbool(st, "forced");
+                sb->selected = jbool(st, "selected");
+                sb->key = dup_s(jstr(st, "key"));
+                sb->external = sb->key != NULL;
+            }
+        }
     }
 }
 
@@ -388,6 +413,12 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->watched = jnum(m, "viewCount", 0) > 0;
     it->title = dup_s(jstr(m, "title") ? jstr(m, "title") : "");
     it->thumb = dup_s(jstr(m, "thumb"));
+    it->summary = dup_s(jstr(m, "summary"));
+    it->art = dup_s(jstr(m, "art") ? jstr(m, "art") : jstr(m, "grandparentArt"));
+    it->content_rating = dup_s(jstr(m, "contentRating"));
+    it->tagline = dup_s(jstr(m, "tagline"));
+    it->year = (int)jnum(m, "year", 0);
+    it->rating = jnum(m, "rating", 0) > 0 ? jnum(m, "rating", 0) : jnum(m, "audienceRating", 0);
     if (!type)
         it->kind = PI_OTHER;
     else if (!strcmp(type, "movie") || !strcmp(type, "episode") || !strcmp(type, "clip"))
@@ -535,6 +566,11 @@ static void item_free(plex_item *it)
     free(it->title); free(it->subtitle); free(it->key); free(it->rating_key); free(it->type);
     free(it->thumb); free(it->container); free(it->vcodec); free(it->acodec); free(it->vprofile);
     free(it->part_key); free(it->part_file);
+    free(it->summary); free(it->art); free(it->content_rating); free(it->tagline);
+    for (int i = 0; i < it->nsubs; i++) {
+        free(it->subs[i].title); free(it->subs[i].codec); free(it->subs[i].language); free(it->subs[i].key);
+    }
+    free(it->subs);
 }
 
 void plex_list_free(plex_list *l)
@@ -543,6 +579,52 @@ void plex_list_free(plex_list *l)
         item_free(&l->v[i]);
     free(l->v);
     memset(l, 0, sizeof(*l));
+}
+
+/* ---- one video's details, and its subtitles ------------------------------------- */
+
+int plex_details(plex_ctx *c, const plex_item *it, plex_list *out)
+{
+    char path[160];
+    memset(out, 0, sizeof(*out));
+    if (!it->rating_key) {
+        set_err(c, "no details for that%s", NULL);
+        return -1;
+    }
+    snprintf(path, sizeof(path), "/library/metadata/%s", it->rating_key);
+    if (plex_list_get(c, path, out) != 0)
+        return -1;
+    if (out->n < 1) {
+        plex_list_free(out);
+        set_err(c, "the server has no details for %s", path);
+        return -1;
+    }
+    return 0;
+}
+
+int plex_sub_selected(const plex_item *it)
+{
+    for (int i = 0; i < it->nsubs; i++)
+        if (it->subs[i].selected)
+            return i;
+    return -1;
+}
+
+int plex_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id)
+{
+    char url[512], headers[1024];
+    net_buf b;
+    if (!it->part_id) {
+        set_err(c, "no file to choose subtitles for%s", NULL);
+        return -1;
+    }
+    snprintf(url, sizeof(url), "%s/library/parts/%ld?subtitleStreamID=%ld&allParts=1", c->base, it->part_id,
+             stream_id);
+    plex_headers(c, c->token, headers, sizeof(headers));
+    if (net_send(url, headers, "PUT", NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
+        return -1;
+    net_buf_free(&b);
+    return 0;
 }
 
 /* ---- the rest ------------------------------------------------------------- */

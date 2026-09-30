@@ -98,6 +98,12 @@ static AVDictionary *options(const char *headers, int timeout_ms)
 int net_fetch(const char *url, const char *headers, const char *post, net_buf *out,
               int timeout_ms, char *err, size_t errlen)
 {
+    return net_send(url, headers, post ? "POST" : "GET", post, out, timeout_ms, err, errlen);
+}
+
+int net_send(const char *url, const char *headers, const char *method, const char *post,
+             net_buf *out, int timeout_ms, char *err, size_t errlen)
+{
     AVIOContext *io = NULL;
     AVDictionary *o = options(headers, timeout_ms);
     size_t cap = 0;
@@ -106,6 +112,8 @@ int net_fetch(const char *url, const char *headers, const char *post, net_buf *o
     memset(out, 0, sizeof(*out));
     if (err && errlen)
         *err = 0;
+    if (!post && method && strcmp(method, "GET"))
+        post = "";                  /* PUT and the rest: a body, so a Content-Length */
     if (post) {
         /* avio's binary option is set as hex; a POST always carries a body
            (an empty one would leave no Content-Length) */
@@ -120,7 +128,7 @@ int net_fetch(const char *url, const char *headers, const char *post, net_buf *o
         }
         for (size_t i = 0; i < n; i++)
             sprintf(hex + 2 * i, "%02x", (unsigned char)body[i]);
-        av_dict_set(&o, "method", "POST", 0);
+        av_dict_set(&o, "method", method && strcmp(method, "GET") ? method : "POST", 0);
         av_dict_set(&o, "post_data", hex, 0);
         free(hex);
         /* the form's type, beside the caller's headers */

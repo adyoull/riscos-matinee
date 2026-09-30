@@ -60,6 +60,17 @@ typedef enum {
     PI_OTHER                /* music, photos: shown, not handled yet */
 } plex_kind;
 
+/* A subtitle track of a video's file (Plex's streamType 3) */
+typedef struct {
+    long id;                /* Plex's stream id */
+    char *title;            /* "English (SRT)", as Plex names it */
+    char *codec;            /* srt, ass, pgs, vobsub, mov_text... */
+    char *language;         /* "English", or NULL */
+    int forced, selected;   /* selected: the user's choice, kept by the server */
+    int external;           /* a file of its own beside the video (it has a key) */
+    char *key;              /* /library/streams/<id> (external only) */
+} plex_sub;
+
 typedef struct {
     plex_kind kind;
     char *title;            /* UTF-8 as Plex sends it; ui converts for the desktop */
@@ -77,6 +88,15 @@ typedef struct {
     char *part_key;         /* /library/parts/<id>/<n>/file.ext */
     char *part_file;        /* the file's name on the server */
     int64_t part_size;
+    long part_id;           /* Part's id (choosing subtitles goes by it) */
+    /* for the details panel */
+    char *summary, *art, *content_rating, *tagline;
+    int year;
+    double rating;          /* the critics' or audience's, out of 10; 0 = none */
+    /* subtitle tracks: only in an item from plex_details() (lists leave
+       them out) */
+    plex_sub *subs;
+    int nsubs;
 } plex_item;
 
 typedef struct {
@@ -119,6 +139,18 @@ int plex_list_parse(const char *json, const char *path, plex_list *out);
 
 /* A poster: the server's JPEG, w x h pixels at most. 0 = ok (caller frees). */
 int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len);
+
+/* One video's full details (summary, art, and its subtitle tracks), as a
+   list of one item. 0 = ok. */
+int plex_details(plex_ctx *c, const plex_item *it, plex_list *out);
+
+/* The subtitle track chosen, or -1 for none */
+int plex_sub_selected(const plex_item *it);
+
+/* Chooses a subtitle track (Plex's stream id; 0 = none) for the video's
+   file, on the server: other Plex apps see the choice too, and a converted
+   stream burns it in. it must have its part_id (plex_details). 0 = ok. */
+int plex_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id);
 
 /* Tells the server an item was watched (1) or not (0). 0 = ok. */
 int plex_mark(plex_ctx *c, const plex_item *it, int watched);

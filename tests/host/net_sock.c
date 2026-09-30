@@ -42,7 +42,7 @@ static void say(char *err, size_t errlen, const char *url, const char *what)
 
 /* Connects and sends the request; reads the status line and headers.
    Returns the socket, or -1 (status set when the server answered). */
-static int request(const char *url, const char *headers, const char *post, int timeout_ms,
+static int request(const char *url, const char *headers, const char *method, const char *post, int timeout_ms,
                    int *status, int64_t *length, char *pre, int *npre, char *err, size_t errlen)
 {
     char host[128], path[4096], *req, head[16384];
@@ -90,11 +90,13 @@ static int request(const char *url, const char *headers, const char *post, int t
         close(fd);
         return -1;
     }
+    if (!post && strcmp(method, "GET"))
+        post = "";
     if (post) {
         const char *body = *post ? post : "x=1";
-        snprintf(req, rl, "POST %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s"
+        snprintf(req, rl, "%s %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s"
                  "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: %d\r\n\r\n%s",
-                 path, host, port, agent, headers ? headers : "", (int)strlen(body), body);
+                 method, path, host, port, agent, headers ? headers : "", (int)strlen(body), body);
     } else {
         snprintf(req, rl, "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s\r\n",
                  path, host, port, agent, headers ? headers : "");
@@ -140,6 +142,12 @@ static int request(const char *url, const char *headers, const char *post, int t
 int net_fetch(const char *url, const char *headers, const char *post, net_buf *out,
               int timeout_ms, char *err, size_t errlen)
 {
+    return net_send(url, headers, post ? "POST" : "GET", post, out, timeout_ms, err, errlen);
+}
+
+int net_send(const char *url, const char *headers, const char *method, const char *post,
+             net_buf *out, int timeout_ms, char *err, size_t errlen)
+{
     char pre[16384];
     int npre, fd;
     int64_t len;
@@ -147,7 +155,7 @@ int net_fetch(const char *url, const char *headers, const char *post, net_buf *o
     memset(out, 0, sizeof(*out));
     if (err && errlen)
         *err = 0;
-    fd = request(url, headers, post, timeout_ms, &out->status, &len, pre, &npre, err, errlen);
+    fd = request(url, headers, method, post, timeout_ms, &out->status, &len, pre, &npre, err, errlen);
     if (fd < 0)
         return -1;
     cap = (len > 0 ? (size_t)len : 65536) + 1;
@@ -189,7 +197,7 @@ net_stream *net_open(const char *url, const char *headers, int timeout_ms, char 
     int status;
     if (!s)
         return NULL;
-    s->fd = request(url, headers, NULL, timeout_ms, &status, &s->size, s->pre, &s->npre, err, errlen);
+    s->fd = request(url, headers, "GET", NULL, timeout_ms, &status, &s->size, s->pre, &s->npre, err, errlen);
     if (s->fd < 0) {
         free(s);
         return NULL;
