@@ -1,0 +1,121 @@
+!PlexRO - a Plex client for RISC OS                  0.1.0-test1
+===================================================================
+
+PlexRO browses the films and TV programmes on a Plex Media Server and
+plays them in ReelEGL or Reel, the video players from riscos-ffmpeg.
+Files the players can play as they are go to the player directly.
+Everything else is converted by the server, as it plays, into a stream
+the players can handle: H.264 video with stereo AAC sound.
+
+This is a test build: it hasn't been tried on RISC OS yet.
+
+PlexRO is a working name. Plex is a trademark of Plex, Inc.; PlexRO isn't
+made by Plex or connected with it.
+
+Starting
+--------
+Double-click !PlexRO: its icon (a screen with posters and a play button)
+appears on the icon bar. The first time, click Select on it to sign in.
+
+Signing in
+----------
+The sign-in window shows a four-letter code. On any computer or phone, go
+to plex.tv/link, sign in to your Plex account there, and type the code.
+PlexRO checks every 2 seconds, and carries on by itself once the code has
+been typed: it finds your servers and opens the browser. PlexRO never sees
+your password. A code runs out after a while: New code gets another.
+
+A server on your own network can be used without plex.tv: type its
+address (such as 192.168.1.10; :32400 is added) and a token (the server's
+or your account's X-Plex-Token), then click Use these.
+
+The browser
+-----------
+Select on the icon bar icon opens it. At the top: Back, where you are,
+and a status line. Below them, a poster for each film, show, season or
+episode, with its name and (for example) its year, "S1 E3" or
+"3 seasons". An orange corner marks what you haven't watched; an orange
+bar under a poster shows how far you got.
+
+  double-click   open a library, show or season; play a video
+  Return         the same, for the poster that's selected
+  arrow keys     move the selection
+  Backspace, Escape  go back
+
+The top list is Continue watching, then your libraries. Films and TV
+libraries open; music and photo libraries aren't handled yet.
+
+Menu on a poster:
+  Play (Open)         as a double-click
+  Resume from h:mm:ss where Plex says you stopped. The server streams it
+                      from there (copying the video when it can)
+  Play from start     from the beginning
+  Save original file > the file itself, onto your disc (below)
+  Mark watched, Mark unwatched
+  Back, Refresh
+
+Playing
+-------
+PlexRO gives the video to the player chosen on Player on the icon's menu:
+ReelEGL (the default) or Reel. If it's running, it gets the video at
+once; if not, PlexRO starts it. The Filer must have seen the player's
+application (open the directory it's in, or add it to your boot
+sequence), or PlexRO can't find it.
+
+The status line says how it will play:
+  "Direct play: ..."         the file itself: nothing is converted
+  "Converted by the server"  the server converts it, and says why (for
+                             example HEVC video, 10-bit video, or a bit
+                             rate above the quality's limit)
+
+Quality on the icon's menu sets the limits, for direct play and for
+what the server converts to: 1080p (10 Mbit/s), 720p (4 Mbit/s, the
+default) or 480p (2 Mbit/s). The Raspberry Pi 4 decodes H.264 on one
+core, so the bit rate matters as much as the size. Untick Direct play
+when possible to have the server convert everything.
+
+Saving the original file
+------------------------
+Move to the right of Save original file on a poster's menu: a save box
+opens. Drag its icon to a directory display (or type a full path and
+click Save). The file is saved a piece at a time, so the desktop carries
+on; the status line shows how far it's got. Stop saving is on the same
+menu while it's saving.
+
+RISC OS's filing systems hold files of up to 4GB, so bigger files are
+refused at once.
+
+Choices
+-------
+Kept in Choices:PlexRO.Choices: the player, the quality, direct play,
+the server in use, and the tokens that sign PlexRO in to plex.tv and the
+server. Anyone who can read your Choices can use those tokens: Sign out
+on the icon's menu removes them.
+
+Needs
+-----
+- RISC OS 5 on an ARMv7 machine (Raspberry Pi 2/3/4/400 and so on).
+- ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), which plays what
+  PlexRO finds. Their sound needs SharedSoundBuffer and StreamManager:
+  download ssb.zip from https://orac.co.uk/software/rdpclient/rdpclient.html
+  and merge its !System. John Duffell's own site (now on the Internet
+  Archive) has more details:
+  https://web.archive.org/web/20110920080106/http://www.duffell.riscos.me.uk/
+- SharedUnixLibrary 1.16 or later and ARMEABISupport (PackMan).
+- AcornSSL (RISC OS 5.28 or later) for signing in with a code, and for
+  servers reached through their plex.direct addresses.
+
+!Run loads the modules it needs. PThreadTicker (UnixLib's thread timer)
+is in the application directory.
+
+Debugging: *Set PlexRO$Debug 1 before starting it lets FFmpeg's network
+messages through (to see them, run !RunImage from a TaskWindow).
+
+Licence
+-------
+PlexRO is free software under the GNU General Public License, version 2
+or later. It uses cJSON (MIT licence), FFmpeg 5.1 from riscos-ffmpeg
+(GPL v2 or later) and UnixLib (see its licences). The licences are in
+docs.Licences, and PlexRO's own source is in docs.source.
+
+Andrew Youll
