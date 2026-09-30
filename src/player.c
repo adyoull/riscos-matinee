@@ -60,6 +60,7 @@ static struct {
     char url[4096], headers[1600], agent[128], title[160];
     double base, start, duration;
     int convert, based;             /* based: base checked against the stream's own times */
+    double sync0;                   /* position - clock at the first picture (see panel_update) */
     double seek_to;
     int seek_wanted;
     int opened_cs;
@@ -1008,10 +1009,16 @@ static void panel_update(int sample)
 
     dec = st.decoded - G.prev.decoded;
     draws = P.draw_n - G.prev_draw_n;
+    /* sync: the picture against the sound. reelcore's position counts from
+       the stream's start_time and its clock doesn't, so for a stream that
+       doesn't start at 0 (HLS; a converted stream started part way) the
+       difference is that start, not a real lag (test5 on the Pi: -86789 ms,
+       with 4 of 333 pictures late). Measured from the first picture's. */
     snprintf(G.val[i], sizeof(G.val[i]), "decode %.1f ms, draw %.1f ms, %.0f%% busy, sync %+d ms",
              dec ? (st.decode_time - G.prev.decode_time) * 1000 / dec : 0.0,
              draws ? (P.draw_cs - G.prev_draw_cs) * 10.0 / draws : 0.0,
-             dt > 0 ? (st.decode_time - G.prev.decode_time) * 100 / dt : 0.0, (int)((st.position - st.clock) * 1000));
+             dt > 0 ? (st.decode_time - G.prev.decode_time) * 100 / dt : 0.0,
+             (int)((st.position - st.clock - P.sync0) * 1000));
     G.pp.label[i] = "Timing"; G.pp.value[i] = G.val[i]; i++;
 
     snprintf(G.val[i], sizeof(G.val[i]), "%d%%", (int)(P.vol * 100 + 0.5));
@@ -1381,6 +1388,9 @@ int player_null(void)
     if (r2 == REELCORE_NEW_FRAME) {
         if (!P.based) {             /* a converted stream counting from where it started? */
             double p = reelcore_position(P.v);
+            ReelCoreStats st;
+            reelcore_stats(P.v, &st);
+            P.sync0 = st.position - st.clock;
             P.based = P.base > 5 && p > P.base - 5 ? 2 : 1;
             if (P.base > 0)
                 lg("first picture at %.2f s: the stream counts from %s", p, P.based == 2 ? "the video's start" : "0");

@@ -102,6 +102,8 @@ mutate "Stretch not given to the overlay" src/player.c \
   'if (P.pic_mode != PIC_STRETCH) {' 'if (1) {'
 mutate "the player page scrolls" src/ui.c \
   '        b[5] = 0;\n        b[6] = 0;\n' ''
+mutate "sync counted from the stream's start" src/player.c \
+  '(int)((st.position - st.clock - P.sync0) * 1000)' '(int)((st.position - st.clock) * 1000)'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

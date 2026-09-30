@@ -1757,6 +1757,7 @@ static int script(int *b, int mask)
             if (fake_rc.opens == open0 && n_null++ < 10)
                 return NULL_EVENT;
             CHECK(strstr(fake_rc.url, "&offset=11&"), "a seek: the server starts another stream there");
+            fake_rc.clock_start = 11;                               /* its clock counts from 11 s */
             CHECK(log_count("/video/:/transcode/universal/stop", NULL, NULL) == count0 + 1, "and stops the one before");
             n_null = 0;
             pc++;
@@ -1770,11 +1771,22 @@ static int script(int *b, int mask)
             n_null = 0;
             pc++;
             return NULL_EVENT;
-        case 934:
-            CHECK(strstr(player_test_time(), "0:11"), "counted from where the stream started: %s", player_test_time());
+        case 934: {
+            int ok = 0;
+            if (n_null++ < 4) {
+                fake_cs += 50;
+                return NULL_EVENT;
+            }
+            for (int i = 0; i < player_test_panel_rows(); i++)
+                if (!strcmp(player_test_panel(i, 0), "Timing") && strstr(player_test_panel(i, 1), "sync +0 ms"))
+                    ok = 1;
+            CHECK(ok, "sync against the first picture, not the stream's start (11 s off)");
+            CHECK(strstr(player_test_time(), "0:13"), "counted from where the stream started: %s", player_test_time());
+            fake_rc.clock_start = 0;
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
+        }
         case 935:
             CHECK(menu_open && !menu_shaded(menu_open, MP_AUDIO), "two sound tracks on the server");
             open0 = fake_rc.opens;
@@ -1785,7 +1797,7 @@ static int script(int *b, int mask)
             if (fake_rc.opens == open0 && n_null++ < 10)
                 return NULL_EVENT;
             CHECK(log_count("/library/parts/11101", "audioStreamID", "1013") == 1, "chosen on the server");
-            CHECK(strstr(fake_rc.url, "&offset=11&"), "and the stream started again where it was");
+            CHECK(strstr(fake_rc.url, "&offset=13&"), "and the stream started again where it was");
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);

@@ -194,7 +194,7 @@ void reelcore_stats(const ReelCore *v, ReelCoreStats *st)
 {
     memset(st, 0, sizeof(*st));
     st->position = v->pos;
-    st->clock = v->pos;
+    st->clock = v->pos + fake_rc.clock_start;
     st->fps = 25;
     st->decoded = st->shown = (unsigned)fake_rc.frames;
     st->decode_time = fake_rc.frames * 0.01;
