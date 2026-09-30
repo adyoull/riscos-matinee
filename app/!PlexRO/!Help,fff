@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test1
+!PlexRO - a Plex client for RISC OS                  0.1.0-test2
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -31,28 +31,56 @@ or your account's X-Plex-Token), then click Use these.
 
 The browser
 -----------
-Select on the icon bar icon opens it. At the top: Back, where you are,
-and a status line. Below them, a poster for each film, show, season or
-episode, with its name and (for example) its year, "S1 E3" or
-"3 seasons". An orange corner marks what you haven't watched; an orange
-bar under a poster shows how far you got.
+Select on the icon bar icon opens it: a dark window, like a TV's. At the
+top: Back, where you are, a status line, and Refresh. Below them, a
+poster for each film, show, season or episode, with its name and (for
+example) its year, "S1 E3" or "3 seasons". A blue corner marks what you
+haven't watched; a blue bar on a poster shows how far you got. The
+selected poster has a blue ring, and the one under the pointer a grey one.
 
-  double-click   open a library, show or season; play a video
-  Return         the same, for the poster that's selected
+  click          select
+  double-click   open a library, show or season; a video's details
+  Return         open, or play, the poster that's selected
+  I              the selected video's details
   arrow keys     move the selection
-  Backspace, Escape  go back
+  Backspace, Escape, Delete  go back
+
+Poster size on the icon's menu: Small, Medium (the default) or Large,
+remembered.
 
 The top list is Continue watching, then your libraries. Films and TV
 libraries open; music and photo libraries aren't handled yet.
 
 Menu on a poster:
-  Play (Open)         as a double-click
+  Play (Open)         play it (open a folder)
+  Details...          its details window (below)
   Resume from h:mm:ss where Plex says you stopped. The server streams it
                       from there (copying the video when it can)
   Play from start     from the beginning
+  Subtitles >         None, or one of its subtitle tracks (below)
   Save original file > the file itself, onto your disc (below)
   Mark watched, Mark unwatched
   Back, Refresh
+
+The details window
+------------------
+A video's backdrop, its title, year, running time, age rating and
+score, its summary, and how it will play. Buttons: Play, Resume from
+h:mm:ss, From the start, Save file, and Mark watched (or unwatched), and
+its subtitles. It opens beside the browser, and follows the selection:
+click another video to see its details. Return plays; Escape closes it.
+
+Subtitles
+---------
+Choose them on the Subtitles button in the details window, or Subtitles
+on a poster's menu: None, or one of the video's tracks (in the file, or a
+file of their own beside it on the server). The choice is kept on the
+server, so the Plex apps on your other devices show the same.
+
+For now Reel can't be told which subtitles to show, so a video with
+subtitles chosen is converted by the server, which burns them into the
+picture (any kind: text, DVD or Blu-ray). The status line and the details
+say so. Choose None to play it directly again.
 
 Playing
 -------

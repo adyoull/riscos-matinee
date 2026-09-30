@@ -6,13 +6,16 @@ go to Reel directly. Everything else is converted by the server into a stream Re
 handle (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS
 can play.
 
-**Status: phase 1, a test build (0.1.0-test1), not yet tried on RISC OS.** It has been
-tested on Linux: the core against a fake Plex server, and the Wimp front end against a
-scripted fake Wimp under qemu.
+**Status: phase 1, a test build (0.1.0-test2).** 0.1.0-test1 worked on a Raspberry Pi.
+It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
+against a scripted fake Wimp under qemu.
 
 - Sign-in with a plex.tv/link code, or a server's address and token typed by hand.
-- Servers, and a poster browser: Continue watching, films, TV shows, seasons and
-  episodes.
+- Servers, and a dark poster browser: Continue watching, films, TV shows, seasons and
+  episodes, with shadows, a highlight under the pointer, and three poster sizes.
+- A details window: the backdrop, title, year, running time, rating, summary and
+  buttons.
+- Subtitles: choose a track (kept on the server); the server burns it in.
 - The direct-play or transcode decision, and the hand-off to ReelEGL or Reel.
 - Resume, Play from start, Mark watched or unwatched.
 - Save original file: the file itself, up to 4GB−1.
@@ -31,7 +34,8 @@ its LICENSE), and `third_party/pthreadticker` is revised BSD.
 | `src/plex.[ch]` | The Plex API: PIN sign-in, servers, lists, posters, scrobble, file URL |
 | `src/caps.[ch]` | What Reel can play; the direct-play decision and the transcode request |
 | `src/handoff.[ch]` | yt-dlp-style JSON that Reel 0.1.17+ plays unmodified |
-| `src/ui.[ch]` | The Wimp front end: icon bar, sign-in, browser, menus, hand-off, saving, Choices |
+| `src/ui.[ch]` | The Wimp front end: icon bar, sign-in, browser, details, menus, hand-off, saving, Choices |
+| `src/draw.[ch]` | Drawing: true-colour shapes and outline-font text for the dark windows |
 | `src/version.h`, `src/proginfo.h` | The version; the Info window (from riscos-ffmpeg) |
 | `app/!PlexRO` | `!Boot`, `!Run`, `!Help` |
 | `build/` | `build.sh` (compile, link, AIF, checks), `package.sh` (the RISC OS zip), `env.sh` |
@@ -39,8 +43,8 @@ its LICENSE), and `third_party/pthreadticker` is revised BSD.
 | `third_party/cjson` | cJSON 1.7.18 (MIT) |
 | `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.01, which `!Run` loads |
 | `tests/host/fakeplex.py` | A stand-in for plex.tv and a Plex Media Server |
-| `tests/host/core_test.c` | 86 checks against it, with Reel's own `sources.c` reading the hand-off |
-| `tests/host/ui_test.c` | The front end against a scripted fake Wimp, under qemu-arm (133 checks) |
+| `tests/host/core_test.c` | 98 checks against it, with Reel's own `sources.c` reading the hand-off |
+| `tests/host/ui_test.c` | The front end against a scripted fake Wimp, under qemu-arm (202 checks); it also draws the windows into pictures |
 | `tests/host/net_sock.c` | `net.h` over plain sockets, for ui_test |
 | `tests/host/run.sh`, `mutate.sh` | Build and run the tests; break the code on purpose and check they notice |
 | `docs/` | Feasibility, design, and the toolchain and build |
@@ -55,5 +59,7 @@ REEL_SRC=../riscos-ffmpeg tests/host/run.sh
 REEL_SRC=../riscos-ffmpeg tests/host/mutate.sh
 ```
 
-Expected: `core_test: 86 checks, 0 failed`, `ui_test: 133 checks, 0 failed`, and
-`12 mutations, 0 survived`.
+Expected: `core_test: 98 checks, 0 failed`, `ui_test: 202 checks, 0 failed`, and
+`18 mutations, 0 survived`. ui_test also leaves `browser.ppm` and `details.ppm` in its
+output directory: the two windows as its fake Wimp drew them (with a stand-in font and
+made-up posters).

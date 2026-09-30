@@ -120,6 +120,9 @@ REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/run.sh
 REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/mutate.sh
 ```
 
+ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h` (from
+`REEL_SRC`), and leaves `browser.ppm` and `details.ppm` in `OUT`.
+
 `QEMU` is optional. riscos-ffmpeg's patched qemu (`tools-bin/qemu-arm-aligntrap`) also
 traps unaligned accesses in the program's own code, as RISC OS does. The plain
 `qemu-arm` runs the test without that.
