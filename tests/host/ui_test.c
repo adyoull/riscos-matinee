@@ -647,7 +647,7 @@ static unsigned file_sum(const char *p, long *len)
 
 /* ---- the script --------------------------------------------------------------------- */
 
-static int pc, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
+static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
 
 #define NULL_EVENT 0
@@ -1112,6 +1112,9 @@ static int script(int *b, int mask)
                     CHECK(strstr(ui_test_status(), "Saving Big Buck Bunny: 0 of 5 MB (10%)") ||
                           strstr(ui_test_status(), "Saving Big Buck Bunny: 1 of 5 MB (10%)"),
                           "progress: %s", ui_test_status());
+                if (save_nulls == 15)
+                    CHECK(strstr(ui_test_status(), ", 2.5 MB/s"), "how fast: %s", ui_test_status());
+                fake_cs += 10;                                  /* 256KB every 0.1 s */
                 return NULL_EVENT;
             }
             pc++;
@@ -1125,9 +1128,39 @@ static int script(int *b, int mask)
             CHECK(ntyped && !strcmp(typed_path[(ntyped - 1) & 7], save_path) && typed_type[(ntyped - 1) & 7] == 0xBF4,
                   "typed from its extension");
             CHECK(strstr(ui_test_status(), "Saved Big Buck Bunny (5 MB)"), "status: %s", ui_test_status());
-            pc++;
-            return ev_tile(b, find_tile("Big Buck Bunny"), 2);  /* again, from the menu, stopped part way */
+            pc = 440;
+            return ev_tile(b, find_tile("Big Buck Bunny"), 2);  /* the menu: the speed test */
         }
+        case 440:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MI_SPEED), "Test speed") && !menu_shaded(menu_open, MI_SPEED),
+                  "Test speed on the menu");
+            prev_reports = reports;
+            prev_count = log_count("/library/parts/11/101/file.mp4", NULL, NULL);
+            pc++;
+            return ev_menu(b, MI_SPEED, -1);
+        case 441:
+            CHECK(ui_test_speed() && !(mask & 1), "the speed test runs, on null events");
+            CHECK(log_count("/library/parts/11/101/file.mp4", NULL, NULL) == prev_count + 1, "the file asked for");
+            speed_nulls = 0;
+            pc++;
+            continue;
+        case 442:
+            if (ui_test_speed()) {
+                speed_nulls++;
+                fake_cs += 50;                                  /* 256KB every 0.5 s: a slow server */
+                return NULL_EVENT;
+            }
+            pc++;
+            continue;
+        case 443:
+            CHECK(speed_nulls == 16, "stopped after 8 s: %d nulls", speed_nulls);
+            CHECK(reports == prev_reports + 1 &&
+                  strstr(last_report, "Speed test, Big Buck Bunny: 4.0 MB in 8.0 s: 4.2 Mbit/s, over http") &&
+                  strstr(last_report, "It needs 5.0 Mbit/s: too slow to play directly. Untick Direct play, or save the file first."),
+                  "the result: %s", last_report);
+            CHECK(strstr(ui_test_status(), "Speed test: 4.2 Mbit/s"), "status: %s", ui_test_status());
+            pc = 45;
+            return ev_tile(b, find_tile("Big Buck Bunny"), 2);  /* again, from the menu, stopped part way */
         case 45:
             pc++;
             return ev_click(b, w_save, SV_FILE, 700, 500, 0x40);

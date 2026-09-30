@@ -77,6 +77,12 @@ mutate "backdrop not faded" src/ui.c \
   '    } else if (art) {\n        sprite_fade(p->area, w, h);\n    }' '    }'
 mutate "posters not rounded (no mask)" src/ui.c \
   'art ? 0 : 12 >> S.xeig' '0'
+mutate "the speed test's time limit ignored" src/ui.c \
+  'if (now_cs() - S.speed.t0 >= SPEED_TIME || S.speed.done' 'if (S.speed.done'
+mutate "the speed in bytes, not bits" src/ui.c \
+  'S.speed.done * 8.0 /' 'S.speed.done * 1.0 /'
+mutate "no MB/s while saving" src/ui.c \
+  'if (cs >= 100)' 'if (0)'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

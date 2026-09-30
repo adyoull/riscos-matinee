@@ -21,7 +21,7 @@ enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
 /* The icon bar menu's items, and the item menu's */
 enum { MB_INFO, MB_SIGNIN, MB_SERVERS, MB_PLAYER, MB_QUALITY, MB_SIZE, MB_DIRECT, MB_SIGNOUT, MB_QUIT,
        MB_COUNT };
-enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_WATCHED, MI_UNWATCHED, MI_BACK,
+enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_SPEED, MI_WATCHED, MI_UNWATCHED, MI_BACK,
        MI_REFRESH, MI_COUNT };
 
 /* Players */
@@ -37,6 +37,7 @@ const char *ui_test_item(int i, int line);      /* a tile's text (line 0 or 1), 
 const char *ui_test_status(void);
 const char *ui_test_path(void);
 int ui_test_saving(void);
+int ui_test_speed(void);                       /* a speed test running */
 int ui_test_sel(void);
 int ui_test_posters(int *failed);               /* posters made (and failed) */
 int ui_test_windows(int *browser, int *save);   /* 1 if the browser window is open */

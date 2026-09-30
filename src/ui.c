@@ -242,7 +242,18 @@ static struct {
         char path[256], title[80];
         int64_t size, done;
         int type;
+        int t0;                     /* when it started (monotonic time) */
     } save;
+
+    /* a speed test: part of a file read from the server, and timed */
+    struct {
+        int active;
+        net_stream *ns;
+        int t0, start_cs;           /* when the reading started; how long the server took to answer */
+        int64_t done;
+        int kbps;                   /* what the file needs (0: not known) */
+        char title[80];
+    } speed;
 } S;
 
 /* ---- small helpers ------------------------------------------------------ */
@@ -2162,6 +2173,10 @@ static void save_start(const char *path)
         report("Already saving %s: stop that first (on the menu).", S.save.title);
         return;
     }
+    if (S.speed.active) {
+        report("Wait until the speed test has finished.");
+        return;
+    }
     if (too_big(S.sv_size, S.sv_title))
         return;
     snprintf(url, sizeof(url), "%s%s", S.px.base, S.sv_url_key);
@@ -2188,6 +2203,7 @@ static void save_start(const char *path)
     S.save.active = 1;
     S.save.size = size > 0 ? size : S.sv_size;
     S.save.done = 0;
+    S.save.t0 = now_cs();
     S.save.type = S.sv_type;
     snprintf(S.save.path, sizeof(S.save.path), "%s", path);
     snprintf(S.save.title, sizeof(S.save.title), "%s", S.sv_title);
@@ -2234,11 +2250,15 @@ static void save_step(void)
     if (S.save.size > 0 && S.save.done >= S.save.size)
         end = 1;
     if (!end) {
+        char rate[40] = "";
+        int cs = now_cs() - S.save.t0;
+        if (cs >= 100)              /* how fast, once there's a second to go on */
+            snprintf(rate, sizeof(rate), ", %.1f MB/s", S.save.done / 1048576.0 * 100 / cs);
         if (S.save.size > 0)
-            set_status("Saving %s: %.0f of %.0f MB (%d%%)", S.save.title, S.save.done / 1048576.0,
-                       S.save.size / 1048576.0, (int)(S.save.done * 100 / S.save.size));
+            set_status("Saving %s: %.0f of %.0f MB (%d%%)%s", S.save.title, S.save.done / 1048576.0,
+                       S.save.size / 1048576.0, (int)(S.save.done * 100 / S.save.size), rate);
         else
-            set_status("Saving %s: %.0f MB", S.save.title, S.save.done / 1048576.0);
+            set_status("Saving %s: %.0f MB%s", S.save.title, S.save.done / 1048576.0, rate);
         return;
     }
     if (S.save.size > 0 && S.save.done != S.save.size) {
@@ -2256,6 +2276,98 @@ static void save_step(void)
     set_type(S.save.path, S.save.type);
     S.save.active = 0;
     set_status("Saved %s (%.0f MB).", S.save.title, S.save.done / 1048576.0);
+}
+
+/* ---- the speed test ------------------------------------------------------------ */
+
+/* Reads the start of a video's file from the server for up to SPEED_TIME,
+   a piece each null event (as saving does), and says how fast it came and
+   whether that's enough to play the file directly. It tells a slow server
+   or network from a player that doesn't read fast enough. */
+#define SPEED_TIME 800              /* centiseconds */
+#define SPEED_MAX (64 * 1024 * 1024)
+
+static void speed_close(void)
+{
+    net_close(S.speed.ns);
+    S.speed.ns = NULL;
+    S.speed.active = 0;
+}
+
+static void speed_start(const plex_item *it)
+{
+    char url[600], headers[1024], err[256];
+    int t;
+    if (S.save.active || S.speed.active) {
+        report("Wait until the file being saved, or the speed test, has finished.");
+        return;
+    }
+    if (!it || it->kind != PI_VIDEO || !it->part_key || !*it->part_key)
+        return;
+    snprintf(url, sizeof(url), "%s%s", S.px.base, it->part_key);
+    plex_headers(&S.px, S.px.token, headers, sizeof(headers));
+    latin1(it->title, S.speed.title, sizeof(S.speed.title));
+    hourglass(1);
+    t = now_cs();
+    S.speed.ns = net_open(url, headers, 30000, err, sizeof(err));
+    S.speed.start_cs = now_cs() - t;
+    hourglass(0);
+    if (!S.speed.ns) {
+        report("Speed test: can't get %s from the server: %s", S.speed.title, err);
+        return;
+    }
+    S.speed.active = 1;
+    S.speed.done = 0;
+    S.speed.kbps = it->bitrate_kbps;
+    S.speed.t0 = now_cs();
+    set_status("Testing the speed: reading %s from the server...", S.speed.title);
+}
+
+static void speed_done(const char *broke)
+{
+    int cs = now_cs() - S.speed.t0;
+    double mbit = S.speed.done * 8.0 / (cs > 0 ? cs : 1) * 100 / 1e6;
+    int https = !strncmp(S.px.base, "https:", 6);
+    char how[160], verdict[120] = "";
+    speed_close();
+    /* all of it must fit in an error block (252 characters) */
+    snprintf(how, sizeof(how), "%.1f MB in %.1f s: %.1f Mbit/s, over %s (%s; answered in %.1f s).",
+             S.speed.done / 1048576.0, cs / 100.0, mbit, https ? "https" : "http",
+             S.px.local ? "local" : "not local", S.speed.start_cs / 100.0);
+    if (S.speed.kbps > 0) {
+        double need = S.speed.kbps / 1000.0, times = mbit / need;
+        if (times >= 2)
+            snprintf(verdict, sizeof(verdict), " It needs %.1f Mbit/s: plenty. If the player runs short, it isn't reading "
+                     "fast enough.", need);
+        else if (times >= 1.2)
+            snprintf(verdict, sizeof(verdict), " It needs %.1f Mbit/s: just enough to play directly.", need);
+        else
+            snprintf(verdict, sizeof(verdict), " It needs %.1f Mbit/s: too slow to play directly. Untick Direct play, "
+                     "or save the file first.", need);
+    }
+    set_status("Speed test: %.1f Mbit/s from the server (%s)", mbit, https ? "https" : "http");
+    report("Speed test, %.40s: %s%s%s", S.speed.title, how, verdict, broke ? " It stopped part way." : "");
+}
+
+/* A piece of the file (SAVE_STEP bytes): one null event's work */
+static void speed_step(void)
+{
+    static char buf[64 * 1024];
+    int total = 0;
+    while (total < SAVE_STEP) {
+        int got = net_read(S.speed.ns, buf, sizeof(buf));
+        if (got <= 0) {
+            speed_done(got < 0 ? "broke" : NULL);
+            return;
+        }
+        S.speed.done += got;
+        total += got;
+    }
+    if (now_cs() - S.speed.t0 >= SPEED_TIME || S.speed.done >= SPEED_MAX) {
+        speed_done(NULL);
+        return;
+    }
+    set_status("Testing the speed: %.1f MB so far...", S.speed.done / 1048576.0);
 }
 
 static void close_menus(void)
@@ -2481,10 +2593,11 @@ static void item_menu_build(void)
     menu_add(&m_item, "Subtitles", 0, !video || !det_is(it) || !det_item()->nsubs,
              video && det_is(it) && det_item()->nsubs ? (int)(intptr_t)&m_subs.m : -1, 0);
     if (S.save.active)
-        menu_add(&m_item, "Stop saving", 0, 0, -1, 1);
+        menu_add(&m_item, "Stop saving", 0, 0, -1, 0);
     else
         menu_add(&m_item, "Save original file", 0, !S.sv_ok,
-                 S.sv_ok && S.sv_size <= FILE_MAX ? S.save_w : -1, 1);
+                 S.sv_ok && S.sv_size <= FILE_MAX ? S.save_w : -1, 0);
+    menu_add(&m_item, "Test speed", 0, !S.sv_ok || S.save.active || S.speed.active, -1, 1);
     menu_add(&m_item, "Mark watched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 0);
     menu_add(&m_item, "Mark unwatched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 1);
     menu_add(&m_item, "Back", 0, S.nhist == 0, -1, 0);
@@ -2507,6 +2620,8 @@ static void quit(void)
 {
     _kernel_swi_regs r;
     save_stop(NULL);
+    if (S.speed.active)
+        speed_close();
     draw_done();
     for (int i = 0; i < PEND_MAX; i++)
         if (S.pend[i].ref)
@@ -2656,6 +2771,9 @@ static int menu_select(const int *sel)
             else if (it && S.sv_ok && !too_big(S.sv_size, S.sv_title))
                 report("To save it, move to the right of Save original file, then drag the icon "
                        "to a directory display.");
+            break;
+        case MI_SPEED:
+            speed_start(it);
             break;
         case MI_WATCHED:
         case MI_UNWATCHED:
@@ -3003,6 +3121,10 @@ static void nulls(void)
         save_step();
         return;
     }
+    if (S.speed.active) {
+        speed_step();
+        return;
+    }
     if (S.pin_id && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.pin_next >= 0) {
         pin_check();
         return;
@@ -3079,7 +3201,7 @@ int plexro_main(int argc, char **argv)
     for (;;) {
         int mask = 1 << 11 | 1 << 12;  /* no caret events */
         int reason = Wimp_Poll;
-        if (S.save.active || S.posters_wanted) {
+        if (S.save.active || S.speed.active || S.posters_wanted) {
             /* null events at once */
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
@@ -3155,6 +3277,7 @@ const char *ui_test_item(int i, int line) { return S.disp && i >= 0 && i < S.lis
 const char *ui_test_status(void) { return S.status; }
 const char *ui_test_path(void) { return S.where; }
 int ui_test_saving(void) { return S.save.active; }
+int ui_test_speed(void) { return S.speed.active; }
 int ui_test_sel(void) { return S.sel; }
 int ui_test_posters(int *failed)
 {

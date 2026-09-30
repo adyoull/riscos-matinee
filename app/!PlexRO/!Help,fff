@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test3
+!PlexRO - a Plex client for RISC OS                  0.1.0-test4
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -7,7 +7,7 @@ Files the players can play as they are go to the player directly.
 Everything else is converted by the server, as it plays, into a stream
 the players can handle: H.264 video with stereo AAC sound.
 
-This is a test build: it hasn't been tried on RISC OS yet.
+This is a test build.
 
 PlexRO is a working name. Plex is a trademark of Plex, Inc.; PlexRO isn't
 made by Plex or connected with it.
@@ -62,6 +62,7 @@ Menu on a poster:
   Play from start     from the beginning
   Subtitles >         None, or one of its subtitle tracks (below)
   Save original file > the file itself, onto your disc (below)
+  Test speed          how fast the server sends it (below)
   Mark watched, Mark unwatched
   Back, Refresh
 
@@ -109,12 +110,25 @@ default) or 480p (2 Mbit/s). The Raspberry Pi 4 decodes H.264 on one
 core, so the bit rate matters as much as the size. Untick Direct play
 when possible to have the server convert everything.
 
+If a video keeps stopping to buffer
+-----------------------------------
+Test speed, on a video's menu, reads the start of its file from the
+server for 8 seconds (the desktop carries on meanwhile), then says how
+fast it came, in Mbit/s, and how much the file needs:
+  plenty           the server and the network keep up: the player isn't
+                   reading fast enough (tell us, with the numbers)
+  too slow         untick Direct play (the server then converts it to
+                   the Quality's limit), choose a lower Quality, or save
+                   the file first and play it from the disc
+It also says whether the server is reached over http or https (https is
+slower on RISC OS), and whether it's on the local network.
+
 Saving the original file
 ------------------------
 Move to the right of Save original file on a poster's menu: a save box
 opens. Drag its icon to a directory display (or type a full path and
 click Save). The file is saved a piece at a time, so the desktop carries
-on; the status line shows how far it's got. Stop saving is on the same
+on; the status line shows how far it's got, and how fast (MB/s). Stop saving is on the same
 menu while it's saving.
 
 RISC OS's filing systems hold files of up to 4GB, so bigger files are
