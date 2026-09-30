@@ -6,11 +6,11 @@
 #ifndef PLEXRO_UI_H
 #define PLEXRO_UI_H
 
-/* The sign-in window's icons */
-enum {
-    SI_CODE, SI_LINK, SI_STATUS, SI_NEWCODE, SI_OR,
-    SI_ADDRL, SI_ADDR, SI_TOKL, SI_TOK, SI_USE, SI_COUNT
-};
+/* What the window shows */
+enum { PG_GRID, PG_DETAILS, PG_SIGNIN };
+
+/* The sign-in page's buttons and fields (drawn, not icons) */
+enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK };
 
 /* The browser's and details window's buttons (drawn, not icons) */
 enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS };
@@ -39,7 +39,10 @@ const char *ui_test_path(void);
 int ui_test_saving(void);
 int ui_test_sel(void);
 int ui_test_posters(int *failed);               /* posters made (and failed) */
-int ui_test_windows(int *signin, int *browser, int *save, int *det);
+int ui_test_windows(int *browser, int *save);   /* 1 if the browser window is open */
+int ui_test_page(void);
+const char *ui_test_signin(int what);           /* 0 the code, 1 status, 2 address, 3 token */
+int ui_test_field(void);
 int ui_test_button_xy(int w, int id, int *x, int *y);   /* a drawn button's middle */
 const char *ui_test_button(int id);             /* a details button's label, or NULL */
 int ui_test_hover(void);

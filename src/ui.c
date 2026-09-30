@@ -127,9 +127,7 @@ static const struct { int w, h; const char *name; } sizes[3] = {
 #define BR_MIN_W  (2 * (TILE_W + GAP) + GAP)
 #define BTN       64                /* a button's height */
 
-/* The details window */
-#define DET_W     1000
-#define ART_H     562               /* the backdrop, 16:9 */
+/* The details page */
 #define DET_BTN_MAX 8
 
 #define SAVE_STEP (256 * 1024)      /* bytes saved each null event */
@@ -178,8 +176,11 @@ typedef struct {
 
 static struct {
     int task, bar_icon, proginfo;
-    int signin_w, browser_w, save_w, det_w;
-    int signin_open, browser_open, det_open;
+    int browser_w, save_w;
+    int browser_open;
+    int page;                       /* what the window shows: PG_GRID, PG_DETAILS or PG_SIGNIN */
+    int grid_sy;                    /* the grid's scroll, kept while a details page is shown */
+    int field;                      /* the sign-in page's field with the caret: 0 address, 1 token */
     int xeig, yeig, scr_w, scr_h;   /* the screen, OS units */
 
     plex_ctx px;
@@ -215,7 +216,7 @@ static struct {
     char det_title[120], det_meta[160], det_how[200], det_how_l[2][160], det_lines[10][160];
     int det_how_n;
     int det_nlines, det_h;
-    struct { int id, x0, y0, x1, y1; char label[48]; } btn[DET_BTN_MAX];
+    struct { int id, x0, y0, x1, y1; char label[48]; } btn[DET_BTN_MAX + 4];
     int nbtn;
 
     /* menus */
@@ -517,20 +518,10 @@ static void icon_text(icon_t *i, int x0, int y0, int x1, int y1, unsigned flags,
     i->data[2] = size;
 }
 
-#define F_LABEL   0x17000010u       /* v centred; black on grey */
-#define F_DISPLAY 0x0700003Du       /* border, centred, filled; black on white */
 #define F_BUTTON  0x1700303Du       /* click; border, centred, filled; black on grey */
 #define F_WRITE   0x0700F035u       /* writable; border, v centred, filled; black on white */
 
-static char si_title[] = "Sign in";
-static char si_link[] = "Type the code at plex.tv/link";
-static char si_newcode[] = "New code";
-static char si_or[] = "Or a server on your network:";
-static char si_addrl[] = "Address";
-static char si_tokl[] = "Token";
-static char si_use[] = "Use these";
 static char valid_write[] = "Ktar";
-static char det_wtitle[80] = "Details";
 static char sv_title_text[] = "Save as";
 static char sv_sprite[16];
 static char sv_ok_text[] = "Save";
@@ -538,22 +529,7 @@ static char sv_ok_text[] = "Save";
 static void make_windows(void)
 {
     window_t w;
-    icon_t ic[SI_COUNT];
-
-    /* sign-in */
-    window_defaults(&w, 720, 520, si_title, sizeof(si_title), 0x84000012u | 0x02000000u);   /* + close */
-    memset(ic, 0, sizeof(ic));
-    icon_text(&ic[SI_CODE], 180, -100, 540, -24, F_DISPLAY, S.code, sizeof(S.code), NULL);
-    icon_text(&ic[SI_LINK], 12, -148, 708, -104, F_LABEL | 0x08, si_link, sizeof(si_link), NULL);
-    icon_text(&ic[SI_STATUS], 12, -196, 708, -152, F_LABEL | 0x08, S.si_status, sizeof(S.si_status), NULL);
-    icon_text(&ic[SI_NEWCODE], 480, -256, 708, -204, F_BUTTON, si_newcode, sizeof(si_newcode), NULL);
-    icon_text(&ic[SI_OR], 12, -320, 708, -276, F_LABEL, si_or, sizeof(si_or), NULL);
-    icon_text(&ic[SI_ADDRL], 12, -376, 156, -324, F_LABEL, si_addrl, sizeof(si_addrl), NULL);
-    icon_text(&ic[SI_ADDR], 160, -376, 708, -324, F_WRITE, S.si_addr, sizeof(S.si_addr), valid_write);
-    icon_text(&ic[SI_TOKL], 12, -436, 156, -384, F_LABEL, si_tokl, sizeof(si_tokl), NULL);
-    icon_text(&ic[SI_TOK], 160, -436, 708, -384, F_WRITE, S.si_tok, sizeof(S.si_tok), valid_write);
-    icon_text(&ic[SI_USE], 480, -500, 708, -448, F_BUTTON, si_use, sizeof(si_use), NULL);
-    S.signin_w = create_window(&w, ic, SI_COUNT);
+    icon_t ic[SV_COUNT];
 
     /* browser: all drawn by us (draw.c), so the Wimp doesn't fill it
        (work area colour 255); its extent follows the list */
@@ -565,15 +541,6 @@ static void make_windows(void)
     w.minw = 2 * (168 + GAP) + GAP;
     w.minh = HEADER_H + 200;
     S.browser_w = create_window(&w, NULL, 0);
-
-    /* details: drawn too */
-    window_defaults(&w, DET_W, 900, det_wtitle, sizeof(det_wtitle), 0x97000002u);
-    w.wbg = 255;
-    w.ext[1] = -900;
-    w.wbutton = 3 << 12;            /* click */
-    w.minw = DET_W;
-    w.minh = 400;
-    S.det_w = create_window(&w, NULL, 0);
 
     /* the save box: a menu leaf of Save original file */
     window_defaults(&w, 400, 264, sv_title_text, sizeof(sv_title_text), 0x84000012u);
@@ -589,14 +556,6 @@ static void make_windows(void)
     S.save_w = create_window(&w, ic, SV_COUNT);
 }
 
-static void refresh_icon(int w, int i)
-{
-    int b[4];
-    _kernel_swi_regs r;
-    b[0] = w; b[1] = i; b[2] = 0; b[3] = 0;     /* no change: redraws it */
-    r.r[1] = (intptr_t)b;
-    swi(Wimp_SetIconState, &r);
-}
 
 static void window_state(int w, int *st)
 {
@@ -641,8 +600,8 @@ static void si_set_status(const char *fmt, ...)
     va_start(a, fmt);
     vsnprintf(S.si_status, sizeof(S.si_status), fmt, a);
     va_end(a);
-    if (S.signin_open)
-        refresh_icon(S.signin_w, SI_STATUS);
+    if (S.browser_open && S.page == PG_SIGNIN)
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, -HEADER_H);
 }
 
 static void set_status(const char *fmt, ...)
@@ -754,18 +713,8 @@ static int *sprite_make(int w, int h, int round, size_t *bytes)
     px = (unsigned *)(s + 11);
     for (size_t i = 0; i < (size_t)w * h; i++)
         px[i] = 0x001F1A18;         /* C_BG as 0xBBGGRR */
-    if (mask) {
-        unsigned *m = (unsigned *)((char *)s + 44 + image);
-        memset(m, 0xFF, mask);      /* all solid... */
-        for (int y = 0; y < h; y++) /* ...but the corners */
-            for (int x = 0; x < w; x++) {
-                int cx = x < round ? round : x >= w - round ? w - 1 - round : x;
-                int cy = y < round ? round : y >= h - round ? h - 1 - round : y;
-                int dx = x - cx, dy = y - cy;
-                if (dx * dx + dy * dy > round * round)
-                    m[y * words + x / 32] &= ~(1u << (x & 31));
-            }
-    }
+    if (mask)                       /* all solid; sprite_round() cuts the corners */
+        memset((char *)s + 44 + image, 0xFF, mask);
     *bytes = total;
     return a;
 }
@@ -813,6 +762,41 @@ static int jpeg_into(int *area, int w, int h, const char *jpeg, size_t len, int 
     return e ? -1 : 0;
 }
 
+/* Rounded corners, round pixels: outside the curve the mask hides the
+   pixel; on it, the pixel is mixed with the window's grey by how much of
+   it is inside (4 x 4 samples), so the edge is smooth */
+static void sprite_round(int *area, int w, int h, int round)
+{
+    int *s = area + 4, words = (w + 31) / 32;
+    unsigned *px = (unsigned *)(s + 11), *m = (unsigned *)((char *)s + s[9]);
+    const int bg[3] = { 24, 26, 31 };
+    double rr = round;
+    if (s[9] == s[8] || round < 1)
+        return;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int n = 0;
+            if ((x >= round && x < w - round) || (y >= round && y < h - round))
+                continue;           /* not in a corner */
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) {
+                    double fx = x + (i + 0.5) / 4, fy = y + (j + 0.5) / 4;
+                    double cx = fx < rr ? rr : fx > w - rr ? w - rr : fx;
+                    double cy = fy < rr ? rr : fy > h - rr ? h - rr : fy;
+                    n += (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy) <= rr * rr;
+                }
+            if (n < 8) {
+                m[y * words + x / 32] &= ~(1u << (x & 31));
+            } else if (n < 16) {
+                unsigned p = px[y * w + x];
+                int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
+                for (int k = 0; k < 3; k++)
+                    c[k] = (c[k] * n + bg[k] * (16 - n)) / 16;
+                px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+            }
+        }
+}
+
 /* The backdrop: darkened a little, and faded into the window's grey over
    its lower part, so the title reads on it */
 static void sprite_fade(int *area, int w, int h)
@@ -852,6 +836,8 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
         p->failed = 1;
     } else if (art) {
         sprite_fade(p->area, w, h);
+    } else {
+        sprite_round(p->area, w, h, 12 >> S.xeig);
     }
     free(jpeg);
     p->next = S.cache;
@@ -887,7 +873,7 @@ static void set_extent(void)
 {
     int b[4];
     _kernel_swi_regs r;
-    int h = list_height();
+    int h = S.page == PG_DETAILS ? S.det_h : S.page == PG_SIGNIN ? 1100 : list_height();
     if (h < S.scr_h)
         h = S.scr_h;                /* at least the screen: the window can be made taller */
     b[0] = 0; b[1] = -h; b[2] = S.scr_w; b[3] = 0;
@@ -961,38 +947,36 @@ static void header_button(int id, int vis_w, int *x0, int *y0, int *x1, int *y1)
     *x1 = *x0 + 80;
 }
 
-static void draw_refresh_icon(int cx, int cy, unsigned bg)
+static int header_has(int id)
 {
-    draw_circle(cx, cy, 18, C_TEXT);                    /* a ring... */
-    draw_circle(cx, cy, 11, bg);
-    draw_tri(cx, cy, cx - 2, cy + 21, cx + 21, cy + 21, bg);  /* ...open at the top right... */
-    draw_tri(cx - 6, cy + 25, cx - 6, cy + 4, cx + 9, cy + 14, C_TEXT);    /* ...an arrow going round */
+    return S.page != PG_SIGNIN && (id == B_BACK || id == B_REFRESH);
 }
 
 /* ox, oy: the work area's origin on the screen; vis_w: the width shown */
 static void draw_header(int ox, int oy, int vis_w)
 {
-    int x0, y0, x1, y1, tx = 28 + 80 + 28;
+    int x0, y0, x1, y1, tx = 28 + 80 + 28, right = vis_w - 28;
     char where[256];
     draw_rect(ox, oy - HEADER_H, ox + S.scr_w, oy, C_HEADER);
-    header_button(B_BACK, vis_w, &x0, &y0, &x1, &y1);
-    draw_round(ox + x0, oy + y0, ox + x1, oy + y1, BTN / 2, C_CARD);
-    {   /* a chevron pointing left: grey when there's nowhere to go back to */
-        int cx = ox + (x0 + x1) / 2, cy = oy + (y0 + y1) / 2;
-        unsigned c = S.nhist ? C_TEXT : C_SUB;
-        draw_tri(cx - 14, cy, cx + 8, cy + 18, cx + 8, cy - 18, c);
-        draw_tri(cx - 4, cy, cx + 8, cy + 9, cx + 8, cy - 9, C_CARD);
+    if (S.page == PG_SIGNIN)
+        tx = 40;
+    if (header_has(B_BACK)) {   /* a chevron: grey when there's nowhere to go back to */
+        header_button(B_BACK, vis_w, &x0, &y0, &x1, &y1);
+        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, BTN / 2, C_CARD, C_HEADER);
+        draw_glyph(G_BACK, ox + x0 + 20, oy + y0 + 12, ox + x1 - 20, oy + y1 - 12,
+                   S.nhist || S.page == PG_DETAILS ? C_TEXT : C_SUB, C_CARD);
     }
     header_button(B_REFRESH, vis_w, &x0, &y0, &x1, &y1);
-    if (x0 > tx + 200) {
-        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, BTN / 2, C_CARD);
-        draw_refresh_icon(ox + (x0 + x1) / 2, oy + (y0 + y1) / 2, C_CARD);
+    if (header_has(B_REFRESH) && x0 > tx + 200) {
+        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, BTN / 2, C_CARD, C_HEADER);
+        draw_glyph(G_REFRESH, ox + x0 + 16, oy + y0 + 8, ox + x1 - 16, oy + y1 - 8, C_TEXT, C_CARD);
+        right = x0 - 28;
     }
     snprintf(where, sizeof(where), "%s", S.where);
-    draw_fit(D_BOLD, where, x0 - tx - 28);
+    draw_fit(D_BOLD, where, right - tx);
     draw_text(D_BOLD, ox + tx, oy - 58, where, C_TEXT, C_HEADER);
     snprintf(where, sizeof(where), "%s", S.status);
-    draw_fit(D_BODY, where, x0 - tx - 28);
+    draw_fit(D_BODY, where, right - tx);
     draw_text(D_BODY, ox + tx, oy - 100, where, C_SUB, C_HEADER);
 }
 
@@ -1008,23 +992,27 @@ static void draw_tile(int i, int ox, int oy)
     int x0, y0, x1, y1, py0;
     tile_box(i, &x0, &y0, &x1, &y1);
     py0 = y1 - POSTER_H;
-    /* shadow, then the ring round the selected (or pointed at) one */
-    draw_round(ox + x0 + 8, oy + py0 - 12, ox + x1 + 8, oy + y1 - 8, 16, C_SHADOW);
-    if (i == S.sel || i == S.hover)
-        draw_round(ox + x0 - 10, oy + py0 - 10, ox + x1 + 10, oy + y1 + 10, 22,
-                   i == S.sel ? C_ACCENT : C_HOVER);
+    /* the ring round the selected (or pointed at) one, with a gap; or a
+       shadow */
+    if (i == S.sel || i == S.hover) {
+        draw_round(ox + x0 - 12, oy + py0 - 12, ox + x1 + 12, oy + y1 + 12, 24,
+                   i == S.sel ? C_ACCENT : C_HOVER, C_BG);
+        draw_round(ox + x0 - 6, oy + py0 - 6, ox + x1 + 6, oy + y1 + 6, 18, C_BG, i == S.sel ? C_ACCENT : C_HOVER);
+    } else {
+        draw_round(ox + x0 + 6, oy + py0 - 10, ox + x1 + 6, oy + y1 - 6, 16, C_SHADOW, C_BG);
+    }
     if (d->poster && d->poster->area) {
         plot_sprite(d->poster, x0, py0, x1, y1);
     } else {                        /* no poster (yet): a card */
         const char *k = kind_name(it);
-        draw_round(ox + x0, oy + py0, ox + x1, oy + y1, 12, C_CARD);
+        draw_round(ox + x0, oy + py0, ox + x1, oy + y1, 12, C_CARD, C_BG);
         draw_text(D_BODY, ox + (x0 + x1 - draw_width(D_BODY, k)) / 2, oy + py0 + POSTER_H / 2 - 8, k, C_SUB, C_CARD);
     }
     if (it->kind == PI_VIDEO && it->view_offset_ms > 0 && it->duration_ms > 0) {
         /* how far it's been watched */
         int part = (int)((int64_t)(TILE_W - 32) * it->view_offset_ms / it->duration_ms);
-        draw_round(ox + x0 + 16, oy + py0 + 16, ox + x1 - 16, oy + py0 + 28, 6, RGB(0, 0, 0));
-        draw_round(ox + x0 + 16, oy + py0 + 16, ox + x0 + 16 + (part < 12 ? 12 : part), oy + py0 + 28, 6, C_ACCENT);
+        draw_rect(ox + x0 + 12, oy + py0 + 12, ox + x1 - 12, oy + py0 + 24, RGB(0, 0, 0));
+        draw_rect(ox + x0 + 12, oy + py0 + 12, ox + x0 + 12 + (part < 8 ? 8 : part), oy + py0 + 24, C_ACCENT);
     } else if ((it->kind == PI_VIDEO || it->kind == PI_FOLDER) && !it->watched && it->rating_key) {
         /* not watched yet: a corner turned down */
         draw_tri(ox + x1 - 40, oy + y1, ox + x1, oy + y1, ox + x1, oy + y1 - 40, C_ACCENT);
@@ -1033,7 +1021,8 @@ static void draw_tile(int i, int ox, int oy)
     draw_text(D_BODY, ox + x0, oy + py0 - 80, d->line[1], C_SUB, C_BG);
 }
 
-static void det_redraw(int ox, int oy, int cy0, int cy1);
+static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1);
+static void signin_redraw(int ox, int oy, int vis_w);
 
 static void redraw(int *b)
 {
@@ -1046,11 +1035,14 @@ static void redraw(int *b)
     while (more) {
         int ox = b[1] - b[5], oy = b[4] - b[6];     /* the work area's origin on the screen */
         int cy0 = b[8] - oy, cy1 = b[10] - oy;      /* the clip, work area y */
+        draw_origin(ox, oy);
         if (b[0] == S.browser_w) {
             draw_rect(b[7], b[8], b[9] + 2, b[10] + 2, C_BG);
-            if (cy1 > -HEADER_H)
-                draw_header(ox, oy, b[3] - b[1]);
-            if (S.have_list && S.disp && S.cols > 0) {
+            if (S.page == PG_DETAILS)
+                det_redraw(ox, oy, b[3] - b[1], cy0, cy1);
+            else if (S.page == PG_SIGNIN)
+                signin_redraw(ox, oy, b[3] - b[1]);
+            else if (S.have_list && S.disp && S.cols > 0) {
                 int top = -HEADER_H - GAP;
                 int rf = (top - cy1) / (TILE_H + GAP) - 1, rl = (top - cy0) / (TILE_H + GAP) + 1;
                 if (rf < 0)
@@ -1062,9 +1054,9 @@ static void redraw(int *b)
                             draw_tile(i, ox, oy);
                     }
             }
-        } else if (b[0] == S.det_w) {
-            draw_rect(b[7], b[8], b[9] + 2, b[10] + 2, C_BG);
-            det_redraw(ox, oy, cy0, cy1);
+            /* the bar last: over whatever was drawn under it */
+            if (cy1 > -HEADER_H)
+                draw_header(ox, oy, b[3] - b[1]);
         }
         r.r[1] = (intptr_t)b;
         if (swi(Wimp_GetRectangle, &r))
@@ -1077,7 +1069,7 @@ static void redraw(int *b)
 static int poster_step(void)
 {
     int st[9], vtop, vbot, rf, rl;
-    if (!S.browser_open || !S.have_list || !S.disp) {
+    if (!S.browser_open || !S.have_list || !S.disp || S.page != PG_GRID) {
         S.posters_wanted = 0;
         return 0;
     }
@@ -1114,13 +1106,20 @@ static void set_where(void)
     char t[400];
     size_t n = 0;
     t[0] = 0;
-    for (int i = 0; i < S.nhist && n < sizeof(t); i++)
-        n += snprintf(t + n, sizeof(t) - n, "%s > ", S.hist[i].title);
-    if (n < sizeof(t))
-        snprintf(t + n, sizeof(t) - n, "%s", S.list.title);
-    latin1(t, S.where, sizeof(S.where));
-    latin1(S.px.server_name, t, sizeof(t));
-    snprintf(S.title, sizeof(S.title), "%s: %s", APP, t);
+    if (S.page == PG_SIGNIN) {
+        snprintf(S.where, sizeof(S.where), "Sign in");
+        snprintf(S.title, sizeof(S.title), APP);
+    } else {
+        for (int i = 0; i < S.nhist && n < sizeof(t); i++)
+            n += snprintf(t + n, sizeof(t) - n, "%s > ", S.hist[i].title);
+        if (n < sizeof(t))
+            n += snprintf(t + n, sizeof(t) - n, "%s", S.list.title);
+        if (S.page == PG_DETAILS && S.have_det && n < sizeof(t))
+            snprintf(t + n, sizeof(t) - n, " > %s", S.det.v[0].title);
+        latin1(t, S.where, sizeof(S.where));
+        latin1(S.px.server_name, t, sizeof(t));
+        snprintf(S.title, sizeof(S.title), "%s: %s", APP, t);
+    }
     if (S.browser_open) {
         _kernel_swi_regs r;         /* the title bar, redrawn (RISC OS 5) */
         r.r[0] = S.browser_w;
@@ -1148,7 +1147,7 @@ static void browser_open(void)
         S.browser_open = 1;
     }
     set_caret(S.browser_w, -1, NULL);
-    S.posters_wanted = 1;
+    S.posters_wanted = S.page == PG_GRID;
 }
 
 /* Shows the list at path ("" = the top). push: remember the one shown, for
@@ -1178,8 +1177,9 @@ static int show_list(const char *path, const char *back_title, int push, int sel
         plex_list_free(&S.list);
     S.list = l;
     S.have_list = 1;
-    S.det_i = -1;                   /* the details (if shown) are of a video in the old list */
+    S.det_i = -1;                   /* the details (if kept) are of a video in the old list */
     S.hover = -1;
+    S.page = PG_GRID;
     snprintf(S.path, sizeof(S.path), "%s", path);
     S.sel = sel >= 0 && sel < l.n ? sel : l.n ? 0 : -1;
     make_disp();
@@ -1204,10 +1204,16 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     return 0;
 }
 
+static void det_leave(void);
+
 static void go_back(void)
 {
     hist_t h;
-    if (!S.nhist)
+    if (S.page == PG_DETAILS) {
+        det_leave();
+        return;
+    }
+    if (!S.nhist || S.page != PG_GRID)
         return;
     h = S.hist[--S.nhist];
     if (show_list(h.path, "", 0, h.sel) != 0)
@@ -1283,9 +1289,6 @@ static void select_tile(int i)
     int old = S.sel;
     if (i == old)
         return;
-    /* the details follow the selection */
-    if (S.det_open && i >= 0 && i < S.list.n && S.list.v[i].kind == PI_VIDEO)
-        det_show(i);
     S.sel = i;
     redraw_tile(old);
     redraw_tile(i);
@@ -1302,9 +1305,16 @@ static void select_tile(int i)
     }
 }
 
-/* ---- the details window ------------------------------------------------------ */
+/* ---- the details page -------------------------------------------------------- */
+
+/* A video's details in the browser window, in place of the grid: the
+   backdrop across the top (under the bar), faded into the window, the
+   title over its foot, then the buttons, subtitles, how it will play and
+   the summary. Back (the button, Backspace or Escape) returns to the grid
+   where it was. */
 
 static int det_subs_y, det_how_y, det_sum_y;    /* baselines, work area */
+static int det_wd = 1000, art_w, art_h;         /* the width laid out for; the backdrop's box */
 
 static const plex_item *det_item(void)
 {
@@ -1318,12 +1328,42 @@ static int det_is(const plex_item *it)
     return d && it && it->rating_key && d->rating_key && !strcmp(d->rating_key, it->rating_key);
 }
 
-/* One video's details, from the server, into S.det. 0 = ok. */
-static int det_fetch(const plex_item *it)
+/* The width the window shows */
+static int vis_width(void)
+{
+    int st[9];
+    if (!S.browser_open)
+        return 4 * (TILE_W + GAP) + GAP;
+    window_state(S.browser_w, st);
+    return st[3] - st[1];
+}
+
+/* The backdrop, for the width laid out for */
+static void det_fetch_art(void)
+{
+    const plex_item *it = det_item();
+    char key[320];
+    S.det_art = NULL;
+    art_w = det_wd;
+    art_h = art_w * 9 / 16;
+    if (art_h > 720)
+        art_h = 720;
+    art_w &= ~((1 << S.xeig) - 1);
+    art_h &= ~((1 << S.yeig) - 1);
+    if (!it || !it->art)
+        return;
+    snprintf(key, sizeof(key), "art:%s@%dx%d", it->art, art_w, art_h);
+    if (!(S.det_art = cache_find(key))) {
+        S.det_art = poster_fetch(it->art, key, art_w >> S.xeig, art_h >> S.yeig, 1);
+        cache_trim();
+    }
+}
+
+/* One video's details, from the server, into S.det (and its backdrop,
+   when it's to be shown). 0 = ok. */
+static int det_fetch(const plex_item *it, int with_art)
 {
     plex_list d;
-    char key[300];
-    const char *art;
     hourglass(1);
     if (plex_details(&S.px, it, &d) != 0) {
         hourglass(0);
@@ -1335,13 +1375,8 @@ static int det_fetch(const plex_item *it)
     S.det = d;
     S.have_det = 1;
     S.det_art = NULL;
-    if ((art = d.v[0].art) != NULL) {
-        snprintf(key, sizeof(key), "art:%s", art);
-        if (!(S.det_art = cache_find(key))) {
-            S.det_art = poster_fetch(art, key, DET_W >> S.xeig, ART_H >> S.yeig, 1);
-            cache_trim();
-        }
-    }
+    if (with_art)
+        det_fetch_art();
     hourglass(0);
     return 0;
 }
@@ -1351,7 +1386,7 @@ static void det_button(int id, const char *label, int *x, int *y)
     int w = draw_width(D_BOLD, label) + 64 + (id == D_PLAY ? 36 : id == D_SUBS ? 40 : 0);
     if (S.nbtn >= DET_BTN_MAX)
         return;
-    if (*x + w > DET_W - 40 && *x > 40) {   /* a new row */
+    if (*x + w > det_wd - 40 && *x > 40) {  /* a new row */
         *x = 40;
         *y -= BTN + 20;
     }
@@ -1365,19 +1400,22 @@ static void det_button(int id, const char *label, int *x, int *y)
     *x += w + 20;
 }
 
-/* The texts and buttons, where they go, and the window's height */
+/* The texts and buttons, where they go, and the page's height */
 static void det_layout(void)
 {
     const plex_item *it = det_item();
     static play_t p;
     caps_t k;
     char t[400], when[32];
-    int x = 40, y = -ART_H - 28, n = 0;
+    int x = 40, y, n = 0;
     if (!it)
         return;
+    det_wd = vis_width();
+    if (!art_w)
+        art_h = 562;
+    y = -HEADER_H - art_h - 28;
     latin1(it->title, S.det_title, sizeof(S.det_title));
-    draw_fit(D_TITLE, S.det_title, DET_W - 80);
-    snprintf(det_wtitle, sizeof(det_wtitle), "%s", S.det_title);
+    draw_fit(D_TITLE, S.det_title, det_wd - 80);
     /* year, how long, the rating: "2008  .  1h 30m  .  PG  .  7.5" */
     t[0] = 0;
 #define META(...) do { if (n++) strcat(t, "   \xb7   "); snprintf(t + strlen(t), sizeof(t) - strlen(t), __VA_ARGS__); } while (0)
@@ -1429,47 +1467,47 @@ static void det_layout(void)
     caps_for(S.quality, &k);
     caps_play(&S.px, it, &k, S.direct, 1, &p);
     latin1(p.why, S.det_how, sizeof(S.det_how));
-    S.det_how_n = draw_wrap(D_BODY, S.det_how, DET_W - 80, S.det_how_l, 2);
+    S.det_how_n = draw_wrap(D_BODY, S.det_how, det_wd - 80, S.det_how_l, 2);
     det_how_y = y - 12;
     y -= 20 + 40 * S.det_how_n;
     /* the summary */
     {
         static char sum[2400];
         latin1(it->summary ? it->summary : "", sum, sizeof(sum));
-        S.det_nlines = draw_wrap(D_BODY, sum, DET_W - 80, S.det_lines, 10);
+        S.det_nlines = draw_wrap(D_BODY, sum, det_wd - 80, S.det_lines, 10);
     }
     det_sum_y = y - 12;
     S.det_h = -(det_sum_y - S.det_nlines * 40) + 40;
 }
 
-static void det_redraw(int ox, int oy, int cy0, int cy1)
+static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
 {
     const plex_item *it = det_item();
+    int top = -HEADER_H;
     (void)cy0;
+    (void)vis_w;
     if (!it)
         return;
-    if (cy1 > -ART_H) {
+    if (cy1 > top - art_h) {
         if (S.det_art && S.det_art->area)
-            plot_sprite(S.det_art, 0, -ART_H, DET_W, 0);
+            plot_sprite(S.det_art, 0, top - art_h, art_w, top);
         else
-            draw_rect(ox, oy - ART_H, ox + DET_W, oy, RGB(34, 37, 44));
-        draw_text(D_TITLE, ox + 40, oy - ART_H + 84, S.det_title, C_TEXT, C_BG);
-        draw_text(D_BODY, ox + 40, oy - ART_H + 34, S.det_meta, C_SUB, C_BG);
+            draw_rect(ox, oy + top - art_h, ox + det_wd, oy + top, RGB(34, 37, 44));
+        draw_text(D_TITLE, ox + 40, oy + top - art_h + 84, S.det_title, C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - art_h + 34, S.det_meta, C_SUB, C_BG);
     }
     for (int i = 0; i < S.nbtn; i++) {
         int x0 = ox + S.btn[i].x0, y0 = oy + S.btn[i].y0, x1 = ox + S.btn[i].x1, y1 = oy + S.btn[i].y1;
         unsigned bg = S.btn[i].id == D_PLAY ? C_ACCENT : C_CARD;
         int tx = x0 + 32;
-        draw_round(x0, y0, x1, y1, BTN / 2, bg);
+        draw_round(x0, y0, x1, y1, BTN / 2, bg, C_BG);
         if (S.btn[i].id == D_PLAY) {            /* a play triangle */
-            draw_tri(tx, y0 + 16, tx, y1 - 16, tx + 26, (y0 + y1) / 2, C_TEXT);
+            draw_glyph(G_PLAY, tx - 4, y0 + 16, tx + 28, y1 - 16, C_TEXT, bg);
             tx += 36;
         }
         draw_text(D_BOLD, tx, y0 + 22, S.btn[i].label, C_TEXT, bg);
-        if (S.btn[i].id == D_SUBS) {            /* a menu arrow */
-            int ax = x1 - 44;
-            draw_tri(ax, y0 + 38, ax + 20, y0 + 38, ax + 10, y0 + 26, C_TEXT);
-        }
+        if (S.btn[i].id == D_SUBS)              /* a menu arrow */
+            draw_glyph(G_DOWN, x1 - 52, y0 + 16, x1 - 20, y1 - 16, C_TEXT, bg);
     }
     if (det_subs_y)
         draw_text(D_BODY, ox + 40, oy + det_subs_y, "No subtitles", C_SUB, C_BG);
@@ -1479,54 +1517,65 @@ static void det_redraw(int ox, int oy, int cy0, int cy1)
         draw_text(D_BODY, ox + 40, oy + det_sum_y - l * 40, S.det_lines[l], C_TEXT, C_BG);
 }
 
+static void set_where(void);
+
+/* The page laid out again, its extent set, and redrawn */
 static void det_repaint(void)
 {
-    int b[4];
-    _kernel_swi_regs r;
-    _kernel_swi_regs t;
-    if (!S.det_open)
+    if (S.page != PG_DETAILS || !S.browser_open)
         return;
     det_layout();
-    b[0] = 0; b[1] = -S.det_h; b[2] = DET_W; b[3] = 0;
-    r.r[0] = S.det_w;
-    r.r[1] = (intptr_t)b;
-    swi(Wimp_SetExtent, &r);
-    force_redraw(S.det_w, 0, -0x7FFFFFF, DET_W, 0);
-    t.r[0] = S.det_w;               /* its title bar too (RISC OS 5) */
-    t.r[1] = 0x4B534154;
-    t.r[2] = 3;
-    swi(Wimp_ForceRedraw, &t);
+    set_extent();
+    set_where();
+    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
 }
 
-/* The details of list item i, in the details window (opened beside the
-   browser if it wasn't open) */
+static void browser_open(void);
+
+/* List item i's details, in the window */
 static void det_show(int i)
 {
     const plex_item *it = i >= 0 && i < S.list.n ? &S.list.v[i] : NULL;
+    int st[9];
     if (!it || it->kind != PI_VIDEO)
         return;
-    if (!det_is(it) && det_fetch(it) != 0)
-        return;
-    S.det_i = i;
-    det_layout();
-    if (!S.det_open) {
-        int st[9], x0, y1, h = S.det_h;
-        if (h > S.scr_h - 240)
-            h = S.scr_h - 240;
-        window_state(S.browser_w, st);
-        x0 = S.browser_open ? st[3] + 24 : (S.scr_w - DET_W) / 2;
-        if (x0 + DET_W > S.scr_w - 24)
-            x0 = S.scr_w - DET_W - 24;
-        y1 = S.browser_open ? st[4] : S.scr_h - 120;
-        S.det_open = 1;
-        det_repaint();
-        open_front(S.det_w, x0, y1 - h, x0 + DET_W, y1, 0, 0);
-    } else {
-        int st[9];
-        det_repaint();
-        window_state(S.det_w, st);
-        open_front(S.det_w, st[1], st[2], st[3], st[4], 0, 0);
+    if (!S.browser_open)
+        browser_open();
+    det_wd = vis_width();
+    if (!det_is(it)) {
+        if (det_fetch(it, 1) != 0)
+            return;
+    } else if (!S.det_art || art_w != (det_wd & ~((1 << S.xeig) - 1))) {
+        hourglass(1);
+        det_fetch_art();
+        hourglass(0);
     }
+    window_state(S.browser_w, st);
+    if (S.page == PG_GRID)
+        S.grid_sy = st[6];          /* to come back to */
+    S.page = PG_DETAILS;
+    S.det_i = i;
+    if (S.sel != i)
+        S.sel = i;
+    S.hover = -1;
+    det_repaint();
+    open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
+    set_caret(S.browser_w, -1, NULL);
+}
+
+/* Back from the details to the grid, where it was */
+static void det_leave(void)
+{
+    int st[9];
+    if (S.page != PG_DETAILS)
+        return;
+    S.page = PG_GRID;
+    set_extent();
+    set_where();
+    window_state(S.browser_w, st);
+    open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, S.grid_sy);
+    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+    S.posters_wanted = 1;
 }
 
 /* The details again from the server (a choice changed) */
@@ -1540,22 +1589,15 @@ static void det_refresh(void)
     snprintf(rk, sizeof(rk), "%s", it->rating_key);
     memset(&key, 0, sizeof(key));
     key.rating_key = rk;
-    if (det_fetch(&key) == 0)
+    if (det_fetch(&key, S.page == PG_DETAILS) == 0)
         det_repaint();
-}
-
-static void det_close(void)
-{
-    if (S.det_open)
-        close_window(S.det_w);
-    S.det_open = 0;
 }
 
 /* The details button at a screen point, or 0 */
 static int det_button_at(int sx, int sy)
 {
     int st[9], wx, wy;
-    window_state(S.det_w, st);
+    window_state(S.browser_w, st);
     wx = sx - (st[1] - st[5]);
     wy = sy - (st[4] - st[6]);
     for (int i = 0; i < S.nbtn; i++)
@@ -1564,9 +1606,105 @@ static int det_button_at(int sx, int sy)
     return 0;
 }
 
-/* ---- sign-in -------------------------------------------------------------------- */
+/* ---- sign-in: a page of the window ------------------------------------------------- */
+
+/* Before a server is chosen the window shows the sign-in page: the code
+   to type at plex.tv/link (checked every 2 seconds), New code, and a
+   server's address and token for signing in without plex.tv. The two
+   fields are drawn here and typed into here (the window has the caret):
+   Tab or the arrow keys move between them, Return goes on. */
 
 static void choose_server(void);
+
+static struct { int id, x0, y0, x1, y1; } si_box[4];
+
+static void si_layout(void)
+{
+    int top = -HEADER_H;
+    const int ids[4] = { S_NEWCODE, S_ADDR, S_TOK, S_USE };
+    const int y1s[4] = { top - 372, top - 572, top - 652, top - 736 };
+    const int x0s[4] = { 40, 220, 220, 220 };
+    const int ws[4] = { 0, 620, 620, 0 };
+    for (int i = 0; i < 4; i++) {
+        int w = ws[i] ? ws[i] : draw_width(D_BOLD, i == 0 ? "New code" : "Use these") + 64;
+        si_box[i].id = ids[i];
+        si_box[i].x0 = x0s[i];
+        si_box[i].x1 = x0s[i] + w;
+        si_box[i].y1 = y1s[i];
+        si_box[i].y0 = y1s[i] - BTN;
+    }
+}
+
+static int si_hit(int sx, int sy)
+{
+    int st[9], wx, wy;
+    window_state(S.browser_w, st);
+    wx = sx - (st[1] - st[5]);
+    wy = sy - (st[4] - st[6]);
+    si_layout();
+    for (int i = 0; i < 4; i++)
+        if (wx >= si_box[i].x0 && wx < si_box[i].x1 && wy >= si_box[i].y0 && wy < si_box[i].y1)
+            return si_box[i].id;
+    return 0;
+}
+
+static void signin_redraw(int ox, int oy, int vis_w)
+{
+    int top = -HEADER_H;
+    char t[300];
+    (void)vis_w;
+    si_layout();
+    draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in with a code", C_TEXT, C_BG);
+    draw_text(D_BODY, ox + 40, oy + top - 124, "On a phone or computer, go to plex.tv/link and type this code:",
+              C_SUB, C_BG);
+    {   /* the code, big and spaced out, on a card */
+        size_t n = 0;
+        for (const char *c = S.code; *c && n + 3 < sizeof(t); c++) {
+            t[n++] = *c;
+            if (c[1]) { t[n++] = ' '; t[n++] = ' '; }
+        }
+        t[n] = 0;
+        draw_round(ox + 40, oy + top - 292, ox + 460, oy + top - 160, 20, C_CARD, C_BG);
+        draw_text(D_TITLE, ox + 250 - draw_width(D_TITLE, t) / 2, oy + top - 244, t, C_TEXT, C_CARD);
+    }
+    draw_text(D_BODY, ox + 490, oy + top - 244, S.si_status, C_SUB, C_BG);
+    draw_rect(ox + 40, oy + top - 468, ox + 1000, oy + top - 466, C_CARD);
+    draw_text(D_BOLD, ox + 40, oy + top - 520, "Or a server on your network", C_TEXT, C_BG);
+    draw_text(D_BODY, ox + 40, oy + top - 616, "Address", C_SUB, C_BG);
+    draw_text(D_BODY, ox + 40, oy + top - 696, "Token", C_SUB, C_BG);
+    for (int i = 0; i < 4; i++) {
+        int x0 = ox + si_box[i].x0, y0 = oy + si_box[i].y0, x1 = ox + si_box[i].x1, y1 = oy + si_box[i].y1;
+        if (si_box[i].id == S_ADDR || si_box[i].id == S_TOK) {
+            int f = si_box[i].id == S_TOK, tx = x0 + 20;
+            if (f) {                /* the token shown as dots */
+                size_t n = strlen(S.si_tok);
+                if (n > 60) n = 60;
+                memset(t, 0xB7, n);
+                t[n] = 0;
+            } else {
+                snprintf(t, sizeof(t), "%s", S.si_addr);
+            }
+            if (S.field == f)       /* the caret's field: a blue edge */
+                draw_round(x0 - 4, y0 - 4, x1 + 4, y1 + 4, 16, C_ACCENT, C_BG);
+            draw_round(x0, y0, x1, y1, 12, C_CARD, S.field == f ? C_ACCENT : C_BG);
+            draw_text(D_BODY, tx, y0 + 22, t, C_TEXT, C_CARD);
+            if (S.field == f) {     /* the caret */
+                int cx = tx + draw_width(D_BODY, t) + 2;
+                draw_rect(cx, y0 + 14, cx + 4, y1 - 14, C_ACCENT);
+            }
+        } else {
+            unsigned bg = si_box[i].id == S_USE ? C_ACCENT : C_CARD;
+            draw_round(x0, y0, x1, y1, BTN / 2, bg, C_BG);
+            draw_text(D_BOLD, x0 + 32, y0 + 22, si_box[i].id == S_USE ? "Use these" : "New code", C_TEXT, bg);
+        }
+    }
+}
+
+static void si_redraw_fields(void)
+{
+    if (S.browser_open && S.page == PG_SIGNIN)
+        force_redraw(S.browser_w, 0, -HEADER_H - 740, S.scr_w, -HEADER_H - 540);
+}
 
 static void pin_new(void)
 {
@@ -1578,39 +1716,67 @@ static void pin_new(void)
         S.pin_id = 0;
         snprintf(S.code, sizeof(S.code), "-");
         si_set_status("Can't reach plex.tv: %s", S.px.err);
-        refresh_icon(S.signin_w, SI_CODE);
         return;
     }
     hourglass(0);
     S.pin_id = id;
     S.pin_next = now_cs() + PIN_EVERY;
     snprintf(S.code, sizeof(S.code), "%s", code);
-    refresh_icon(S.signin_w, SI_CODE);
-    si_set_status("Waiting for the code to be typed in...");
+    si_set_status("Waiting for the code...");
 }
 
+/* The window, showing the sign-in page */
 static void signin_open(void)
 {
-    int w = 720, h = 520, x0 = (S.scr_w - w) / 2, y0 = (S.scr_h - h) / 2;
     int st[9];
-    if (S.signin_open) {
-        window_state(S.signin_w, st);
-        open_front(S.signin_w, st[1], st[2], st[3], st[4], 0, 0);
-    } else {
-        open_front(S.signin_w, x0, y0, x0 + w, y0 + h, 0, 0);
-        S.signin_open = 1;
-    }
-    set_caret(S.signin_w, SI_ADDR, S.si_addr);
+    S.page = PG_SIGNIN;
+    S.hover = -1;
+    S.posters_wanted = 0;
+    if (!S.browser_open)
+        browser_open();
+    set_where();
+    set_extent();
+    set_status("Sign in to see your films and programmes.");
+    window_state(S.browser_w, st);
+    open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
+    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+    set_caret(S.browser_w, -1, NULL);
     if (!S.pin_id)
         pin_new();
 }
 
 static void signin_close(void)
 {
-    if (S.signin_open)
-        close_window(S.signin_w);
-    S.signin_open = 0;
-    S.pin_id = 0;
+    S.pin_id = 0;                   /* no more checks */
+}
+
+/* A key on the sign-in page: 1 if it was used */
+static int signin_key(int k)
+{
+    char *f = S.field ? S.si_tok : S.si_addr;
+    size_t size = S.field ? sizeof(S.si_tok) : sizeof(S.si_addr), n = strlen(f);
+    if ((k >= 32 && k < 127) || (k >= 160 && k < 256)) {
+        if (n + 1 < size) {
+            f[n] = (char)k;
+            f[n + 1] = 0;
+        }
+    } else if (k == 8 || k == 0x7F) {
+        if (n)
+            f[n - 1] = 0;
+    } else if (k == 21) {           /* Ctrl-U: empty it */
+        f[0] = 0;
+    } else if (k == 9 || k == 0x18E || k == 0x18F) {
+        S.field = !S.field;
+    } else if (k == 13) {
+        if (!S.field)
+            S.field = 1;
+        else
+            return 2;               /* Use these */
+    } else {
+        return 0;
+    }
+    si_redraw_fields();
+    return 1;
 }
 
 static void pin_check(void)
@@ -1640,6 +1806,8 @@ static void use_manual(void)
     S.si_tok[strcspn(S.si_tok, "\r\n")] = 0;
     if (!*a) {
         si_set_status("Type the server's address first (such as 192.168.1.10).");
+        S.field = 0;
+        si_redraw_fields();
         return;
     }
     si_set_status("Trying %s...", a);
@@ -1719,7 +1887,7 @@ static void sign_out(void)
         plex_list_free(&S.list);
     S.have_list = 0;
     S.nhist = 0;
-    det_close();
+    S.page = PG_GRID;
     if (S.have_det)
         plex_list_free(&S.det);
     S.have_det = 0;
@@ -2296,7 +2464,7 @@ static void item_menu_build(void)
     save_prepare(it);
     /* a video's subtitle tracks are only in its details */
     if (video && !det_is(it))
-        det_fetch(it);
+        det_fetch(it, 0);
     if (video && det_is(it))
         subs_menu_build();
     menu_begin(&m_item, it ? S.disp[S.sel].line[0] : APP);
@@ -2363,7 +2531,7 @@ static void set_psize(int k)
         set_extent();
         force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
     }
-    if (S.det_open)
+    if (S.page == PG_DETAILS)
         det_refresh();              /* its backdrop went with the cache */
     S.posters_wanted = 1;
 }
@@ -2440,8 +2608,7 @@ static int menu_select(const int *sel)
             if (sel[1] >= 0 && sel[1] < Q_COUNT) {
                 S.quality = sel[1];
                 choices_save();
-                if (S.det_open)
-                    det_repaint();
+                det_repaint();
             }
             break;
         case MB_SIZE:
@@ -2450,8 +2617,7 @@ static int menu_select(const int *sel)
         case MB_DIRECT:
             S.direct = !S.direct;
             choices_save();
-            if (S.det_open)
-                det_repaint();      /* how it will play */
+            det_repaint();          /* how it will play */
             break;
         case MB_SIGNOUT:
             sign_out();
@@ -2593,13 +2759,6 @@ static void click(int *b)
             bar_select();
         return;
     }
-    if (w == S.signin_w) {
-        if (i == SI_NEWCODE)
-            pin_new();
-        else if (i == SI_USE)
-            use_manual();
-        return;
-    }
     if (w == S.save_w) {
         if (i == SV_FILE && (buttons & 0x50))
             drag_start();
@@ -2607,23 +2766,38 @@ static void click(int *b)
             save_ok();
         return;
     }
-    if (w == S.det_w) {
-        int id = det_button_at(b[0], b[1]);
-        set_caret(S.det_w, -1, NULL);
-        if (buttons & 2)
-            item_menu_open(b[0], b[1]);
-        else if (id && (buttons & 5))
-            det_action(id, b[0], b[1]);
-        return;
-    }
     if (w == S.browser_w) {
-        int t, h = header_hit(b[0], b[1]);
+        int t, h = S.page != PG_SIGNIN ? header_hit(b[0], b[1]) : 0;
         set_caret(S.browser_w, -1, NULL);
         if (h && (buttons & 0x505)) {           /* Back, Refresh */
             if (h == B_BACK)
                 go_back();
+            else if (S.page == PG_DETAILS)
+                det_refresh();
             else
                 refresh_list();
+            return;
+        }
+        if (S.page == PG_SIGNIN) {
+            int id = si_hit(b[0], b[1]);
+            if (!(buttons & 0x505))
+                return;
+            if (id == S_NEWCODE)
+                pin_new();
+            else if (id == S_USE)
+                use_manual();
+            else if (id == S_ADDR || id == S_TOK) {
+                S.field = id == S_TOK;
+                si_redraw_fields();
+            }
+            return;
+        }
+        if (S.page == PG_DETAILS) {
+            int id = det_button_at(b[0], b[1]);
+            if (buttons & 2)
+                item_menu_open(b[0], b[1]);
+            else if (id && (buttons & 0x505))
+                det_action(id, b[0], b[1]);
             return;
         }
         t = tile_at(b[0], b[1]);
@@ -2645,24 +2819,39 @@ static void click(int *b)
 
 static void key(int *b)
 {
-    int w = b[0], i = b[1], k = b[6];
+    int w = b[0], k = b[6];
     _kernel_swi_regs r;
-    if (w == S.signin_w && k == 13 && (i == SI_TOK || i == SI_ADDR)) {
-        use_manual();
-        return;
-    }
     if (w == S.save_w && k == 13) {
         save_ok();
         return;
     }
-    if (w == S.det_w && (k == 13 || k == 0x1B)) {
-        if (k == 13)
-            det_action(D_PLAY, 0, 0);
-        else
-            det_close();
-        return;
+    if (w == S.browser_w && S.page == PG_SIGNIN) {
+        int u = signin_key(k);
+        if (u == 2)
+            use_manual();
+        if (u)
+            return;
     }
-    if (w == S.browser_w) {
+    if (w == S.browser_w && S.page == PG_DETAILS) {
+        int n = S.have_list ? S.list.n : 0, s = S.det_i;
+        switch (k) {
+        case 13:
+            det_action(D_PLAY, 0, 0);
+            return;
+        case 8: case 0x1B: case 0x7F:
+            det_leave();
+            return;
+        case 0x18C: case 0x18D:     /* the video before or after it in the list */
+            if (s >= 0)
+                for (int j = s + (k == 0x18C ? -1 : 1); j >= 0 && j < n; j += k == 0x18C ? -1 : 1)
+                    if (S.list.v[j].kind == PI_VIDEO) {
+                        det_show(j);
+                        break;
+                    }
+            return;
+        }
+    }
+    if (w == S.browser_w && S.page == PG_GRID) {
         int n = S.have_list ? S.list.n : 0, s = S.sel;
         switch (k) {
         case 8: case 0x1B: case 0x7F:
@@ -2696,22 +2885,25 @@ static void open_request(int *b)
         S.posters_wanted = 1;       /* scrolled or resized: more may be in view */
         if (cols != S.cols) {
             S.cols = cols;
-            set_extent();
-            force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+            if (S.page == PG_GRID) {
+                set_extent();
+                force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+            }
         }
+        if (S.page == PG_DETAILS && w != det_wd)
+            det_repaint();          /* the text wrapped to the new width */
     }
 }
 
 static void close_request(int *b)
 {
-    if (b[0] == S.signin_w)
-        signin_close();
-    else if (b[0] == S.browser_w) {
+    if (b[0] == S.browser_w) {
         close_window(S.browser_w);
         S.browser_open = 0;
         S.in_browser = 0;
-    } else if (b[0] == S.det_w)
-        det_close();
+        if (S.page == PG_SIGNIN)
+            signin_close();
+    }
 }
 
 static int pending_find(int ref)
@@ -2788,11 +2980,11 @@ static int message(int event, int *b)
         break;
     case MSG_MODECHANGE:
         read_screen();
-        draw_init();
+        draw_init(S.xeig, S.yeig);
         cache_free_all();
         if (S.have_list)
             make_disp();
-        if (S.det_open)
+        if (S.page == PG_DETAILS)
             det_refresh();
         if (S.browser_open) {
             set_extent();
@@ -2811,7 +3003,7 @@ static void nulls(void)
         save_step();
         return;
     }
-    if (S.pin_id && S.signin_open && now_cs() - S.pin_next >= 0) {
+    if (S.pin_id && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.pin_next >= 0) {
         pin_check();
         return;
     }
@@ -2877,7 +3069,7 @@ int plexro_main(int argc, char **argv)
     choices_load();
     choices_save();                 /* the client id is kept from the start */
     read_screen();
-    draw_init();
+    draw_init(S.xeig, S.yeig);
     snprintf(S.code, sizeof(S.code), "-");
     snprintf(S.title, sizeof(S.title), APP);
     make_windows();
@@ -2889,7 +3081,7 @@ int plexro_main(int argc, char **argv)
         int reason = Wimp_Poll;
         if (S.save.active || S.posters_wanted) {
             /* null events at once */
-        } else if (S.pin_id && S.signin_open) {
+        } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
             r.r[2] = S.pin_next;
         } else if (S.in_browser && S.browser_open) {
@@ -2973,14 +3165,18 @@ int ui_test_posters(int *failed)
         *failed = f;
     return n;
 }
-int ui_test_windows(int *signin, int *browser, int *save, int *det)
+int ui_test_windows(int *browser, int *save)
 {
-    *signin = S.signin_w;
     *browser = S.browser_w;
     *save = S.save_w;
-    *det = S.det_w;
-    return S.signin_open | S.browser_open << 1 | S.det_open << 2;
+    return S.browser_open;
 }
+int ui_test_page(void) { return S.page; }
+const char *ui_test_signin(int what)
+{
+    return what == 0 ? S.code : what == 1 ? S.si_status : what == 2 ? S.si_addr : S.si_tok;
+}
+int ui_test_field(void) { return S.field; }
 int ui_test_button_xy(int w, int id, int *x, int *y)
 {
     int st[9], x0 = 0, y0 = 0, x1 = 0, y1 = 0, found = 0;
@@ -2989,7 +3185,15 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
         header_button(id, st[3] - st[1], &x0, &y0, &x1, &y1);
         found = 1;
     }
-    for (int i = 0; w == S.det_w && i < S.nbtn; i++)
+    if (w == S.browser_w && S.page == PG_SIGNIN) {
+        si_layout();
+        for (int i = 0; i < 4; i++)
+            if (si_box[i].id == id) {
+                x0 = si_box[i].x0; y0 = si_box[i].y0; x1 = si_box[i].x1; y1 = si_box[i].y1;
+                found = 1;
+            }
+    }
+    for (int i = 0; w == S.browser_w && S.page == PG_DETAILS && i < S.nbtn; i++)
         if (S.btn[i].id == id) {
             x0 = S.btn[i].x0; y0 = S.btn[i].y0; x1 = S.btn[i].x1; y1 = S.btn[i].y1;
             found = 1;
