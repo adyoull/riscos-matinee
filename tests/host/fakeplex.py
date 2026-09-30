@@ -45,7 +45,7 @@ MOVIES = [
     movie(104, "Remux", 2015, "h264", 1920, 1080, 30000, acodec="truehd", container="mkv"),
     movie(105, "Sixty", 2021, "h264", 1920, 1080, 8000, fps="60"),
     movie(106, "Dvd Rip", 1999, "mpeg2video", 720, 576, 5000, acodec="ac3", container="mpeg",
-          profile="main", fps="PAL", size=4200000000, views=1),
+          profile="main", fps="PAL", size=4700000000, views=1),
 ]
 
 
