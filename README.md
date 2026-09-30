@@ -6,15 +6,16 @@ go to Reel directly. Everything else is converted by the server into a stream Re
 handle (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS
 can play.
 
-**Status: phase 1, a test build (0.1.0-test2).** 0.1.0-test1 worked on a Raspberry Pi.
+**Status: phase 1, a test build (0.1.0-test3).** test1 and test2 worked on a Raspberry Pi.
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
 - Sign-in with a plex.tv/link code, or a server's address and token typed by hand.
 - Servers, and a dark poster browser: Continue watching, films, TV shows, seasons and
   episodes, with shadows, a highlight under the pointer, and three poster sizes.
-- A details window: the backdrop, title, year, running time, rating, summary and
-  buttons.
+- One window: the sign-in page, the posters, and a details page (the backdrop, title,
+  year, running time, rating, summary and buttons). Smooth, anti-aliased buttons and
+  corners.
 - Subtitles: choose a track (kept on the server); the server burns it in.
 - The direct-play or transcode decision, and the hand-off to ReelEGL or Reel.
 - Resume, Play from start, Mark watched or unwatched.
@@ -44,7 +45,7 @@ its LICENSE), and `third_party/pthreadticker` is revised BSD.
 | `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.01, which `!Run` loads |
 | `tests/host/fakeplex.py` | A stand-in for plex.tv and a Plex Media Server |
 | `tests/host/core_test.c` | 98 checks against it, with Reel's own `sources.c` reading the hand-off |
-| `tests/host/ui_test.c` | The front end against a scripted fake Wimp, under qemu-arm (202 checks); it also draws the windows into pictures |
+| `tests/host/ui_test.c` | The front end against a scripted fake Wimp, under qemu-arm (219 checks); it also draws the windows into pictures |
 | `tests/host/net_sock.c` | `net.h` over plain sockets, for ui_test |
 | `tests/host/run.sh`, `mutate.sh` | Build and run the tests; break the code on purpose and check they notice |
 | `docs/` | Feasibility, design, and the toolchain and build |
@@ -59,7 +60,7 @@ REEL_SRC=../riscos-ffmpeg tests/host/run.sh
 REEL_SRC=../riscos-ffmpeg tests/host/mutate.sh
 ```
 
-Expected: `core_test: 98 checks, 0 failed`, `ui_test: 202 checks, 0 failed`, and
-`18 mutations, 0 survived`. ui_test also leaves `browser.ppm` and `details.ppm` in its
-output directory: the two windows as its fake Wimp drew them (with a stand-in font and
+Expected: `core_test: 98 checks, 0 failed`, `ui_test: 219 checks, 0 failed`, and
+`21 mutations, 0 survived`. ui_test also leaves `signin.ppm`, `browser.ppm` and `details.ppm` in its
+output directory: the window's three pages as its fake Wimp drew them (with a stand-in font and
 made-up posters).

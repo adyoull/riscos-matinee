@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test2
+!PlexRO - a Plex client for RISC OS                  0.1.0-test3
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -19,15 +19,18 @@ appears on the icon bar. The first time, click Select on it to sign in.
 
 Signing in
 ----------
-The sign-in window shows a four-letter code. On any computer or phone, go
-to plex.tv/link, sign in to your Plex account there, and type the code.
-PlexRO checks every 2 seconds, and carries on by itself once the code has
-been typed: it finds your servers and opens the browser. PlexRO never sees
-your password. A code runs out after a while: New code gets another.
+PlexRO has one window. Until you've signed in, it shows the sign-in page
+with a four-letter code. On any computer or phone, go to plex.tv/link,
+sign in to your Plex account there, and type the code. PlexRO checks every
+2 seconds, and carries on by itself once the code has been typed: it finds
+your servers and shows your libraries. PlexRO never sees your password. A
+code runs out after a while: New code gets another.
 
-A server on your own network can be used without plex.tv: type its
-address (such as 192.168.1.10; :32400 is added) and a token (the server's
-or your account's X-Plex-Token), then click Use these.
+A server on your own network can be used without plex.tv: click in
+Address and type its address (such as 192.168.1.10; :32400 is added),
+then Tab (or Return) to Token and type a token (the server's or your
+account's X-Plex-Token; it's shown as dots), then Return or Use these.
+Backspace deletes, Ctrl-U empties the field.
 
 The browser
 -----------
@@ -39,9 +42,9 @@ haven't watched; a blue bar on a poster shows how far you got. The
 selected poster has a blue ring, and the one under the pointer a grey one.
 
   click          select
-  double-click   open a library, show or season; a video's details
+  double-click   open a library, show or season; a video's details page
   Return         open, or play, the poster that's selected
-  I              the selected video's details
+  I              the selected video's details page
   arrow keys     move the selection
   Backspace, Escape, Delete  go back
 
@@ -53,7 +56,7 @@ libraries open; music and photo libraries aren't handled yet.
 
 Menu on a poster:
   Play (Open)         play it (open a folder)
-  Details...          its details window (below)
+  Details...          its details page (below)
   Resume from h:mm:ss where Plex says you stopped. The server streams it
                       from there (copying the video when it can)
   Play from start     from the beginning
@@ -62,17 +65,21 @@ Menu on a poster:
   Mark watched, Mark unwatched
   Back, Refresh
 
-The details window
-------------------
-A video's backdrop, its title, year, running time, age rating and
-score, its summary, and how it will play. Buttons: Play, Resume from
-h:mm:ss, From the start, Save file, and Mark watched (or unwatched), and
-its subtitles. It opens beside the browser, and follows the selection:
-click another video to see its details. Return plays; Escape closes it.
+The details page
+----------------
+Double-click a film or episode (or press I) and the window shows its
+details: its backdrop across the top, its title, year, running time, age
+rating and score, its summary, and how it will play. Buttons: Play,
+Resume from h:mm:ss, From the start, Save file, Mark watched (or
+unwatched), and its subtitles.
+
+  Return         play
+  Left, Right    the video before or after it in the list
+  Back, Backspace, Escape  back to the posters, where you were
 
 Subtitles
 ---------
-Choose them on the Subtitles button in the details window, or Subtitles
+Choose them on the Subtitles button on the details page, or Subtitles
 on a poster's menu: None, or one of the video's tracks (in the file, or a
 file of their own beside it on the server). The choice is kept on the
 server, so the Plex apps on your other devices show the same.
@@ -80,7 +87,7 @@ server, so the Plex apps on your other devices show the same.
 For now Reel can't be told which subtitles to show, so a video with
 subtitles chosen is converted by the server, which burns them into the
 picture (any kind: text, DVD or Blu-ray). The status line and the details
-say so. Choose None to play it directly again.
+page say so. Choose None to play it directly again.
 
 Playing
 -------
