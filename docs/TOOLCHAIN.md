@@ -72,7 +72,7 @@ Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`
 
 - `riscos-ffmpeg/releases/download/v5.1.10-riscos13/riscos-ffmpeg-devkit-5.1.10-riscos13.tgz`:
   libavformat and the rest, built against UnixLib 5.0.2, with AcornSSL https
-  (patch 0018).
+  (patch 0018), and `libreelcore.a` with `reelcore.h`: the built-in player's core.
 - `riscos-mesa/releases/download/v20.3.5-8/riscos-mesa-devkit-20.3.5-8.tgz`: libz now,
   and libEGL and libOSMesa for a later embedded ReelEGL.
 - `riscos-ffmpeg/releases/download/reel-0.1.20/Reel-0.1.20.zip`: the players, for testing
@@ -87,10 +87,11 @@ build/package.sh
 
 `build/build.sh` compiles `src/*.c` and cJSON with `-O2 -march=armv7-a
 -mfpu=neon-vfpv3 -mfloat-abi=hard -fstack-clash-protection -D_FILE_OFFSET_BITS=64`. It
-links them statically with libavformat, libavcodec, libswresample, libavutil, the codec
-libraries (dav1d, x264, LAME, Opus, Vorbis, Ogg) and zlib. The codec libraries are only
-there because libavformat pulls in its format list (its file
-protocol checks names against every format).
+links them statically with reelcore, libavfilter, libpostproc, libavformat, libavcodec,
+libswresample, libswscale, libavutil, the codec libraries (dav1d, x264, LAME, Opus,
+Vorbis, Ogg) and zlib. The codec libraries are there because libavformat pulls in its
+format list (its file protocol checks names against every format). SDL2 isn't linked: reelcore's
+calls to SDL's audio are answered by `src/sdlstub.c`.
 
 The results, in `build/out/`:
 
@@ -121,7 +122,9 @@ REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/mutate.sh
 ```
 
 ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h` (from
-`REEL_SRC`), and leaves `signin.ppm`, `browser.ppm` and `details.ppm` in `OUT`.
+`REEL_SRC`, which also gives `reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
+`details.ppm`, `player.ppm` and `upnext.ppm` in `OUT`. It links
+`tests/host/fake_reelcore.c` in place of reelcore.
 
 `QEMU` is optional. riscos-ffmpeg's patched qemu (`tools-bin/qemu-arm-aligntrap`) also
 traps unaligned accesses in the program's own code, as RISC OS does. The plain

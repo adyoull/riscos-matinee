@@ -1,11 +1,12 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test4
+!PlexRO - a Plex client for RISC OS                  0.1.0-test5
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
-plays them in ReelEGL or Reel, the video players from riscos-ffmpeg.
-Files the players can play as they are go to the player directly.
-Everything else is converted by the server, as it plays, into a stream
-the players can handle: H.264 video with stereo AAC sound.
+plays them in its own window, with the player core of riscos-ffmpeg's
+Reel (or hands them to ReelEGL or Reel, if you'd rather). Files it can
+play as they are are played directly. Everything else is converted by
+the server, as it plays, into a stream it can handle: H.264 video with
+stereo AAC sound.
 
 This is a test build.
 
@@ -92,11 +93,55 @@ page say so. Choose None to play it directly again.
 
 Playing
 -------
-PlexRO gives the video to the player chosen on Player on the icon's menu:
-ReelEGL (the default) or Reel. If it's running, it gets the video at
-once; if not, PlexRO starts it. The Filer must have seen the player's
-application (open the directory it's in, or add it to your boot
-sequence), or PlexRO can't find it.
+Player on the icon's menu chooses what plays the video: Built-in (the
+default), ReelEGL or Reel.
+
+Built-in: the video plays in PlexRO's window, which grows to fit it if
+it's narrow. Play carries on from where you stopped (as Resume); From
+the start (or Play from start) begins again. Under the picture: the title and the time, Back, Play or
+Pause, back and on 10 seconds, the position bar (click to go there),
+Stats and Full screen.
+
+  Space          pause, play
+  Left, Right    back, on 10 seconds
+  Down, Up       back, on a minute
+  F              full screen, or back
+  S              the stats (as YouTube's "Stats for nerds"), drawn in
+                 the picture: the connection's speed, how much is read
+                 ahead, the time decoding takes, and so on
+  +, -           louder, quieter
+  Escape         out of full screen; else back to where you were
+  Backspace      back
+  click          pause, play; double-click: full screen
+
+Full screen is a window over the whole screen, still in the desktop:
+other programs carry on. Move the pointer to see the controls.
+
+Menu over the picture: Sound track, Volume, Picture (Fit, Fill (crop) or
+Stretch), Stats, Full screen, Hardware overlay, Stop.
+
+Hardware overlay (on by default): the picture goes to the display
+through the VideoOverlay module, which scales it to the window or the
+screen. Stretching it costs almost nothing, so full screen is as quick
+as a small window. Where there's no overlay (the module is missing, or
+the screen mode is too big), or while a menu or a window is over the
+picture, it's drawn the ordinary way instead.
+
+The server is told where you've got to as it plays, so Continue
+watching and Resume work in the Plex apps on your other devices too. At
+the end of an episode the next one is offered, and starts in 10 seconds
+(Return: now; Escape: back).
+
+To seek in a video the server is converting, PlexRO asks for a new
+stream from that place, which takes a few seconds.
+
+A log of what the player did goes to <Wimp$ScrapDir>.PlexROLog (*Set
+PlexRO$Log off to stop it, or to a file's name).
+
+ReelEGL or Reel: if it's running, it gets the video at once; if not,
+PlexRO starts it. The Filer must have seen the player's application
+(open the directory it's in, or add it to your boot sequence), or
+PlexRO can't find it.
 
 The status line says how it will play:
   "Direct play: ..."         the file itself: nothing is converted
@@ -137,15 +182,16 @@ refused at once.
 Choices
 -------
 Kept in Choices:PlexRO.Choices: the player, the quality, direct play,
-the server in use, and the tokens that sign PlexRO in to plex.tv and the
+the poster size, the built-in player's picture, volume and hardware
+overlay, the server in use, and the tokens that sign PlexRO in to plex.tv and the
 server. Anyone who can read your Choices can use those tokens: Sign out
 on the icon's menu removes them.
 
 Needs
 -----
 - RISC OS 5 on an ARMv7 machine (Raspberry Pi 2/3/4/400 and so on).
-- ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), which plays what
-  PlexRO finds. Their sound needs SharedSoundBuffer and StreamManager:
+- For sound, SharedSoundBuffer and StreamManager (the built-in player,
+  ReelEGL and Reel all use them):
   download ssb.zip from https://orac.co.uk/software/rdpclient/rdpclient.html
   and merge its !System. John Duffell's own site (now on the Internet
   Archive) has more details:
@@ -153,9 +199,14 @@ Needs
 - SharedUnixLibrary 1.16 or later and ARMEABISupport (PackMan).
 - AcornSSL (RISC OS 5.28 or later) for signing in with a code, and for
   servers reached through their plex.direct addresses.
+- VideoOverlay (in !System on RISC OS 5), for the hardware overlay.
+- ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), only to play in them.
 
 !Run loads the modules it needs. PThreadTicker (UnixLib's thread timer)
 is in the application directory.
+
+If you used an earlier test build, PlexRO starts with the built-in
+player once; choose ReelEGL on the Player menu to go back to it.
 
 Debugging: *Set PlexRO$Debug 1 before starting it lets FFmpeg's network
 messages through (to see them, run !RunImage from a TaskWindow).
@@ -164,7 +215,8 @@ Licence
 -------
 PlexRO is free software under the GNU General Public License, version 2
 or later. It uses cJSON (MIT licence), FFmpeg 5.1 from riscos-ffmpeg
-(GPL v2 or later) and UnixLib (see its licences). The licences are in
+(GPL v2 or later), riscos-ffmpeg's reelcore (LGPL 2.1 or later) and
+UnixLib (see its licences). The licences are in
 docs.Licences, and PlexRO's own source is in docs.source.
 
 Andrew Youll
