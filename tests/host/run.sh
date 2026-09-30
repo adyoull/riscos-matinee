@@ -26,9 +26,9 @@ gcc -O1 -g -Wall -Wno-format-truncation -I"$TOP/src" -I"$TOP/third_party/cjson" 
   $(pkg-config --cflags --libs libavformat libavutil)
 arm-linux-gnueabihf-gcc -O1 -g -Wall -Wno-format-truncation -marm -mno-unaligned-access -no-pie \
   -DPLEXRO_TEST -DPLEXRO_NO_MAIN -D_FILE_OFFSET_BITS=64 \
-  -I"$TOP/tests/host/fake" -I"$TOP/src" -I"$TOP/third_party/cjson" -I"$REEL_SRC/player" \
+  -I"$TOP/tests/host/fake" -I"$TOP/src" -I"$TOP/third_party/cjson" -I"$REEL_SRC/player" -I"$REEL_SRC/reelcore" \
   -o "$OUT/ui_test" "$TOP/tests/host/ui_test.c" "$TOP/src/ui.c" "$TOP/src/plex.c" "$TOP/src/caps.c" \
-  "$TOP/src/handoff.c" "$TOP/tests/host/net_sock.c" "$TOP/third_party/cjson/cJSON.c" "$REEL_SRC/player/sources.c"
+  "$TOP/src/handoff.c" "$TOP/src/draw.c" "$TOP/tests/host/net_sock.c" "$TOP/third_party/cjson/cJSON.c" "$REEL_SRC/player/sources.c"
 
 python3 "$TOP/tests/host/fakeplex.py" "$PORT" > "$OUT/fakeplex.log" 2>&1 &
 FP=$!

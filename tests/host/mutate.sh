@@ -59,6 +59,18 @@ mutate "Resume doesn't turn direct play off" src/ui.c \
   'if (how == PLAY_RESUME)\n        allow = 0;' ''
 mutate "posters drawn on the screen (output not switched)" src/ui.c \
   'r.r[2] = (intptr_t)(area + 4);\n    r.r[3] = 0;' 'r.r[2] = 0;\n    r.r[3] = 0;'
+mutate "subtitles chosen, yet played directly" src/caps.c \
+  'if (allow_direct && plex_sub_selected(it) >= 0) {' 'if (0) {'
+mutate "the subtitle track chosen isn't sent" src/ui.c \
+  'k ? it->subs[k - 1].id : 0' '0'
+mutate "details don't follow the selection" src/ui.c \
+  'if (S.det_open && i >= 0 && i < S.list.n && S.list.v[i].kind == PI_VIDEO)\n        det_show(i);' ''
+mutate "the pointer's poster not found" src/ui.c \
+  'set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);' 'set_hover(-1);'
+mutate "backdrop not faded" src/ui.c \
+  '    } else if (art) {\n        sprite_fade(p->area, w, h);\n    }' '    }'
+mutate "posters not rounded (no mask)" src/ui.c \
+  'art ? 0 : 12 >> S.xeig' '0'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
