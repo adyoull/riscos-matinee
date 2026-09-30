@@ -371,7 +371,27 @@ static void media(plex_item *it, const cJSON *m)
         it->part_file = dup_s(jstr(p0, "file"));
         it->part_size = (int64_t)jnum(p0, "size", 0);
         it->part_id = (long)jnum(p0, "id", 0);
-        /* subtitle tracks (only the metadata of one item has Stream) */
+        /* sound tracks (only the metadata of one item has Stream) */
+        cJSON_ArrayForEach(st, cJSON_GetObjectItemCaseSensitive(p0, "Stream"))
+            if (jnum(st, "streamType", 0) == 2)
+                n++;
+        if (n && (it->auds = calloc(n, sizeof(plex_audio))) != NULL) {
+            cJSON_ArrayForEach(st, cJSON_GetObjectItemCaseSensitive(p0, "Stream")) {
+                plex_audio *a;
+                const char *t;
+                if (jnum(st, "streamType", 0) != 2)
+                    continue;
+                a = &it->auds[it->nauds++];
+                a->id = (long)jnum(st, "id", 0);
+                a->codec = dup_s(jstr(st, "codec"));
+                a->language = dup_s(jstr(st, "language"));
+                t = jstr(st, "extendedDisplayTitle") ? jstr(st, "extendedDisplayTitle") : jstr(st, "displayTitle");
+                a->title = dup_s(t ? t : a->language ? a->language : "Sound");
+                a->selected = jbool(st, "selected");
+            }
+        }
+        n = 0;
+        /* subtitle tracks */
         cJSON_ArrayForEach(st, cJSON_GetObjectItemCaseSensitive(p0, "Stream"))
             if (jnum(st, "streamType", 0) == 3)
                 n++;
@@ -418,6 +438,10 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->content_rating = dup_s(jstr(m, "contentRating"));
     it->tagline = dup_s(jstr(m, "tagline"));
     it->year = (int)jnum(m, "year", 0);
+    it->index = (int)jnum(m, "index", 0);
+    it->parent_index = (int)jnum(m, "parentIndex", 0);
+    it->grandparent_key = dup_s(jstr(m, "grandparentRatingKey"));
+    it->grandparent_title = dup_s(jstr(m, "grandparentTitle"));
     it->rating = jnum(m, "rating", 0) > 0 ? jnum(m, "rating", 0) : jnum(m, "audienceRating", 0);
     if (!type)
         it->kind = PI_OTHER;
@@ -567,10 +591,15 @@ static void item_free(plex_item *it)
     free(it->thumb); free(it->container); free(it->vcodec); free(it->acodec); free(it->vprofile);
     free(it->part_key); free(it->part_file);
     free(it->summary); free(it->art); free(it->content_rating); free(it->tagline);
+    free(it->grandparent_key); free(it->grandparent_title);
     for (int i = 0; i < it->nsubs; i++) {
         free(it->subs[i].title); free(it->subs[i].codec); free(it->subs[i].language); free(it->subs[i].key);
     }
     free(it->subs);
+    for (int i = 0; i < it->nauds; i++) {
+        free(it->auds[i].title); free(it->auds[i].codec); free(it->auds[i].language); free(it->auds[i].key);
+    }
+    free(it->auds);
 }
 
 void plex_list_free(plex_list *l)
@@ -624,6 +653,99 @@ int plex_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id)
     if (net_send(url, headers, "PUT", NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
     net_buf_free(&b);
+    return 0;
+}
+
+int plex_audio_selected(const plex_item *it)
+{
+    for (int i = 0; i < it->nauds; i++)
+        if (it->auds[i].selected)
+            return i;
+    return it->nauds ? 0 : -1;
+}
+
+int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id)
+{
+    char url[512], headers[1024];
+    net_buf b;
+    if (!it->part_id) {
+        set_err(c, "no file to choose a sound track for%s", NULL);
+        return -1;
+    }
+    snprintf(url, sizeof(url), "%s/library/parts/%ld?audioStreamID=%ld&allParts=1", c->base, it->part_id,
+             stream_id);
+    plex_headers(c, c->token, headers, sizeof(headers));
+    if (net_send(url, headers, "PUT", NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
+        return -1;
+    net_buf_free(&b);
+    return 0;
+}
+
+/* ---- playing: where it's got to, and what's next -------------------------------- */
+
+int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
+                  const char *session)
+{
+    char url[768], esc[64], key[160], headers[1200];
+    net_buf b;
+    size_t n;
+    if (!it->rating_key)
+        return -1;
+    net_escape(it->rating_key, esc, sizeof(esc));
+    snprintf(key, sizeof(key), "%%2Flibrary%%2Fmetadata%%2F%s", esc);
+    snprintf(url, sizeof(url), "%s/:/timeline?ratingKey=%s&key=%s&state=%s&time=%lld&duration=%lld&hasMDE=1",
+             c->base, esc, key, state, (long long)(time_ms < 0 ? 0 : time_ms), (long long)duration_ms);
+    plex_headers(c, c->token, headers, sizeof(headers));
+    n = strlen(headers);
+    if (session && *session)        /* ties the report to the converted stream */
+        snprintf(headers + n, sizeof(headers) - n, "X-Plex-Session-Identifier: %s\r\n", session);
+    /* short: it's sent while playing, from the desktop's own time */
+    if (net_fetch(url, headers, NULL, &b, 3000, c->err, sizeof(c->err)) != 0)
+        return -1;
+    net_buf_free(&b);
+    return 0;
+}
+
+int plex_transcode_stop(plex_ctx *c, const char *session)
+{
+    char url[512], esc[96], headers[1024];
+    net_buf b;
+    if (!session || !*session)
+        return -1;
+    net_escape(session, esc, sizeof(esc));
+    snprintf(url, sizeof(url), "%s/video/:/transcode/universal/stop?session=%s", c->base, esc);
+    plex_headers(c, c->token, headers, sizeof(headers));
+    if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
+        return -1;
+    net_buf_free(&b);
+    return 0;
+}
+
+int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out)
+{
+    char path[160];
+    plex_list all;
+    int i;
+    memset(out, 0, sizeof(*out));
+    if (!it->type || strcmp(it->type, "episode") || !it->grandparent_key || !it->rating_key)
+        return -1;
+    /* every episode of the show, in order */
+    snprintf(path, sizeof(path), "/library/metadata/%s/allLeaves", it->grandparent_key);
+    if (plex_list_get(c, path, &all) != 0)
+        return -1;
+    for (i = 0; i < all.n; i++)
+        if (all.v[i].rating_key && !strcmp(all.v[i].rating_key, it->rating_key))
+            break;
+    if (i + 1 < all.n) {
+        /* the one after it, moved into a list of its own */
+        out->v = malloc(sizeof(plex_item));
+        if (out->v) {
+            out->v[0] = all.v[i + 1];
+            memset(&all.v[i + 1], 0, sizeof(plex_item));
+            out->n = 1;
+        }
+    }
+    plex_list_free(&all);
     return 0;
 }
 

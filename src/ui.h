@@ -7,7 +7,7 @@
 #define PLEXRO_UI_H
 
 /* What the window shows */
-enum { PG_GRID, PG_DETAILS, PG_SIGNIN };
+enum { PG_GRID, PG_DETAILS, PG_SIGNIN, PG_PLAYER };
 
 /* The sign-in page's buttons and fields (drawn, not icons) */
 enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK };
@@ -25,7 +25,10 @@ enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_SPEED, MI_
        MI_REFRESH, MI_COUNT };
 
 /* Players */
-enum { PLAYER_REELEGL, PLAYER_REEL };
+enum { PLAYER_BUILTIN, PLAYER_REELEGL, PLAYER_REEL, PLAYER_COUNT };
+
+/* The built-in player's menu (Menu over the picture) */
+enum { MP_AUDIO, MP_VOLUME, MP_PICTURE, MP_STATS, MP_FULL, MP_OVERLAY, MP_STOP, MP_COUNT };
 
 int plexro_main(int argc, char **argv);
 
@@ -47,6 +50,8 @@ int ui_test_field(void);
 int ui_test_button_xy(int w, int id, int *x, int *y);   /* a drawn button's middle */
 const char *ui_test_button(int id);             /* a details button's label, or NULL */
 int ui_test_hover(void);
+int ui_test_player(void);                      /* the built-in player is playing (or has the card up) */
+int ui_test_upnext(void);                      /* the Up next card is counting down */
 const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how it plays, 3 summary */
 int ui_test_psize(void);
 #endif

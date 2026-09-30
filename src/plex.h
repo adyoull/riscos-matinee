@@ -60,7 +60,7 @@ typedef enum {
     PI_OTHER                /* music, photos: shown, not handled yet */
 } plex_kind;
 
-/* A subtitle track of a video's file (Plex's streamType 3) */
+/* A subtitle track (Plex's streamType 3), or a sound track (streamType 2) */
 typedef struct {
     long id;                /* Plex's stream id */
     char *title;            /* "English (SRT)", as Plex names it */
@@ -70,6 +70,7 @@ typedef struct {
     int external;           /* a file of its own beside the video (it has a key) */
     char *key;              /* /library/streams/<id> (external only) */
 } plex_sub;
+typedef plex_sub plex_audio;
 
 typedef struct {
     plex_kind kind;
@@ -93,10 +94,16 @@ typedef struct {
     char *summary, *art, *content_rating, *tagline;
     int year;
     double rating;          /* the critics' or audience's, out of 10; 0 = none */
+    /* an episode's place: its number, its season's, and the show's */
+    int index, parent_index;
+    char *grandparent_key;  /* the show's ratingKey (for the next episode) */
+    char *grandparent_title;
     /* subtitle tracks: only in an item from plex_details() (lists leave
        them out) */
     plex_sub *subs;
     int nsubs;
+    plex_audio *auds;       /* sound tracks (plex_details() only, too) */
+    int nauds;
 } plex_item;
 
 typedef struct {
@@ -151,6 +158,23 @@ int plex_sub_selected(const plex_item *it);
    file, on the server: other Plex apps see the choice too, and a converted
    stream burns it in. it must have its part_id (plex_details). 0 = ok. */
 int plex_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id);
+
+/* The sound track chosen (selected, else the first), or -1 for none */
+int plex_audio_selected(const plex_item *it);
+/* Chooses a sound track for the video's file, on the server (a converted
+   stream then has that one). 0 = ok. */
+int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id);
+
+/* Tells the server where playing has got to: state "playing", "paused" or
+   "stopped", time and duration in ms; session: a converted stream's
+   session id, or NULL. Continue watching and Resume come from this. 0 = ok. */
+int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
+                  const char *session);
+/* Asks the server to stop converting for a session. 0 = ok. */
+int plex_transcode_stop(plex_ctx *c, const char *session);
+/* The episode after it (the next in the show, across seasons), as a list
+   of one; n = 0 if it was the last. 0 = ok. */
+int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out);
 
 /* Tells the server an item was watched (1) or not (0). 0 = ok. */
 int plex_mark(plex_ctx *c, const plex_item *it, int watched);

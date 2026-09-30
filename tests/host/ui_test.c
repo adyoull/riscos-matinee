@@ -29,9 +29,14 @@
 #include "cJSON.h"
 #include "sources.h"            /* Reel's (riscos-ffmpeg player/sources.c) */
 #include "panel_font.h"         /* Reel's bitmap font (riscos-ffmpeg reelcore/), for the pictures */
+#include "player.h"
+#include "fake_reelcore.h"
 
 static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
+    printf(__VA_ARGS__); printf("\n"); } } while (0)
+/* in the fake SWIs, called many times: a failure counts, each call isn't a check */
+#define SCHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 static char base[64], outdir[256], scrap[300], choices[300];
@@ -90,6 +95,18 @@ static int jpeg_plots, jpeg_scale[4], jpeg_into_sprite = 1;
 static int drag_started;
 static int pointer_w = -1, pointer_i = -1, pointer_x = 640, pointer_y = 480;
 static int poll_null_mask_bad;
+
+/* the fake VideoOverlay module */
+static int ovl_on = 1, ovl_created, ovl_destroyed, ovl_id, ovl_sel_fourcc, ovl_sel_flags, ovl_banks;
+static int ovl_scale[2], ovl_pos[6], ovl_win, ovl_display = -9, ovl_displays, ovl_redraws, ovl_maps, ovl_mapped;
+static int vsyncs;
+static uint8_t ovl_mem[3][1280 * 720 * 3 / 2];
+static int ovl_planes[6];
+static const char *const ovl_swis[] = { "VideoOverlay_Create", "VideoOverlay_Destroy", "VideoOverlay_DisplayBuffer",
+    "VideoOverlay_MapBuffer", "VideoOverlay_UnmapBuffer", "VideoOverlay_DiscardBuffer", "VideoOverlay_Vet",
+    "VideoOverlay_SetScale", "VideoOverlay_SetWindow", "VideoOverlay_SetPosition", "VideoOverlay_RedrawWindow" };
+static int sprite_plots_52, plot_52_bad, updates, deleted_win;
+int fake_rc_cs(void);
 
 /* ---- a small renderer: the screen as the Wimp would show it ------------------
    1920 x 1080 pixels (eig 1). OS_Plot rectangles, circles and triangles in
@@ -199,6 +216,22 @@ static void fb_sprite(const int *spr, int x0, int y0, int x1, int y1)
         }
 }
 
+/* A sprite (by pointer) with its bottom left at x, y (screen OS units), as OS_SpriteOp 52 plots it */
+static void fb_sprite_at(const int *spr, int x, int y)
+{
+    int w = spr[4] + 1, h = spr[5] + 1;
+    const unsigned *img = (const unsigned *)((const char *)spr + spr[8]);
+    int top = FB_H - 1 - ((y >> 1) + h - 1);
+    for (int r = 0; r < h; r++)
+        for (int c = 0; c < w; c++) {
+            unsigned p = img[r * w + c];
+            int X = (x >> 1) + c, Y = top + r, ox = X * 2, oy = (FB_H - 1 - Y) * 2;
+            if (ox < clip[0] || ox >= clip[2] || oy < clip[1] || oy >= clip[3] || X < 0 || X >= FB_W || Y < 0 || Y >= FB_H)
+                continue;
+            fb[Y * FB_W + X] = (p & 255) << 16 | (p >> 8 & 255) << 8 | (p >> 16 & 255);
+        }
+}
+
 /* The window's visible area, as a PPM picture */
 static void fb_save(const char *path, const int *vis)
 {
@@ -253,7 +286,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
     static _kernel_oserror err = { 1, "fake: not handled" };
     switch (swi) {
     case 0x400C0:                                   /* Wimp_Initialise */
-        CHECK(!strcmp((const char *)(intptr_t)in->r[2], "PlexRO"), "task name");
+        SCHECK(!strcmp((const char *)(intptr_t)in->r[2], "PlexRO"), "task name");
         out->r[1] = task;
         return NULL;
     case 0x42681: {                                 /* TaskManager_EnumerateTasks */
@@ -268,8 +301,83 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
     }
     case 0x42: out->r[0] = fake_cs; return NULL;    /* OS_ReadMonotonicTime */
     case 0x35:                                      /* OS_ReadModeVariable */
-        out->r[2] = in->r[1] == 4 || in->r[1] == 5 ? 1 : in->r[1] == 11 ? 1919 : in->r[1] == 12 ? 1079 : 0;
+        out->r[2] = in->r[1] == 4 || in->r[1] == 5 ? 1 : in->r[1] == 11 ? 1919 : in->r[1] == 12 ? 1079 :
+                    in->r[1] == 9 ? 5 : 0;
         return NULL;
+    case 0x39: {                                    /* OS_SWINumberFromString */
+        const char *n = (const char *)(intptr_t)in->r[1];
+        for (int i = 0; ovl_on && i < 11; i++)
+            if (!strcmp(n, ovl_swis[i])) {
+                out->r[0] = 0x59CC0 + i;
+                return NULL;
+            }
+        return &err;
+    }
+    case 0x59CC0: {                                 /* VideoOverlay_Create */
+        const int *sel = (const int *)(intptr_t)in->r[0];
+        for (int i = 5; sel[i] != -1; i += 2) {
+            if (sel[i] == 0) ovl_sel_flags = sel[i + 1];
+            if (sel[i] == 3) ovl_sel_fourcc = sel[i + 1];
+            if (sel[i] == 13) ovl_banks = sel[i + 1];
+        }
+        SCHECK(sel[3] == 7 && in->r[3] == task && (in->r[2] & 1), "overlay: planar, for our task, scaled");
+        ovl_created++;
+        ovl_id = 7;
+        out->r[0] = 7; out->r[1] = 1; out->r[2] = 16; out->r[3] = 16; out->r[4] = 4096; out->r[5] = 4096;
+        return NULL;
+    }
+    case 0x59CC1: ovl_destroyed++; ovl_id = 0; ovl_display = -9; return NULL;
+    case 0x59CC2: ovl_display = (int)in->r[1]; ovl_displays++; return NULL;
+    case 0x59CC3: {                                 /* MapBuffer: Y, Cb, Cr planes of 1280 x 720 */
+        int b = (int)in->r[1];
+        if (ovl_mapped) { SCHECK(0, "overlay: mapped twice"); }
+        ovl_planes[0] = (int)(intptr_t)ovl_mem[b]; ovl_planes[1] = 1280;
+        ovl_planes[2] = (int)(intptr_t)(ovl_mem[b] + 1280 * 720); ovl_planes[3] = 640;
+        ovl_planes[4] = (int)(intptr_t)(ovl_mem[b] + 1280 * 720 * 5 / 4); ovl_planes[5] = 640;
+        out->r[0] = (intptr_t)ovl_planes;
+        ovl_maps++;
+        ovl_mapped = 1;
+        return NULL;
+    }
+    case 0x59CC4: ovl_mapped = 0; return NULL;
+    case 0x59CC7: ovl_scale[0] = (int)in->r[1]; ovl_scale[1] = (int)in->r[2]; return NULL;
+    case 0x59CC8: ovl_win = (int)in->r[1]; return NULL;
+    case 0x59CC9: for (int i = 0; i < 6; i++) ovl_pos[i] = (int)(&in->r[1])[i]; return NULL;
+    case 0x59CCA: ovl_redraws++; return NULL;
+    case 0x06:                                      /* OS_Byte 176: the vsync count */
+        if (in->r[0] == 176) { out->r[1] = ++vsyncs & 255; return NULL; }
+        if (in->r[0] == 19) return NULL;
+        return &err;
+    case 0x46: {                                    /* OS_WriteN: VDU 24, the graphics window */
+        const unsigned char *v = (const unsigned char *)(intptr_t)in->r[0];
+        if (in->r[1] == 9 && v[0] == 24) {
+            clip[0] = (short)(v[1] | v[2] << 8); clip[1] = (short)(v[3] | v[4] << 8);
+            clip[2] = (short)(v[5] | v[6] << 8) + 1; clip[3] = (short)(v[7] | v[8] << 8) + 1;
+        }
+        return NULL;
+    }
+    case 0x400C3: deleted_win = ((int *)(intptr_t)in->r[1])[0]; return NULL;    /* Wimp_DeleteWindow */
+    case 0x400C9: {                                 /* Wimp_UpdateWindow: the box asked for, in view */
+        int *b = (int *)(intptr_t)in->r[1];
+        win_t *x = win(b[0]);
+        int ox, oy;
+        if (!x) return &err;
+        ox = x->vis[0] - x->sx; oy = x->vis[3] - x->sy;
+        b[7] = ox + b[1]; b[8] = oy + b[2]; b[9] = ox + b[3]; b[10] = oy + b[4];
+        if (b[7] < x->vis[0]) b[7] = x->vis[0];
+        if (b[8] < x->vis[1]) b[8] = x->vis[1];
+        if (b[9] > x->vis[2]) b[9] = x->vis[2];
+        if (b[10] > x->vis[3]) b[10] = x->vis[3];
+        memcpy(b + 1, x->vis, 16);
+        b[5] = x->sx; b[6] = x->sy;
+        updates++;
+        out->r[0] = x->open && b[7] < b[9] && b[8] < b[10];
+        if (out->r[0]) {
+            clip[0] = b[7]; clip[1] = b[8]; clip[2] = b[9]; clip[3] = b[10];
+            redraw_ox = ox; redraw_oy = oy;
+        }
+        return NULL;
+    }
     case 0x08:                                      /* OS_File */
         if (in->r[0] == 8) { mkdir((const char *)(intptr_t)in->r[1], 0755); return NULL; }
         if (in->r[0] == 18) {
@@ -367,7 +475,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     }
     case 0x40081:                                   /* Font_FindFont: Homerton.Bold 12pt (1) or 20pt (2) */
-        CHECK(!strcmp((const char *)(intptr_t)in->r[1], "Homerton.Bold"), "font name");
+        SCHECK(!strcmp((const char *)(intptr_t)in->r[1], "Homerton.Bold"), "font name");
         out->r[0] = in->r[2] >= 320 ? 2 : 1;
         return NULL;
     case 0x40082: return NULL;                      /* Font_LoseFont */
@@ -377,7 +485,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     case 0x40086: {                                 /* Font_Paint */
         const char *t = (const char *)(intptr_t)in->r[1];
-        CHECK((in->r[2] & 0x110) == 0x110, "Font_Paint in OS units, with a handle");
+        SCHECK((in->r[2] & 0x110) == 0x110, "Font_Paint in OS units, with a handle");
         fb_text((int)in->r[3], (int)in->r[4], t, font_fg, in->r[0] == 2 ? 2 : 1);
         if (strlen(plotted_text) + strlen(t) + 2 < sizeof(plotted_text)) {
             strcat(plotted_text, t);
@@ -479,9 +587,16 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     }
     case 0x2E:                                      /* OS_SpriteOp 60: output to a sprite, and back */
+        if ((in->r[0] & 0xFF) == 52) {              /* PutSpriteScaled: the player's picture */
+            if (!(in->r[0] == 52 + 512 && in->r[6] == 0 && in->r[7] == 0))
+                plot_52_bad = 1;                    /* checked once, at the end */
+            fb_sprite_at((int *)(intptr_t)in->r[2], (int)in->r[3], (int)in->r[4]);
+            sprite_plots_52++;
+            return NULL;
+        }
         if ((in->r[0] & 0xFF) != 60) return &err;
         if (in->r[2] == 0) { output_sprite = NULL; return NULL; }
-        CHECK((in->r[0] & 0x200) && in->r[2] == in->r[1] + 16, "output switched to the sprite by pointer");
+        SCHECK((in->r[0] & 0x200) && in->r[2] == in->r[1] + 16, "output switched to the sprite by pointer");
         output_sprite = (int *)(intptr_t)in->r[2];
         out->r[0] = 60 + 512; out->r[1] = 0; out->r[2] = 0; out->r[3] = 1;
         return NULL;
@@ -647,8 +762,38 @@ static unsigned file_sum(const char *p, long *len)
 
 /* ---- the script --------------------------------------------------------------------- */
 
+int fake_rc_cs(void) { return fake_cs; }
+
+#define NEAR(a, b, e) ((a) - (b) < (e) && (b) - (a) < (e))
+
+/* the full screen window: no furniture, open */
+static int full_win(void)
+{
+    for (int i = 0; i < nwins; i++)
+        if (wins[i].flags == 0x80000040u && wins[i].handle != deleted_win)
+            return wins[i].handle;
+    return 0;
+}
+
+/* the picture's box in the browser window, in pixels (the bar's 168 OS units below it) */
+static void pic_px(int *w, int *h)
+{
+    win_t *x = win(w_browser);
+    *w = (x->vis[2] - x->vis[0]) >> 1;
+    *h = (x->vis[3] - x->vis[1] - 168) >> 1;
+}
+
+static int player_button(int *b, int w, int id)
+{
+    int x = 0, y = 0;
+    CHECK(player_test_button_xy(id, &x, &y) == 0, "player button %d is there", id);
+    return ev_click(b, w, -1, x, y, 0x400);
+}
+
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
+static int n_null, open0, count0, draws0, wfull;
+static double p0;
 
 #define NULL_EVENT 0
 /* hands out null events while the program wants them (at most n), then
@@ -936,7 +1081,7 @@ static int script(int *b, int mask)
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 21:
             pc++;
-            return ev_menu(b, MB_PLAYER, 1);                    /* Reel */
+            return ev_menu(b, MB_PLAYER, PLAYER_REEL);          /* Reel */
         case 22:
             CHECK(strstr(read_file(choices), "player Reel\n") != NULL, "player kept");
             pc++;
@@ -977,7 +1122,7 @@ static int script(int *b, int mask)
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 27:
             pc++;
-            return ev_menu(b, MB_PLAYER, 0);                    /* back to ReelEGL */
+            return ev_menu(b, MB_PLAYER, PLAYER_REELEGL);       /* back to ReelEGL */
         case 28:
             pc = 280;
             return ev_key(b, w_browser, -1, 0x1B);              /* Escape: back to the grid */
@@ -1334,8 +1479,395 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 77:
-            pc++;
+            pc = 900;                                           /* the built-in player next */
             return ev_menu(b, MB_SIZE, 1);
+
+        /* ---- the built-in player ------------------------------------------------ */
+        case 900:
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 901: {
+            int sub = menu_open ? menu_sub(menu_open, MB_PLAYER) : 0;
+            const int *pm = (const int *)(intptr_t)sub;
+            CHECK(pm && !strcmp(menu_text(pm, PLAYER_BUILTIN), "Built-in") && (menu_flags(pm, PLAYER_REELEGL) & 1),
+                  "the Player menu: Built-in first, ReelEGL ticked (the test's Choices)");
+            pc++;
+            return ev_menu(b, MB_PLAYER, PLAYER_BUILTIN);
+        }
+        case 902: {
+            int t = find_tile("Films");
+            CHECK(strstr(read_file(choices), "player Built-in\n") != NULL, "Built-in kept");
+            CHECK(t >= 0, "the top list, with Films");
+            pc++;
+            return ev_tile(b, t, 4);
+        }
+        case 903: {
+            int t = find_tile("Big Buck Bunny");
+            CHECK(t >= 0, "Films open");
+            pc++;
+            return ev_tile(b, t, 4);
+        }
+        case 904:
+            CHECK(ui_test_page() == PG_DETAILS, "its details");
+            fake_rc.len = 5400;
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_button(b, w_browser, D_PLAY, 0x400);                  /* Play: from where it was left */
+        case 905:
+            snprintf(want, sizeof(want), "%s/library/parts/11/101/file.mp4", base);
+            CHECK(ui_test_page() == PG_PLAYER && ui_test_player(), "the player page");
+            CHECK(fake_rc.opens == open0 + 1 && fake_rc.async && !strcmp(fake_rc.url, want),
+                  "direct play: the file itself, opened without waiting: %s", fake_rc.url);
+            CHECK(strstr(fake_rc.headers, "X-Plex-Token: SRV-TOKEN\r\n") && !strstr(fake_rc.headers, "Accept:"),
+                  "with the token, and no Accept: JSON");
+            CHECK(!(mask & 1), "null events while it opens");
+            CHECK(strstr(player_test_time(), "Opening") != NULL, "the bar: %s", player_test_time());
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 906:
+            CHECK(strstr(plotted_text, "Opening...") && strstr(plotted_text, "Big Buck Bunny"), "Opening, drawn: %s",
+                  plotted_text);
+            n_null = 0;
+            pc++;
+            continue;
+        case 907:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            CHECK(player_ready() && fake_rc.seeks == 1 && NEAR(fake_rc.seek_to, 2530, 0.01),
+                  "open, and carried on from 42:10 (%.2f)", fake_rc.seek_to);
+            CHECK(log_count("/:/timeline", "state", "playing") >= 1 && log_count("/:/timeline", "time", "2530000") >= 1,
+                  "the server told: playing, at 42:10");
+            n_null = 0;
+            pc++;
+            continue;
+        case 908: {
+            int bw, bh;
+            if (n_null++ < 30) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            pic_px(&bw, &bh);
+            CHECK(ovl_created == 1 && ovl_sel_fourcc == 0x32315659 && ovl_banks == 3 && ovl_sel_flags == 0xE000,
+                  "an overlay: YV12, 3 buffers, BT.709 video range (&%x)", ovl_sel_flags);
+            CHECK(ovl_display >= 0 && fake_rc.yuv_draws > 0 && fake_rc.yuv_w == 1280 && fake_rc.yuv_h == 720 && !ovl_mapped,
+                  "pictures copied into it and shown (%d)", fake_rc.yuv_draws);
+            CHECK(ovl_win == w_browser && (ovl_scale[0] == bw || ovl_scale[1] == bh) &&
+                  ovl_scale[0] <= bw && ovl_scale[1] <= bh && abs(ovl_scale[0] * 9 - ovl_scale[1] * 16) <= 16,
+                  "scaled to fit the picture box %dx%d: %dx%d", bw, bh, ovl_scale[0], ovl_scale[1]);
+            CHECK(ovl_pos[3] == -(win(w_browser)->vis[3] - win(w_browser)->vis[1]) + 168 && ovl_pos[5] == 0,
+                  "clipped above the bar (%d)", ovl_pos[3]);
+            CHECK(strstr(player_test_time(), "42:1") && strstr(player_test_time(), "/ 1:30:00"), "the time: %s",
+                  player_test_time());
+            CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 4, "asleep between pictures (PollIdle %d)", idle_time - fake_cs);
+            pc++;
+            return ev_redraw(b, w_browser);
+        }
+        case 909:
+            CHECK(ovl_redraws > 0 && strstr(plotted_text, "Big Buck Bunny") && strstr(plotted_text, "-10 s") &&
+                  strstr(plotted_text, "Stats"), "the redraw: the overlay's part, and the bar: %s", plotted_text);
+            count0 = log_count("/:/timeline", "state", "paused");
+            pc++;
+            return ev_key(b, w_browser, -1, ' ');
+        case 910:
+            CHECK(player_paused() && ovl_display == -1, "Space: paused, the overlay hidden");
+            CHECK(log_count("/:/timeline", "state", "paused") == count0 + 1, "the server told: paused");
+            CHECK(mask & 1, "no null events while paused");
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 911:
+            CHECK(!plot_52_bad, "the picture plotted 1:1, by pointer, no table");
+            CHECK(sprite_plots_52 > 0 && fake_rc.draws > 0 && fake_rc.draw_w == (win(w_browser)->vis[2] - win(w_browser)->vis[0]) >> 1,
+                  "paused: the picture plotted as a sprite (%d wide)", fake_rc.draw_w);
+            save_picture("player.ppm", w_browser);
+            pc++;
+            return ev_key(b, w_browser, -1, ' ');
+        case 912:
+            CHECK(!player_paused(), "Space: playing");
+            fake_rc.buffering = 1;                                  /* the network runs short */
+            fake_cs += 4;
+            pc = 9120;
+            return NULL_EVENT;
+        case 9120:
+            CHECK(last_poll == 0x400C7 && !(mask & 1), "buffering: no sleeping, so the reader gets the time");
+            CHECK(strstr(player_test_time(), "Buffering") != NULL, "the bar says so: %s", player_test_time());
+            fake_rc.buffering = 0;
+            n_null = 0;
+            pc = 913;
+            return ev_key(b, w_browser, -1, 'S');
+        case 913: {
+            int found = 0;
+            if (n_null++ < 5) {
+                fake_cs += 30;
+                return NULL_EVENT;
+            }
+            for (int i = 0; i < player_test_panel_rows(); i++)
+                if (!strcmp(player_test_panel(i, 0), "Connection") && strstr(player_test_panel(i, 1), "http, reading ahead"))
+                    found = 1;
+            CHECK(fake_rc.panel_rows >= 8 && found, "S: the stats panel, with the connection (%d rows)", fake_rc.panel_rows);
+            p0 = player_position();
+            pc++;
+            return ev_key(b, w_browser, -1, 0x18D);                 /* Right: 10 s on */
+        }
+        case 914:
+            CHECK(fake_rc.seeks == 2 && NEAR(fake_rc.seek_to, p0 + 10, 0.1), "Right: 10 s on (%.2f)", fake_rc.seek_to);
+            pc++;
+            return player_button(b, w_browser, PB_FULL);
+        case 915:
+            wfull = full_win();
+            CHECK(wfull && win(wfull)->open && win(wfull)->vis[0] == 0 && win(wfull)->vis[2] == 3840 &&
+                  win(wfull)->vis[3] == 2160, "full screen: a window over the whole screen");
+            CHECK(player_fullscreen() && win(w_browser)->open, "and the browser stays");
+            n_null = 0;
+            pc++;
+            continue;
+        case 916:
+            if (n_null++ < 5) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            CHECK(ovl_win == wfull && ovl_scale[0] == 1920 && ovl_scale[1] == 1080 && ovl_pos[3] == -2160,
+                  "the overlay stretched to the screen: %dx%d", ovl_scale[0], ovl_scale[1]);
+            pointer_x += 50;                                        /* the pointer moves: the bar */
+            n_null = 0;
+            pc++;
+            continue;
+        case 917:
+            if (n_null++ < 3) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            CHECK(ovl_pos[3] == -2160 + 168, "the bar shows: the overlay stops above it (%d)", ovl_pos[3]);
+            pc++;
+            return ev_key(b, wfull, -1, 0x1B);
+        case 918:
+            CHECK(!player_fullscreen() && !win(wfull)->open && ui_test_page() == PG_PLAYER, "Escape: back in the window");
+            n_null = 0;
+            pc++;
+            continue;
+        case 919:
+            if (n_null++ < 3) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            CHECK(ovl_win == w_browser, "the overlay back in the window");
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 920:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MP_AUDIO), "Sound track") && !menu_shaded(menu_open, MP_AUDIO) &&
+                  (menu_flags(menu_open, MP_OVERLAY) & 1) && !strcmp(menu_text(menu_open, MP_STOP), "Stop"),
+                  "Menu over the picture: the player's menu");
+            pc++;
+            return ev_menu(b, MP_AUDIO, 1);
+        case 921: {
+            win_t *x = win(w_browser);
+            CHECK(fake_rc.track == 1, "the file's second sound track");
+            memset(b, 0, 32);                                       /* taller: not 16:9 any more */
+            b[0] = w_browser; b[1] = x->vis[0]; b[2] = x->vis[1] - 300; b[3] = x->vis[2]; b[4] = x->vis[3];
+            b[7] = -1;
+            pc = 9210;
+            return 2;                                               /* Open_Window_Request */
+        }
+        case 9210:
+            pc = 922;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 922:
+            n_null = 0;
+            pc++;
+            return ev_menu(b, MP_PICTURE, PIC_STRETCH);
+        case 923: {
+            int bw, bh;
+            if (n_null++ < 3) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            pic_px(&bw, &bh);
+            CHECK(strstr(read_file(choices), "picture 2\n") && ovl_scale[0] == bw && ovl_scale[1] == bh,
+                  "Stretch: the overlay fills the box %dx%d (%dx%d)", bw, bh, ovl_scale[0], ovl_scale[1]);
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        }
+        case 924:
+            n_null = 0;
+            pc++;
+            return ev_menu(b, MP_OVERLAY, -1);
+        case 925:
+            if (n_null == 0) {
+                CHECK(!ovl_id && strstr(read_file(choices), "hardware_overlay 0\n"), "Hardware overlay off: gone");
+                draws0 = fake_rc.draws;
+                count0 = updates;
+            }
+            if (n_null++ < 5) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            CHECK(fake_rc.draws > draws0 + 3 && updates > count0 + 3 && fake_rc.draw_flags == 1,
+                  "each picture converted and plotted (stretched)");
+            count0 = log_count("/:/timeline", "state", "stopped");
+            pc++;
+            return player_button(b, w_browser, PB_BACK);
+        case 926:
+            CHECK(ui_test_page() == PG_DETAILS && !ui_test_player() && fake_rc.open_now == 0,
+                  "Back: the details again, the video closed");
+            CHECK(log_count("/:/timeline", "state", "stopped") == count0 + 1 &&
+                  log_count("/video/:/transcode/universal/stop", NULL, NULL) == 0, "the server told: stopped");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 927:
+            pc++;
+            return ev_menu(b, MB_DIRECT, -1);                       /* Direct play off: converted */
+        case 928:
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_button(b, w_browser, D_START, 0x400);
+        case 929:
+            CHECK(fake_rc.opens == open0 + 1 && strstr(fake_rc.url, "/video/:/transcode/universal/start.m3u8?") &&
+                  strstr(fake_rc.url, "&offset=0&"), "converted by the server, from the start");
+            n_null = 0;
+            pc = 930;
+            continue;
+        case 930:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            n_null = 0;
+            pc++;
+            continue;
+        case 931:
+            if (n_null++ < 10) {
+                fake_cs += 11;
+                return NULL_EVENT;
+            }
+            CHECK(strstr(player_test_time(), "0:01 / 1:30:00"), "the time, with Plex's length: %s (%d frames, pos %.2f)",
+                  player_test_time(), fake_rc.frames, player_position());
+            open0 = fake_rc.opens;
+            count0 = log_count("/video/:/transcode/universal/stop", NULL, NULL);
+            n_null = 0;
+            pc++;
+            return ev_key(b, w_browser, -1, 0x18D);                 /* Right */
+        case 932:
+            if (fake_rc.opens == open0 && n_null++ < 10)
+                return NULL_EVENT;
+            CHECK(strstr(fake_rc.url, "&offset=11&"), "a seek: the server starts another stream there");
+            CHECK(log_count("/video/:/transcode/universal/stop", NULL, NULL) == count0 + 1, "and stops the one before");
+            n_null = 0;
+            pc++;
+            continue;
+        case 933:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            fake_cs += 50;
+            n_null = 0;
+            pc++;
+            return NULL_EVENT;
+        case 934:
+            CHECK(strstr(player_test_time(), "0:11"), "counted from where the stream started: %s", player_test_time());
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 935:
+            CHECK(menu_open && !menu_shaded(menu_open, MP_AUDIO), "two sound tracks on the server");
+            open0 = fake_rc.opens;
+            n_null = 0;
+            pc++;
+            return ev_menu(b, MP_AUDIO, 1);
+        case 936:
+            if (fake_rc.opens == open0 && n_null++ < 10)
+                return NULL_EVENT;
+            CHECK(log_count("/library/parts/11101", "audioStreamID", "1013") == 1, "chosen on the server");
+            CHECK(strstr(fake_rc.url, "&offset=11&"), "and the stream started again where it was");
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 937:
+            count0 = log_count("/video/:/transcode/universal/stop", NULL, NULL);
+            pc++;
+            return ev_menu(b, MP_STOP, -1);
+        case 938:
+            CHECK(ui_test_page() == PG_DETAILS && !ui_test_player() &&
+                  log_count("/video/:/transcode/universal/stop", NULL, NULL) == count0 + 1, "Stop: the conversion stopped too");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 939:
+            pc++;
+            return ev_menu(b, MB_DIRECT, -1);                       /* Direct play on again */
+        /* episodes: the next one at the end */
+        case 940:
+            pc++;
+            return ev_key(b, w_browser, -1, 0x1B);                  /* the grid */
+        case 941:
+            pc++;
+            return ev_key(b, w_browser, -1, 8);                     /* the top */
+        case 942:
+            CHECK(find_tile("TV Programmes") >= 0, "the top list");
+            pc++;
+            return ev_tile(b, find_tile("TV Programmes"), 4);
+        case 943:
+            pc++;
+            return ev_tile(b, find_tile("Space Show"), 4);
+        case 944:
+            pc++;
+            return ev_tile(b, find_tile("Series 1"), 4);
+        case 945:
+            CHECK(find_tile("Episode '5'") == 4, "the episodes");
+            pc++;
+            return ev_tile(b, 4, 4);
+        case 946:
+            fake_rc.len = 20;
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_button(b, w_browser, D_START, 0x400);
+        case 947:
+            snprintf(want, sizeof(want), "%s/library/parts/11/215/file.mp4", base);
+            CHECK(!strcmp(fake_rc.url, want), "episode 5: %s", fake_rc.url);
+            n_null = 0;
+            pc++;
+            continue;
+        case 948:
+            if (!ui_test_upnext() && n_null++ < 80) {
+                fake_cs += 50;
+                return NULL_EVENT;
+            }
+            CHECK(ui_test_upnext() && ui_test_player() && player_ended(), "the end: Up next");
+            CHECK(log_count("/:/scrobble", "key", "215") == 1 && log_count("/library/metadata/20/allLeaves", NULL, NULL) == 1,
+                  "watched, and the next found");
+            CHECK(!(mask & 1) || last_poll == 0x400E1, "the countdown needs time");
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 949:
+            CHECK(strstr(plotted_text, "Up next") && strstr(plotted_text, "S1 E6") && strstr(plotted_text, "Playing in"),
+                  "the card: %s", plotted_text);
+            save_picture("upnext.ppm", w_browser);
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_key(b, w_browser, -1, 13);                    /* Return: play it now */
+        case 950:
+            snprintf(want, sizeof(want), "%s/library/parts/11/216/file.mp4", base);
+            CHECK(fake_rc.opens == open0 + 1 && !strcmp(fake_rc.url, want) && !ui_test_upnext() &&
+                  ui_test_page() == PG_PLAYER, "episode 6");
+            n_null = 0;
+            pc++;
+            continue;
+        case 951:
+            if (ui_test_player() && n_null++ < 80) {
+                fake_cs += 50;
+                return NULL_EVENT;
+            }
+            CHECK(!ui_test_player() && ui_test_page() == PG_DETAILS && log_count("/:/scrobble", "key", "216") == 1,
+                  "the last episode: watched, and back to the details");
+            pc++;
+            return ev_key(b, w_browser, -1, 0x1B);
+        case 952:
+            CHECK(ui_test_page() == PG_GRID, "the grid");
+            pc = 78;
+            continue;
         /* ---- sign out, then a server typed by hand */
         case 78:
             pc++;
@@ -1405,6 +1937,11 @@ static int script(int *b, int mask)
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 102:
             CHECK(menu_open && menu_flags(menu_open, MB_QUIT) & 0x80, "Quit is the last item");
+            {
+                const int *pm = (const int *)(intptr_t)menu_sub(menu_open, MB_PLAYER);
+                CHECK(pm && (menu_flags(pm, PLAYER_BUILTIN) & 1) && !(menu_flags(pm, PLAYER_REELEGL) & 1),
+                      "an old Choices' ReelEGL (no choices_version): the built-in player from now on");
+            }
             pc++;
             return ev_menu(b, MB_QUIT, -1);
         default:
@@ -1432,6 +1969,13 @@ int main(int argc, char **argv)
     snprintf(cmd, sizeof(cmd), "%s/choices", outdir);
     setenv("PlexRO$ChoicesDir", cmd, 1);
     setenv("PlexRO$PlexTV", base, 1);
+    {
+        FILE *f = fopen(choices, "w");      /* the hand-off first: ReelEGL chosen */
+        if (f) {
+            fputs("choices_version 2\nplayer ReelEGL\n", f);
+            fclose(f);
+        }
+    }
     net_init("ui_test");
     {
         net_buf nb;                 /* the fake server's record, from core_test's run, cleared */
@@ -1443,7 +1987,22 @@ int main(int argc, char **argv)
     CHECK(plexro_main(1, argv) == 0, "first run ends cleanly");
     printf("  first run: %d checks so far\n", checks);
 
-    /* second run: the Choices from the first */
+    /* second run: the Choices from the first, made to look like test4's
+       (ReelEGL, saved as the default then, and no choices_version) */
+    {
+        char *c = read_file(choices), out[8192] = "", *l;
+        for (l = strtok(c, "\n"); l; l = strtok(NULL, "\n")) {
+            if (!strncmp(l, "choices_version", 15))
+                continue;
+            strcat(out, strncmp(l, "player ", 7) ? l : "player ReelEGL");
+            strcat(out, "\n");
+        }
+        FILE *f = fopen(choices, "w");
+        if (f) {
+            fputs(out, f);
+            fclose(f);
+        }
+    }
     nwins = 0; pc = 100; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
     CHECK(plexro_main(1, argv) == 0, "second run ends cleanly");

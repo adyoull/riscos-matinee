@@ -62,6 +62,7 @@
 #include "version.h"
 #include "proginfo.h"
 #include "draw.h"
+#include "player.h"
 
 #define OS_File                    0x08
 #define OS_ReadMonotonicTime       0x42
@@ -141,7 +142,7 @@ static const struct { int w, h; const char *name; } sizes[3] = {
 #ifdef __riscos__
 /* UnixLib: the heap in a dynamic area of its own (the posters live there) */
 const char *const __dynamic_da_name = "PlexRO Heap";
-int __dynamic_da_max_size = 256 << 20;
+int __dynamic_da_max_size = 512 << 20;    /* the posters, and the player's pictures and packets */
 #endif
 
 static _kernel_oserror *swi(int n, _kernel_swi_regs *r) { return _kernel_swi(n, r, r); }
@@ -222,6 +223,21 @@ static struct {
     /* menus */
     int menu_kind;                  /* 1 icon bar, 2 item, 3 subtitles */
     int menu_x, menu_y;
+
+    /* the built-in player: what it's playing, and for Plex */
+    struct {
+        int on;
+        plex_list det;              /* the video's details (one item) */
+        play_t p;                   /* how it's played (a converted stream's session) */
+        int prev_page;              /* the page to go back to */
+        int prev_st[9];             /* and the window's size then (0: unchanged) */
+        int tl_cs;                  /* when the server is told where it's got to next */
+        int upnext_cs;              /* the next episode starts then (0: no card) */
+        plex_list next;             /* the next episode */
+        int menu_audio;             /* the Sound track submenu is the server's tracks */
+    } pl;
+    int overlay, pic_mode;          /* Choices for the built-in player */
+    double volume;
 
     /* hand-offs waiting for DataLoadAck */
     pend_t pend[PEND_MAX];
@@ -377,7 +393,8 @@ static int mime_type(int from, const char *what, int fallback)
 
 /* ---- Choices ------------------------------------------------------------ */
 
-static const char *player_names[2] = { "ReelEGL", "Reel" };
+static const char *player_names[PLAYER_COUNT] = { "Built-in", "ReelEGL", "Reel" };
+static const char *pic_names[PIC_COUNT] = { "Fit", "Fill (crop)", "Stretch" };
 
 static FILE *choices_open(int write)
 {
@@ -402,10 +419,10 @@ static void choices_save(void)
     fprintf(f, "# " APP " choices\n"
             "client_id %s\naccount_token %s\nserver_base %s\nserver_token %s\n"
             "server_name %s\nserver_id %s\nserver_local %d\nplayer %s\nquality %d\ndirect_play %d\n"
-            "poster_size %d\n",
+            "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\n",
             S.px.client_id, S.px.account_token, S.px.base, S.px.token,
             S.px.server_name, S.px.server_id, S.px.local, player_names[S.player], S.quality, S.direct,
-            S.psize);
+            S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5));
     fclose(f);
 }
 
@@ -428,16 +445,28 @@ static void choices_load(void)
     char line[400], v[300], id[48] = "";
     FILE *f = choices_open(0);
     plex_ctx *c = &S.px;
-    S.player = PLAYER_REELEGL;      /* ReelEGL by default, Reel the other */
+    int version = 1, player = PLAYER_BUILTIN;
+    S.player = PLAYER_BUILTIN;      /* the built-in player by default; ReelEGL and Reel the others */
     S.quality = Q_720;
     S.direct = 1;
     S.psize = 1;                    /* Medium */
+    S.overlay = 1;
+    S.pic_mode = PIC_FIT;
+    S.volume = 1;
     if (f) {
         while (fgets(line, sizeof(line), f)) {
             if (value(line, "client_id", v, sizeof(v)))
                 snprintf(id, sizeof(id), "%s", v);
+            else if (value(line, "choices_version", v, sizeof(v)))
+                version = atoi(v);
             else if (value(line, "player", v, sizeof(v)))
-                S.player = !strcmp(v, "Reel") ? PLAYER_REEL : PLAYER_REELEGL;
+                player = !strcmp(v, "Reel") ? PLAYER_REEL : !strcmp(v, "ReelEGL") ? PLAYER_REELEGL : PLAYER_BUILTIN;
+            else if (value(line, "hardware_overlay", v, sizeof(v)))
+                S.overlay = atoi(v) != 0;
+            else if (value(line, "picture", v, sizeof(v)))
+                S.pic_mode = atoi(v) >= 0 && atoi(v) < PIC_COUNT ? atoi(v) : PIC_FIT;
+            else if (value(line, "volume", v, sizeof(v)))
+                S.volume = atoi(v) >= 0 && atoi(v) <= 100 ? atoi(v) / 100.0 : 1;
             else if (value(line, "quality", v, sizeof(v)))
                 S.quality = atoi(v) >= 0 && atoi(v) < Q_COUNT ? atoi(v) : Q_720;
             else if (value(line, "direct_play", v, sizeof(v)))
@@ -446,6 +475,10 @@ static void choices_load(void)
                 S.psize = atoi(v) >= 0 && atoi(v) <= 2 ? atoi(v) : 1;
         }
     }
+    /* test builds before the built-in player saved ReelEGL as the default,
+       not as a choice: they start with the built-in player once */
+    if (version >= 2)
+        S.player = player;
     if (!*id) {                     /* made once: the server knows us by it */
         unsigned a = (unsigned)time(NULL), b = (unsigned)now_cs() * 2654435761u ^ (unsigned)clock();
         snprintf(id, sizeof(id), "plexro-%08x%08x", a, b);
@@ -884,7 +917,7 @@ static void set_extent(void)
 {
     int b[4];
     _kernel_swi_regs r;
-    int h = S.page == PG_DETAILS ? S.det_h : S.page == PG_SIGNIN ? 1100 : list_height();
+    int h = S.page == PG_DETAILS ? S.det_h : S.page == PG_SIGNIN || S.page == PG_PLAYER ? 1100 : list_height();
     if (h < S.scr_h)
         h = S.scr_h;                /* at least the screen: the window can be made taller */
     b[0] = 0; b[1] = -h; b[2] = S.scr_w; b[3] = 0;
@@ -1039,6 +1072,10 @@ static void redraw(int *b)
 {
     _kernel_swi_regs r;
     int more;
+    if (player_owns(b[0]) || (b[0] == S.browser_w && S.page == PG_PLAYER)) {
+        player_redraw(b);
+        return;
+    }
     r.r[1] = (intptr_t)b;
     if (swi(Wimp_RedrawWindow, &r))
         return;
@@ -1120,6 +1157,9 @@ static void set_where(void)
     if (S.page == PG_SIGNIN) {
         snprintf(S.where, sizeof(S.where), "Sign in");
         snprintf(S.title, sizeof(S.title), APP);
+    } else if (S.page == PG_PLAYER && S.pl.det.n) {
+        latin1(S.pl.det.v[0].title, t, sizeof(t));
+        snprintf(S.title, sizeof(S.title), "%s: %s", APP, t);
     } else {
         for (int i = 0; i < S.nhist && n < sizeof(t); i++)
             n += snprintf(t + n, sizeof(t) - n, "%s > ", S.hist[i].title);
@@ -1886,9 +1926,12 @@ static void choose_server(void)
         browser_top();
 }
 
+static void builtin_stop(int leave);
+
 static void sign_out(void)
 {
     plex_ctx *c = &S.px;
+    builtin_stop(0);
     c->account_token[0] = c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
     S.nservers = 0;
     if (S.browser_open)
@@ -2050,6 +2093,8 @@ enum { PLAY_DEFAULT, PLAY_RESUME, PLAY_START };
 
 /* it: the video as the list shows it (its title); what's played and how
    comes from its full details (the subtitles chosen, where it was left) */
+static void builtin_play(const plex_item *it, int how);
+
 static void play_item(const plex_item *it, int how)
 {
     static play_t p;
@@ -2058,6 +2103,10 @@ static void play_item(const plex_item *it, int how)
     int allow = S.direct, resume = 1, type, e;
     plex_list tmp;
     const plex_item *full = it;
+    if (S.player == PLAYER_BUILTIN) {
+        builtin_play(it, how);
+        return;
+    }
     tmp.n = 0;
     if (det_is(it)) {
         full = det_item();
@@ -2102,6 +2151,299 @@ static void play_item(const plex_item *it, int how)
     snprintf(S.play_why, sizeof(S.play_why), "%s", p.why);
     set_status("%s", p.why);
     send_to_player(file, type);
+}
+
+
+/* ---- the built-in player ----------------------------------------------------------
+
+   The video plays in the window itself (the player page), in player.c.
+   Here is what Plex needs from it: the server told where playing has got
+   to (Continue watching, Resume) every 10 s and when it pauses or stops; a
+   converted stream started again at the new place to seek in it; the
+   sound track chosen on the server for a converted stream; and the next
+   episode offered at the end of one. */
+
+static void player_menu_open(void);
+
+#define TIMELINE_CS 1000
+#define UPNEXT_CS   1000
+
+static void builtin_timeline(const char *state)
+{
+    const plex_item *it;
+    if (!S.pl.on || !S.pl.det.n)
+        return;
+    it = &S.pl.det.v[0];
+    plex_timeline(&S.px, it, state, (int64_t)(player_position() * 1000), (int64_t)(player_duration() * 1000),
+                  S.pl.p.direct ? NULL : S.pl.p.session);
+    S.pl.tl_cs = now_cs() + TIMELINE_CS;
+}
+
+/* The X-Plex headers, without Accept: JSON (the video isn't) */
+static void media_headers(const char *in, char *out, size_t size)
+{
+    size_t o = 0;
+    while (*in && o + 1 < size) {
+        const char *e = strstr(in, "\r\n");
+        size_t n = e ? (size_t)(e - in) + 2 : strlen(in);
+        if (strncmp(in, "Accept:", 7) && o + n < size) {
+            memcpy(out + o, in, n);
+            o += n;
+        }
+        in += n;
+    }
+    out[o] = 0;
+}
+
+/* The title shown in the bar: "Show · S1 E3 · Episode" or the film's */
+static void builtin_title(const plex_item *it, char *out, size_t size)
+{
+    char t[400];
+    if (it->type && !strcmp(it->type, "episode") && it->grandparent_title)
+        snprintf(t, sizeof(t), "%s \xc2\xb7 S%d E%d \xc2\xb7 %s", it->grandparent_title, it->parent_index, it->index,
+                 it->title);
+    else
+        snprintf(t, sizeof(t), "%s", it->title);
+    latin1(t, out, size);
+}
+
+/* Plays S.pl.det's video from t seconds (a converted stream starts there) */
+static int builtin_open_at(double t)
+{
+    const plex_item *it = &S.pl.det.v[0];
+    caps_t k;
+    player_src src;
+    char title[200], headers[1024], old[32];
+    snprintf(old, sizeof(old), "%s", S.pl.p.direct ? "" : S.pl.p.session);
+    caps_for(S.quality, &k);
+    if (caps_play_at(&S.px, it, &k, S.direct, (long)t, &S.pl.p) != 0) {
+        set_status("%s", S.pl.p.why);
+        return -1;
+    }
+    if (*old)
+        plex_transcode_stop(&S.px, old);    /* the stream before (a seek) */
+    media_headers(S.pl.p.headers, headers, sizeof(headers));
+    builtin_title(it, title, sizeof(title));
+    memset(&src, 0, sizeof(src));
+    src.url = S.pl.p.url;
+    src.headers = headers;
+    src.user_agent = S.agent;
+    src.title = title;
+    src.convert = !S.pl.p.direct;
+    src.base = S.pl.p.direct ? 0 : S.pl.p.offset_s;
+    src.start = S.pl.p.direct ? t : 0;
+    src.duration = it->duration_ms / 1000.0;
+    snprintf(S.play_why, sizeof(S.play_why), "%s", S.pl.p.why);
+    set_status("%s", S.pl.p.why);
+    if (player_open(&src, S.browser_w) != 0) {
+        report("Can't play %s: %s", title, player_error());
+        return -1;
+    }
+    S.pl.tl_cs = now_cs() + TIMELINE_CS;
+    return 0;
+}
+
+/* Back to the page it was played from */
+static void builtin_leave(void)
+{
+    int st[9];
+    if (S.page != PG_PLAYER)
+        return;
+    S.page = S.pl.prev_page;
+    set_extent();
+    set_where();
+    if (S.browser_open) {
+        window_state(S.browser_w, st);
+        if (S.pl.prev_st[0])        /* the size it was before the video */
+            memcpy(st, S.pl.prev_st, sizeof(st));
+        open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, S.page == PG_GRID ? S.grid_sy : 0);
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+    }
+    if (S.page == PG_DETAILS)
+        det_refresh();              /* where it stopped: Resume from */
+    S.posters_wanted = S.page == PG_GRID;
+}
+
+/* Stops playing: the server is told, a converted stream stopped */
+static void builtin_stop(int leave)
+{
+    if (!S.pl.on)
+        return;
+    if (player_ready() && !player_ended())
+        builtin_timeline("stopped");
+    if (!S.pl.p.direct)
+        plex_transcode_stop(&S.px, S.pl.p.session);
+    player_close();
+    S.pl.on = 0;
+    S.pl.upnext_cs = 0;
+    if (S.pl.det.n)
+        plex_list_free(&S.pl.det);
+    if (S.pl.next.n)
+        plex_list_free(&S.pl.next);
+    if (leave)
+        builtin_leave();
+}
+
+/* it: the video (a list's item); what's played comes from its details */
+static void builtin_play(const plex_item *it, int how)
+{
+    plex_list d;
+    int st[9], prev = S.page == PG_PLAYER ? S.pl.prev_page : S.page, was_player = S.page == PG_PLAYER;
+    double t;
+    hourglass(1);
+    if (plex_details(&S.px, it, &d) != 0) {
+        hourglass(0);
+        report("Can't get %s from the server: %s", it->title, S.px.err);
+        return;
+    }
+    hourglass(0);
+    builtin_stop(0);
+    S.pl.det = d;
+    S.pl.on = 1;
+    S.pl.prev_page = prev == PG_PLAYER ? PG_GRID : prev;
+    if (!S.browser_open)
+        browser_open();
+    window_state(S.browser_w, st);
+    if (S.page == PG_GRID)
+        S.grid_sy = st[6];
+    S.page = PG_PLAYER;
+    S.hover = -1;
+    S.posters_wanted = 0;
+    set_extent();
+    set_where();
+    if (!was_player)
+        S.pl.prev_st[0] = 0;
+    if (st[3] - st[1] < 1280 && S.scr_w >= 1400 && !was_player) {
+        /* a narrow window (two columns of posters): wider for the video,
+           16:9 and the bar, the size it was kept for later */
+        int w = S.scr_w * 3 / 4 < 1600 ? S.scr_w * 3 / 4 : 1600, h = w * 9 / 16 + 168;
+        memcpy(S.pl.prev_st, st, sizeof(st));
+        if (h > S.scr_h - 160)
+            h = S.scr_h - 160;
+        st[1] = st[1] + w > S.scr_w ? S.scr_w - w : st[1];
+        st[2] = st[4] - h < 64 ? 64 : st[4] - h;
+        st[3] = st[1] + w;
+        st[4] = st[2] + h;
+    }
+    open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
+    set_caret(S.browser_w, -1, NULL);
+    t = how != PLAY_START && d.v[0].view_offset_ms > 0 ? d.v[0].view_offset_ms / 1000.0 : 0;
+    if (builtin_open_at(t) != 0)
+        builtin_stop(1);
+}
+
+/* The card at the end of an episode: the next one, in so many seconds */
+static void upnext_card(void)
+{
+    const plex_item *n = &S.pl.next.v[0];
+    char head[200], line[300], line2[60], t[400];
+    int s = (S.pl.upnext_cs - now_cs() + 99) / 100;
+    snprintf(t, sizeof(t), "Up next \xc2\xb7 %s", n->grandparent_title ? n->grandparent_title : "");
+    latin1(t, head, sizeof(head));
+    snprintf(t, sizeof(t), "S%d E%d \xc2\xb7 %s", n->parent_index, n->index, n->title);
+    latin1(t, line, sizeof(line));
+    snprintf(line2, sizeof(line2), "Playing in %d s", s < 0 ? 0 : s);
+    player_card(head, line, line2, "Play now", "Back");
+}
+
+static void upnext_play(void)
+{
+    plex_item *n;
+    int prev = S.pl.prev_page;
+    if (!S.pl.next.n)
+        return;
+    n = &S.pl.next.v[0];
+    player_card(NULL, NULL, NULL, NULL, NULL);
+    S.pl.upnext_cs = 0;
+    {
+        plex_list keep = S.pl.next;         /* builtin_play frees it (builtin_stop) */
+        memset(&S.pl.next, 0, sizeof(S.pl.next));
+        S.page = PG_PLAYER;
+        builtin_play(n, PLAY_START);
+        S.pl.prev_page = prev;
+        plex_list_free(&keep);
+    }
+}
+
+/* The end: watched; the next episode offered, or back */
+static void builtin_ended(void)
+{
+    const plex_item *it = &S.pl.det.v[0];
+    builtin_timeline("stopped");
+    plex_mark(&S.px, it, 1);
+    if (S.pl.next.n)
+        plex_list_free(&S.pl.next);
+    if (plex_next_episode(&S.px, it, &S.pl.next) == 0 && S.pl.next.n) {
+        S.pl.upnext_cs = now_cs() + UPNEXT_CS;
+        upnext_card();
+        return;
+    }
+    builtin_stop(1);
+}
+
+/* What the player said */
+static void builtin_event(int e)
+{
+    switch (e) {
+    case PE_READY:
+        builtin_timeline("playing");
+        break;
+    case PE_PAUSED:
+        builtin_timeline("paused");
+        break;
+    case PE_PLAYING:
+        builtin_timeline("playing");
+        break;
+    case PE_SEEK:                   /* a converted stream: another from there */
+        if (builtin_open_at(player_seek_to()) != 0)
+            builtin_stop(1);
+        break;
+    case PE_END:
+        builtin_ended();
+        break;
+    case PE_FAILED:
+        report("%s", player_error());
+        builtin_stop(1);
+        break;
+    case PE_BACK:
+        builtin_stop(1);
+        break;
+    case PE_CARD_1:
+        if (S.pl.upnext_cs)
+            upnext_play();
+        break;
+    case PE_CARD_2:
+        builtin_stop(1);
+        break;
+    case PE_MENU:
+        player_menu_open();
+        break;
+    }
+}
+
+static void builtin_nulls(void)
+{
+    int e = player_null();
+    if (e != PE_NONE) {
+        builtin_event(e);
+        return;
+    }
+    if (!S.pl.on)
+        return;
+    if (S.pl.upnext_cs) {
+        if (now_cs() - S.pl.upnext_cs >= 0)
+            upnext_play();
+        else {
+            static int last;
+            if (now_cs() - last >= 50) {
+                last = now_cs();
+                upnext_card();
+            }
+        }
+        return;
+    }
+    if (player_ready() && !player_paused() && !player_ended() && now_cs() - S.pl.tl_cs >= 0)
+        builtin_timeline("playing");
 }
 
 /* ---- saving the original file ---------------------------------------------------- */
@@ -2458,6 +2800,7 @@ typedef struct {
 typedef struct { wmenu_t m; char text[16][80]; int n; } menu_t;
 
 static menu_t m_bar, m_servers, m_player, m_quality, m_size, m_item, m_subs;
+static menu_t m_play, m_audio, m_vol, m_pic;
 
 static void menu_begin(menu_t *m, const char *title)
 {
@@ -2512,8 +2855,8 @@ static void bar_menu_build(void)
         menu_add(&m_servers, "(none found)", 0, 1, -1, 0);
     menu_end(&m_servers);
     menu_begin(&m_player, "Player");
-    for (int i = 0; i < 2; i++)
-        menu_add(&m_player, player_names[i], S.player == i, 0, -1, 0);
+    for (int i = 0; i < PLAYER_COUNT; i++)
+        menu_add(&m_player, player_names[i], S.player == i, 0, -1, i == PLAYER_BUILTIN);
     menu_end(&m_player);
     menu_begin(&m_quality, "Quality");
     for (int i = 0; i < Q_COUNT; i++)
@@ -2605,6 +2948,90 @@ static void item_menu_build(void)
     menu_end(&m_item);
 }
 
+/* Menu over the built-in player */
+static void player_menu_build(void)
+{
+    const plex_item *it = S.pl.det.n ? &S.pl.det.v[0] : NULL;
+    char t[120];
+    int n;
+    menu_begin(&m_audio, "Sound track");
+    /* a converted stream has the one the server was asked for: choose on the server */
+    S.pl.menu_audio = !S.pl.p.direct;
+    if (S.pl.menu_audio) {
+        n = it ? it->nauds : 0;
+        for (int i = 0; i < n && i < 15; i++)
+            menu_add(&m_audio, it->auds[i].title, i == plex_audio_selected(it), 0, -1, 0);
+    } else {
+        n = player_tracks();
+        for (int i = 0; i < n && i < 15; i++) {
+            player_track_name(i, t, sizeof(t));
+            menu_add(&m_audio, t, i == player_track(), 0, -1, 0);
+        }
+    }
+    if (!n)
+        menu_add(&m_audio, "(none)", 0, 1, -1, 0);
+    menu_end(&m_audio);
+    menu_begin(&m_vol, "Volume");
+    for (int i = 0; i < 5; i++) {
+        snprintf(t, sizeof(t), "%d%%", 100 - i * 25);
+        menu_add(&m_vol, t, (int)(player_volume() * 100 + 0.5) == 100 - i * 25, 0, -1, 0);
+    }
+    menu_end(&m_vol);
+    menu_begin(&m_pic, "Picture");
+    for (int i = 0; i < PIC_COUNT; i++)
+        menu_add(&m_pic, pic_names[i], player_pic_mode() == i, 0, -1, 0);
+    menu_end(&m_pic);
+    menu_begin(&m_play, "Player");
+    menu_add(&m_play, "Sound track", 0, n < 2, n >= 2 ? (int)(intptr_t)&m_audio.m : -1, 0);
+    menu_add(&m_play, "Volume", 0, 0, (int)(intptr_t)&m_vol.m, 0);
+    menu_add(&m_play, "Picture", 0, 0, (int)(intptr_t)&m_pic.m, 1);
+    menu_add(&m_play, "Stats", player_stats(), 0, -1, 0);
+    menu_add(&m_play, "Full screen", player_fullscreen(), 0, -1, 0);
+    menu_add(&m_play, "Hardware overlay", player_overlay(), 0, -1, 1);
+    menu_add(&m_play, "Stop", 0, 0, -1, 0);
+    menu_end(&m_play);
+}
+
+static void player_menu_open(void)
+{
+    int p[5];
+    _kernel_swi_regs r;
+    r.r[1] = (intptr_t)p;
+    if (swi(Wimp_GetPointerInfo, &r))
+        p[0] = S.scr_w / 2, p[1] = S.scr_h / 2;
+    player_menu_build();
+    S.menu_kind = 4;
+    S.menu_x = p[0];
+    S.menu_y = p[1];
+    open_menu(&m_play, p[0] - 64, p[1]);
+}
+
+/* A sound track: reelcore's for the file itself; the server's for a converted stream */
+static void choose_audio(int k)
+{
+    plex_item *it = S.pl.det.n ? &S.pl.det.v[0] : NULL;
+    if (k < 0)
+        return;
+    if (!S.pl.menu_audio) {
+        player_set_track(k);
+        return;
+    }
+    if (!it || k >= it->nauds || k == plex_audio_selected(it))
+        return;
+    hourglass(1);
+    if (plex_set_audio(&S.px, it, it->auds[k].id) != 0) {
+        hourglass(0);
+        report("Can't choose that sound track: %s", S.px.err);
+        return;
+    }
+    hourglass(0);
+    for (int i = 0; i < it->nauds; i++)
+        it->auds[i].selected = i == k;
+    player_note("Changing the sound track...");
+    if (builtin_open_at(player_position()) != 0)
+        builtin_stop(1);
+}
+
 static void item_menu_open(int x, int y)
 {
     item_menu_build();
@@ -2622,6 +3049,7 @@ static void quit(void)
     save_stop(NULL);
     if (S.speed.active)
         speed_close();
+    builtin_stop(0);
     draw_done();
     for (int i = 0; i < PEND_MAX; i++)
         if (S.pend[i].ref)
@@ -2714,7 +3142,7 @@ static int menu_select(const int *sel)
                 browser_top();
             break;
         case MB_PLAYER:
-            if (sel[1] == 0 || sel[1] == 1) {
+            if (sel[1] >= 0 && sel[1] < PLAYER_COUNT) {
                 S.player = sel[1];
                 choices_save();
             }
@@ -2789,6 +3217,40 @@ static int menu_select(const int *sel)
         }
     } else if (kind == 3) {
         choose_sub(sel[0]);
+    } else if (kind == 4 && S.pl.on) {
+        switch (sel[0]) {
+        case MP_AUDIO:
+            choose_audio(sel[1]);
+            break;
+        case MP_VOLUME:
+            if (sel[1] >= 0 && sel[1] < 5) {
+                player_set_volume((100 - sel[1] * 25) / 100.0);
+                S.volume = player_volume();
+                choices_save();
+            }
+            break;
+        case MP_PICTURE:
+            if (sel[1] >= 0 && sel[1] < PIC_COUNT) {
+                player_set_pic_mode(sel[1]);
+                S.pic_mode = sel[1];
+                choices_save();
+            }
+            break;
+        case MP_STATS:
+            player_set_stats(!player_stats());
+            break;
+        case MP_FULL:
+            player_set_fullscreen(!player_fullscreen());
+            break;
+        case MP_OVERLAY:
+            player_set_overlay(!player_overlay());
+            S.overlay = player_overlay();
+            choices_save();
+            break;
+        case MP_STOP:
+            builtin_stop(1);
+            return 0;
+        }
     }
     /* Adjust keeps the menu open */
     r.r[1] = (intptr_t)b;
@@ -2797,6 +3259,11 @@ static int menu_select(const int *sel)
             bar_menu_open(S.menu_x);
         else if (kind == 2 && S.browser_open)
             item_menu_open(S.menu_x, S.menu_y);
+        else if (kind == 4 && S.pl.on) {
+            player_menu_build();
+            S.menu_kind = 4;
+            open_menu(&m_play, S.menu_x - 64, S.menu_y);
+        }
     }
     return 0;
 }
@@ -2884,6 +3351,10 @@ static void click(int *b)
             save_ok();
         return;
     }
+    if (player_owns(w) || (w == S.browser_w && S.page == PG_PLAYER)) {
+        builtin_event(player_click(b));
+        return;
+    }
     if (w == S.browser_w) {
         int t, h = S.page != PG_SIGNIN ? header_hit(b[0], b[1]) : 0;
         set_caret(S.browser_w, -1, NULL);
@@ -2943,6 +3414,13 @@ static void key(int *b)
         save_ok();
         return;
     }
+    if (player_owns(w) || (w == S.browser_w && S.page == PG_PLAYER)) {
+        int e = player_key(k);
+        if (e >= 0) {
+            builtin_event(e);
+            return;
+        }
+    }
     if (w == S.browser_w && S.page == PG_SIGNIN) {
         int u = signin_key(k);
         if (u == 2)
@@ -2998,6 +3476,10 @@ static void open_request(int *b)
     _kernel_swi_regs r;
     r.r[1] = (intptr_t)b;
     swi(Wimp_OpenWindow, &r);
+    if (b[0] == S.browser_w && S.page == PG_PLAYER) {
+        player_layout();
+        return;
+    }
     if (b[0] == S.browser_w) {
         int w = b[3] - b[1], cols = layout_cols(w);
         S.posters_wanted = 1;       /* scrolled or resized: more may be in view */
@@ -3016,6 +3498,8 @@ static void open_request(int *b)
 static void close_request(int *b)
 {
     if (b[0] == S.browser_w) {
+        if (S.pl.on)
+            builtin_stop(1);
         close_window(S.browser_w);
         S.browser_open = 0;
         S.in_browser = 0;
@@ -3099,6 +3583,8 @@ static int message(int event, int *b)
     case MSG_MODECHANGE:
         read_screen();
         draw_init(S.xeig, S.yeig);
+        if (S.pl.on)
+            player_mode_change();
         cache_free_all();
         if (S.have_list)
             make_disp();
@@ -3123,6 +3609,10 @@ static void nulls(void)
     }
     if (S.speed.active) {
         speed_step();
+        return;
+    }
+    if (S.pl.on) {
+        builtin_nulls();
         return;
     }
     if (S.pin_id && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.pin_next >= 0) {
@@ -3197,11 +3687,23 @@ int plexro_main(int argc, char **argv)
     make_windows();
     iconbar_icon();
     S.proginfo = proginfo_create(APP, PURPOSE, APP_AUTHOR, PLEXRO_VERSION " (" PLEXRO_DATE ")");
+    player_init(S.task, S.overlay, S.pic_mode, S.volume);
 
     for (;;) {
         int mask = 1 << 11 | 1 << 12;  /* no caret events */
         int reason = Wimp_Poll;
-        if (S.save.active || S.speed.active || S.posters_wanted) {
+        if (S.save.active || S.speed.active) {
+            /* null events at once */
+        } else if (S.pl.on) {           /* the built-in player says how often */
+            int cs = player_poll_cs();
+            if (S.pl.upnext_cs && (cs < 0 || cs > 25))
+                cs = 25;                /* the card's countdown */
+            if (cs > 0) {
+                reason = Wimp_PollIdle;
+                r.r[2] = now_cs() + cs;
+            } else if (cs < 0)
+                mask |= 1;
+        } else if (S.posters_wanted) {
             /* null events at once */
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
@@ -3335,6 +3837,8 @@ const char *ui_test_button(int id)
     return NULL;
 }
 int ui_test_hover(void) { return S.hover; }
+int ui_test_player(void) { return S.pl.on; }
+int ui_test_upnext(void) { return S.pl.upnext_cs != 0; }
 const char *ui_test_det(int what)
 {
     return what == 0 ? S.det_title : what == 1 ? S.det_meta : what == 2 ? S.det_how :

@@ -83,6 +83,23 @@ mutate "the speed in bytes, not bits" src/ui.c \
   'S.speed.done * 8.0 /' 'S.speed.done * 1.0 /'
 mutate "no MB/s while saving" src/ui.c \
   'if (cs >= 100)' 'if (0)'
+# the built-in player
+mutate "the overlay not clipped above the bar (full screen)" src/player.c \
+  'if (P.fullscreen && P.bar_shown)\n        c.y0 = P.bar.y1;' ''
+mutate "a converted stream seeked in place" src/player.c \
+  'if (P.convert) {                /* the caller' 'if (0) {                /* the caller'
+mutate "the server not told of a pause" src/ui.c \
+  'case PE_PAUSED:\n        builtin_timeline("paused");' 'case PE_PAUSED:'
+mutate "no next episode" src/ui.c \
+  'if (plex_next_episode(&S.px, it, &S.pl.next) == 0 && S.pl.next.n) {' 'if (0) {'
+mutate "Accept: JSON given to reelcore" src/ui.c \
+  'if (strncmp(in, "Accept:", 7) && o + n < size) {' 'if (o + n < size) {'
+mutate "sleeping while buffering" src/player.c \
+  'if (reelcore_net(P.v, &ns) && (ns.buffering || ns.opening))\n        return 0;' ''
+mutate "Resume ignored in direct play" src/player.c \
+  'if (P.start > 0 && !P.convert)\n        reelcore_seek(P.v, P.start - P.base);' ''
+mutate "Stretch not given to the overlay" src/player.c \
+  'if (P.pic_mode != PIC_STRETCH) {' 'if (1) {'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

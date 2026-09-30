@@ -113,6 +113,13 @@ static void session_id(const plex_ctx *c, char *out, size_t size)
 int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
               int resume, play_t *out)
 {
+    return caps_play_at(c, it, k, allow_direct,
+                        resume && it->view_offset_ms > 0 ? (long)(it->view_offset_ms / 1000) : 0, out);
+}
+
+int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
+                 long offset_s, play_t *out)
+{
     char why[160];
     memset(out, 0, sizeof(*out));
     if (it->kind != PI_VIDEO || !it->rating_key) {
@@ -150,7 +157,8 @@ int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow
         net_escape(c->client_id, id_esc, sizeof(id_esc));
         net_escape(c->product, prod_esc, sizeof(prod_esc));
         session_id(c, sid, sizeof(sid));
-        out->offset_s = resume && it->view_offset_ms > 0 ? (long)(it->view_offset_ms / 1000) : 0;
+        out->offset_s = offset_s > 0 ? offset_s : 0;
+        snprintf(out->session, sizeof(out->session), "%s", sid);
         snprintf(out->url, sizeof(out->url),
                  "%s/video/:/transcode/universal/start.m3u8?hasMDE=1&path=%s&mediaIndex=0&partIndex=0"
                  "&protocol=hls&fastSeek=1&directPlay=0&directStream=1&directStreamAudio=1"

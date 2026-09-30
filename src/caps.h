@@ -37,6 +37,7 @@ typedef struct {
     char why[160];          /* for the status line: what, and why */
     char key[160];          /* Reel's "carry on" key (direct play only), or "" */
     long offset_s;          /* converted streams: where it starts */
+    char session[32];       /* converted streams: the server's session id */
 } play_t;
 
 void caps_for(int quality, caps_t *out);
@@ -52,5 +53,9 @@ void caps_profile_extra(const caps_t *k, char *out, size_t size);
    resume: start a converted stream at the item's view offset. 0 = ok. */
 int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
               int resume, play_t *out);
+/* The same, a converted stream starting offset_s seconds in (the built-in
+   player seeks in one by starting another) */
+int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
+                 long offset_s, play_t *out);
 
 #endif

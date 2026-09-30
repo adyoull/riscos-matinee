@@ -26,6 +26,7 @@ def jpeg(url):
 
 
 SUBSEL = {}                 # part id -> the subtitle stream chosen (PUT /library/parts)
+AUDSEL = {}                 # part id -> the sound stream chosen
 
 
 def streams(m):
@@ -34,7 +35,13 @@ def streams(m):
     rk = int(m["ratingKey"])
     pid = 11000 + rk
     st = [{"id": rk * 10 + 1, "streamType": 1, "codec": m["Media"][0]["videoCodec"]},
-          {"id": rk * 10 + 2, "streamType": 2, "codec": m["Media"][0]["audioCodec"], "selected": True}]
+          {"id": rk * 10 + 2, "streamType": 2, "codec": m["Media"][0]["audioCodec"],
+           "displayTitle": "English (AAC Stereo)"}]
+    if rk == 101:
+        st += [{"id": rk * 10 + 3, "streamType": 2, "codec": "ac3", "displayTitle": "Commentary (AC3 5.1)"}]
+    for x in st:
+        if x["streamType"] == 2:
+            x["selected"] = AUDSEL.get(pid, rk * 10 + 2) == x["id"]
     if rk == 101:
         st += [{"id": 1001, "streamType": 3, "codec": "srt", "language": "English",
                 "displayTitle": "English (SRT)", "extendedDisplayTitle": "English (SRT)"},
@@ -83,7 +90,8 @@ def episodes():
     for i in range(1, 7):
         e = movie(210 + i, "Episode \u2018%d\u2019" % i, 2020, "h264", 1280, 720, 3000)
         e.update({"type": "episode", "index": i, "parentIndex": 1, "year": None,
-                  "grandparentTitle": "Space Show", "grandparentArt": "/library/metadata/20/art/1"})
+                  "grandparentTitle": "Space Show", "grandparentArt": "/library/metadata/20/art/1",
+                  "grandparentRatingKey": "20"})
         del e["art"]
         eps.append(e)
     return eps
@@ -140,7 +148,10 @@ class H(BaseHTTPRequestHandler):
             return self.send(401, {})
         if u.path.startswith("/library/parts/"):
             q = parse_qs(u.query)
-            SUBSEL[int(u.path.rsplit("/", 1)[1])] = int(q.get("subtitleStreamID", ["0"])[0])
+            if "subtitleStreamID" in q:
+                SUBSEL[int(u.path.rsplit("/", 1)[1])] = int(q["subtitleStreamID"][0])
+            if "audioStreamID" in q:
+                AUDSEL[int(u.path.rsplit("/", 1)[1])] = int(q["audioStreamID"][0])
             return self.send(200, raw=b"")
         self.send(404, {})
 
@@ -203,12 +214,16 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": [
                 {"ratingKey": "21", "key": "/library/metadata/21/children", "type": "season",
                  "title": "Series 1", "index": 1, "leafCount": 6, "viewedLeafCount": 2}]}})
+        if p == "/library/metadata/20/allLeaves":
+            return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": episodes()}})
+        if p in ("/:/timeline", "/video/:/transcode/universal/stop"):
+            return self.send(200, raw=b"")
         if p == "/library/metadata/21/children":
             return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": episodes()}})
         if p == "/library/onDeck":
             e = movie(213, "Episode Three", 2020, "h264", 1280, 720, 3000, offset=600000)
             e.update({"type": "episode", "index": 3, "parentIndex": 1, "grandparentTitle": "Space Show",
-                      "grandparentThumb": "/library/metadata/20/thumb/1"})
+                      "grandparentThumb": "/library/metadata/20/thumb/1", "grandparentRatingKey": "20"})
             return self.send(200, {"MediaContainer": {"title1": "On Deck", "Metadata": [e]}})
         if p == "/photo/:/transcode":
             return self.send(200, raw=jpeg((q.get("url") or [""])[0]), ctype="image/jpeg")

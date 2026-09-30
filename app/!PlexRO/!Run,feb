@@ -1,6 +1,7 @@
-| !Run for !PlexRO (a Plex client that plays through ReelEGL or Reel)
+| !Run for !PlexRO (a Plex client with a built-in player)
 | Puts PlexRO on the icon bar: Select on it to sign in, or to browse your
-| Plex server. Videos are played by ReelEGL (or Reel), from riscos-ffmpeg.
+| Plex server. Videos play in PlexRO's own window (riscos-ffmpeg's player
+| core), or in ReelEGL or Reel if chosen on the Player menu.
 Set PlexRO$Dir <Obey$Dir>
 IconSprites <PlexRO$Dir>.!Sprites
 
@@ -18,8 +19,18 @@ RMEnsure PThreadTicker 0.01 IfThere <PlexRO$Dir>.PThrTicker Then RMLoad <PlexRO$
 | module (RISC OS 5.28 or later); quiet if it's missing (then signing in
 | with a code says so, and only a server's own http address works)
 RMEnsure AcornSSL 0 IfThere System:Modules.Network.URL.AcornSSL Then RMLoad System:Modules.Network.URL.AcornSSL
+| The picture scaled by the display: the VideoOverlay module (in !System on
+| RISC OS 5); quiet if it's missing (then the picture is plotted instead)
+RMEnsure VideoOverlay 0.00 IfThere System:Modules.VideoOverlay Then RMLoad System:Modules.VideoOverlay
+| Sound: SharedSoundBuffer and StreamManager (ssb.zip, from
+| https://orac.co.uk/software/rdpclient/rdpclient.html) and SharedSound
+| (part of RISC OS). Merged into !System they still have to be loaded:
+| these do it (and are quiet if they're missing).
+RMEnsure SharedSound 1.07 IfThere System:Modules.SSound Then RMLoad System:Modules.SSound
+RMEnsure StreamManager 0.03 IfThere System:Modules.StreamMan Then RMLoad System:Modules.StreamMan
+RMEnsure SharedSoundBuffer 0.07 IfThere System:Modules.SSBuffer Then RMLoad System:Modules.SSBuffer
 
-| The program is about 28MB (FFmpeg's network code comes with its format
-| and codec lists); the posters are kept in a dynamic area ("PlexRO Heap").
-WimpSlot -min 36864K -max 36864K
+| The program is about 32MB (the player, and FFmpeg's format and codec
+| lists); the posters, pictures and sound are in a dynamic area ("PlexRO Heap").
+WimpSlot -min 40960K -max 40960K
 Run <PlexRO$Dir>.!RunImage %*0
