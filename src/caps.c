@@ -100,7 +100,7 @@ void caps_profile_extra(const caps_t *k, char *out, size_t size)
 }
 
 /* A new transcode session id each time (the server keeps one per id) */
-static void session_id(const plex_ctx *c, char *out, size_t size)
+void caps_session_id(const plex_ctx *c, char *out, size_t size)
 {
     static unsigned n;
     unsigned h = 2166136261u;
@@ -114,11 +114,11 @@ int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow
               int resume, play_t *out)
 {
     return caps_play_at(c, it, k, allow_direct,
-                        resume && it->view_offset_ms > 0 ? (long)(it->view_offset_ms / 1000) : 0, out);
+                        resume && it->view_offset_ms > 0 ? (long)(it->view_offset_ms / 1000) : 0, NULL, out);
 }
 
 int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
-                 long offset_s, play_t *out)
+                 long offset_s, const char *session, play_t *out)
 {
     char why[160];
     memset(out, 0, sizeof(*out));
@@ -140,7 +140,10 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
         snprintf(why, sizeof(why), "direct play is off");
     if (allow_direct && caps_direct_ok(k, it, why, sizeof(why))) {
         out->direct = 1;
-        session_id(c, out->session, sizeof(out->session));  /* for the timeline, and the dashboard */
+        if (session && *session)
+            snprintf(out->session, sizeof(out->session), "%s", session);
+        else
+            caps_session_id(c, out->session, sizeof(out->session));  /* for the timeline, and the dashboard */
         snprintf(out->url, sizeof(out->url), "%s%s", c->base, it->part_key);
         snprintf(out->why, sizeof(out->why), "Direct play: %s", why);
         /* Reel's own "carry on from where you stopped" goes by this */
@@ -157,7 +160,10 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
         net_escape(c->token, tok_esc, sizeof(tok_esc));
         net_escape(c->client_id, id_esc, sizeof(id_esc));
         net_escape(c->product, prod_esc, sizeof(prod_esc));
-        session_id(c, sid, sizeof(sid));
+        if (session && *session)
+            snprintf(sid, sizeof(sid), "%s", session);
+        else
+            caps_session_id(c, sid, sizeof(sid));
         out->offset_s = offset_s > 0 ? offset_s : 0;
         snprintf(out->session, sizeof(out->session), "%s", sid);
         snprintf(out->url, sizeof(out->url),

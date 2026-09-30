@@ -15,7 +15,7 @@
  * does. Sound goes through SharedSoundBuffer (reelcore).
  *
  * The player knows nothing of Plex: ui.c tells the server where it's got
- * to, restarts a converted stream to seek in it (PE_SEEK), and offers the
+ * to, and offers the
  * next episode (player_card).
  * Part of riscos-plex. GPL v2 or later.
  */
@@ -27,7 +27,6 @@ enum {
     PE_NONE,
     PE_END,             /* played to the end */
     PE_BACK,            /* Back, Escape: the caller leaves the player page */
-    PE_SEEK,            /* a converted stream: start one at player_seek_to() */
     PE_PAUSED,          /* paused, or playing again: tell the server */
     PE_PLAYING,
     PE_FAILED,          /* couldn't open it: player_error() says why */
@@ -87,11 +86,10 @@ int player_key(int k);
 /* Where it is (seconds, in the video) */
 double player_position(void);
 double player_duration(void);
-double player_seek_to(void);            /* for PE_SEEK */
 int player_paused(void);
 void player_pause(int paused);
 int player_ended(void);
-void player_seek(double t);             /* a converted stream: gives PE_SEEK from player_null */
+void player_seek(double t);             /* a converted stream too: the server converts from there */
 
 int player_fullscreen(void);
 void player_set_fullscreen(int on);

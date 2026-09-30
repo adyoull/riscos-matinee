@@ -53,9 +53,12 @@ void caps_profile_extra(const caps_t *k, char *out, size_t size);
    resume: start a converted stream at the item's view offset. 0 = ok. */
 int caps_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
               int resume, play_t *out);
-/* The same, a converted stream starting offset_s seconds in (the built-in
-   player seeks in one by starting another) */
+/* The same, a converted stream starting offset_s seconds in; session: the
+   playback's session id to use again (a new sound track, the next part of
+   one playback), or NULL for a new one */
 int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct,
-                 long offset_s, play_t *out);
+                 long offset_s, const char *session, play_t *out);
+/* A new session id */
+void caps_session_id(const plex_ctx *c, char *out, size_t size);
 
 #endif

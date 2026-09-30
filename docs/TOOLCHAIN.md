@@ -5,7 +5,7 @@
 PlexRO is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`) in
 `~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.2** (riscos-unixlib release
 v5.0.2), so programs built with `-D_FILE_OFFSET_BITS=64` handle files over 2GB (up to
-4GB−1). It's the same set-up riscos-ffmpeg's 5.1.10-riscos13 and Reel 0.1.20 use.
+4GB−1). It's the same set-up riscos-ffmpeg's 5.1.10-riscos14 and Reel 0.1.21 use.
 
 ### Quickest: the prebuilt toolchain
 
@@ -70,9 +70,11 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
-- `riscos-ffmpeg/releases/download/v5.1.10-riscos13/riscos-ffmpeg-devkit-5.1.10-riscos13.tgz`:
+- `riscos-ffmpeg/releases/download/v5.1.10-riscos14/riscos-ffmpeg-devkit-5.1.10-riscos14.tgz`
+  (sha256 `074585cd111b1156d8b6c96bbd491ac33ee427b90079fa9474fcaaa02e330847`):
   libavformat and the rest, built against UnixLib 5.0.2, with AcornSSL https
-  (patch 0018), and `libreelcore.a` with `reelcore.h`: the built-in player's core.
+  (patch 0018), and `libreelcore.a` with `reelcore.h`: the built-in player's core (Reel
+  0.1.21's: the stats panel drawn at the size it's seen, 4K halved into the overlay).
 - `riscos-mesa/releases/download/v20.3.5-8/riscos-mesa-devkit-20.3.5-8.tgz`: libz now,
   and libEGL and libOSMesa for a later embedded ReelEGL.
 - `riscos-ffmpeg/releases/download/reel-0.1.20/Reel-0.1.20.zip`: the players, for testing
@@ -122,7 +124,8 @@ REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/mutate.sh
 ```
 
 ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h` (from
-`REEL_SRC`, which also gives `reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
+`REEL_SRC`, a riscos-ffmpeg checkout at `reel-0.1.21` (riscos14), which also gives
+`reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
 `details.ppm`, `player.ppm` and `upnext.ppm` in `OUT`. It links
 `tests/host/fake_reelcore.c` in place of reelcore.
 

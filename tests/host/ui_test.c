@@ -101,7 +101,7 @@ static int poll_null_mask_bad;
 /* the fake VideoOverlay module */
 static int ovl_on = 1, ovl_created, ovl_destroyed, ovl_id, ovl_sel_fourcc, ovl_sel_flags, ovl_banks;
 static int ovl_scale[2], ovl_pos[6], ovl_win, ovl_display = -9, ovl_displays, ovl_redraws, ovl_maps, ovl_mapped;
-static int vsyncs;
+static int vsyncs, pointer_off;
 static uint8_t ovl_mem[3][1280 * 720 * 3 / 2];
 static int ovl_planes[6];
 static const char *const ovl_swis[] = { "VideoOverlay_Create", "VideoOverlay_Destroy", "VideoOverlay_DisplayBuffer",
@@ -174,6 +174,10 @@ static void fill_tri(int ax, int ay, int bx, int by, int cx, int cy)
         }
 }
 
+/* Reel's 15-pixel panel font (riscos-ffmpeg 0.1.21's panel_fonts[]) */
+#define PANEL_FONT_W (panel_fonts[3].w)
+#define PANEL_FONT_H (panel_fonts[3].h)
+
 static void fb_text(int x, int y, const char *s, unsigned fg, int scale)
 {
     /* the baseline at y: the font's cell is 18 pixels, its baseline 14 down */
@@ -183,7 +187,7 @@ static void fb_text(int x, int y, const char *s, unsigned fg, int scale)
         int g = c >= 32 && c <= 126 ? c - 32 : c >= 160 ? 95 + c - 160 : 0;
         for (int row = 0; row < PANEL_FONT_H * scale; row++)
             for (int col = 0; col < PANEL_FONT_W * scale; col++) {
-                int a = panel_font[g][(row / scale) * PANEL_FONT_W + col / scale];
+                int a = panel_fonts[3].data[(size_t)g * PANEL_FONT_W * PANEL_FONT_H + (row / scale) * PANEL_FONT_W + col / scale];
                 int X = (x >> 1) + col, Y = FB_H - 1 - (top >> 1) + row;
                 int ox = X * 2, oy = (FB_H - 1 - Y) * 2;
                 if (!a || ox < clip[0] || ox >= clip[2] || oy < clip[1] || oy >= clip[3] ||
@@ -349,6 +353,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
     case 0x06:                                      /* OS_Byte 176: the vsync count */
         if (in->r[0] == 176) { out->r[1] = ++vsyncs & 255; return NULL; }
         if (in->r[0] == 19) return NULL;
+        if (in->r[0] == 106) { pointer_off = in->r[1] == 0; return NULL; }     /* the pointer: off, or shape 1 */
         return &err;
     case 0x46: {                                    /* OS_WriteN: VDU 24, the graphics window */
         const unsigned char *v = (const unsigned char *)(intptr_t)in->r[0];
@@ -831,6 +836,7 @@ static int player_button(int *b, int w, int id)
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
 static int n_null, open0, count0, draws0, wfull, items0;
+static char sid0[40];
 static double p0;
 
 #define NULL_EVENT 0
@@ -1701,14 +1707,18 @@ static int script(int *b, int mask)
             CHECK(wfull && win(wfull)->open && win(wfull)->vis[0] == 0 && win(wfull)->vis[2] == 3840 &&
                   win(wfull)->vis[3] == 2160, "full screen: a window over the whole screen");
             CHECK(player_fullscreen() && win(w_browser)->open, "and the browser stays");
+            pointer_w = wfull;                                      /* the pointer over the picture */
             n_null = 0;
             pc++;
             continue;
         case 916:
             if (n_null++ < 5) {
-                fake_cs += 4;
+                fake_cs += 50;                                      /* 2.5 s, the pointer still */
                 return NULL_EVENT;
             }
+            CHECK(pointer_off, "full screen: the pointer hidden once it's been still 2 s");
+            CHECK(NEAR(fake_rc.yuv_scale, 1280.0 / 1920, 0.01), "the stats drawn to be seen at their size (%.3f)",
+                  fake_rc.yuv_scale);
             CHECK(ovl_win == wfull && ovl_scale[0] == 1920 && ovl_scale[1] == 1080 && ovl_pos[3] == -2160,
                   "the overlay stretched to the screen: %dx%d", ovl_scale[0], ovl_scale[1]);
             pointer_x += 50;                                        /* the pointer moves: the bar */
@@ -1721,6 +1731,7 @@ static int script(int *b, int mask)
                 return NULL_EVENT;
             }
             CHECK(ovl_pos[3] == -2160 + 168, "the bar shows: the overlay stops above it (%d)", ovl_pos[3]);
+            CHECK(!pointer_off, "and the pointer is back");
             pc++;
             return ev_key(b, wfull, -1, 0x1B);
         case 918:
@@ -1807,11 +1818,14 @@ static int script(int *b, int mask)
             return ev_menu(b, MB_DIRECT, -1);                       /* Direct play off: converted */
         case 928:
             open0 = fake_rc.opens;
+            fake_rc.clock_start = 11;                               /* the stream's timestamps start at 11 s */
             pc++;
             return ev_button(b, w_browser, D_START, 0x400);
         case 929:
             CHECK(fake_rc.opens == open0 + 1 && strstr(fake_rc.url, "/video/:/transcode/universal/start.m3u8?") &&
                   strstr(fake_rc.url, "&offset=0&"), "converted by the server, from the start");
+            snprintf(sid0, sizeof(sid0), "%s", strstr(fake_rc.url, "&session=") ? strstr(fake_rc.url, "&session=") + 9 : "");
+            sid0[strcspn(sid0, "&")] = 0;
             n_null = 0;
             pc = 930;
             continue;
@@ -1832,25 +1846,24 @@ static int script(int *b, int mask)
                   player_test_time(), fake_rc.frames, player_position());
             open0 = fake_rc.opens;
             count0 = log_count("/video/:/transcode/universal/stop", NULL, NULL);
+            draws0 = fake_rc.seeks;
             n_null = 0;
             pc++;
             return ev_key(b, w_browser, -1, 0x18D);                 /* Right */
         case 932:
-            if (fake_rc.opens == open0 && n_null++ < 10)
+            if (n_null++ < 3) {
+                fake_cs += 2;
                 return NULL_EVENT;
-            CHECK(strstr(fake_rc.url, "&offset=11&"), "a seek: the server starts another stream there");
-            fake_rc.clock_start = 11;                               /* its clock counts from 11 s */
-            CHECK(log_count("/video/:/transcode/universal/stop", NULL, NULL) == count0 + 1, "and stops the one before");
+            }
+            CHECK(fake_rc.opens == open0 && fake_rc.seeks == draws0 + 1 && NEAR(fake_rc.seek_to, 11.1, 0.2) &&
+                  log_count("/video/:/transcode/universal/stop", NULL, NULL) == count0,
+                  "a seek in a converted stream: in the stream (the server converts from there), no new one (%.2f)",
+                  fake_rc.seek_to);
             n_null = 0;
             pc++;
             continue;
         case 933:
-            if (!player_ready() && n_null++ < 50) {
-                fake_cs += 2;
-                return NULL_EVENT;
-            }
             fake_cs += 50;
-            n_null = 0;
             pc++;
             return NULL_EVENT;
         case 934: {
@@ -1863,8 +1876,12 @@ static int script(int *b, int mask)
                 if (!strcmp(player_test_panel(i, 0), "Timing") && strstr(player_test_panel(i, 1), "sync +0 ms"))
                     ok = 1;
             CHECK(ok, "sync against the first picture, not the stream's start (11 s off)");
-            CHECK(strstr(player_test_time(), "0:13"), "counted from where the stream started: %s", player_test_time());
-            fake_rc.clock_start = 0;
+            ok = 0;
+            for (int i = 0; i < player_test_panel_rows(); i++)
+                ok |= (!strcmp(player_test_panel(i, 0), "Network Activity")) | (!strcmp(player_test_panel(i, 0), "Date")) << 1 |
+                      (!strcmp(player_test_panel(i, 0), "Codecs")) << 2;
+            CHECK(ok == 7, "ReelEGL's rows: Network Activity, Codecs, Date");
+            CHECK(strstr(player_test_time(), "0:13"), "the time: %s", player_test_time());
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
@@ -1872,6 +1889,7 @@ static int script(int *b, int mask)
         case 935:
             CHECK(menu_open && !menu_shaded(menu_open, MP_AUDIO), "two sound tracks on the server");
             open0 = fake_rc.opens;
+            count0 = log_count("/video/:/transcode/universal/stop", NULL, NULL);
             n_null = 0;
             pc++;
             return ev_menu(b, MP_AUDIO, 1);
@@ -1879,12 +1897,36 @@ static int script(int *b, int mask)
             if (fake_rc.opens == open0 && n_null++ < 10)
                 return NULL_EVENT;
             CHECK(log_count("/library/parts/11101", "audioStreamID", "1013") == 1, "chosen on the server");
-            CHECK(strstr(fake_rc.url, "&offset=13&"), "and the stream started again where it was");
-            pc++;
+            CHECK(strstr(fake_rc.url, "&offset=0&") && !strstr(fake_rc.url, sid0) &&
+                  log_count("/video/:/transcode/universal/stop", "session", sid0) == 1,
+                  "a new conversion for the sound track, the one before stopped");
+            n_null = 0;
+            pc = 9360;
+            continue;
+        case 9360:                                                  /* it carries on from where it was */
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            CHECK(fake_rc.seek_to > 12.5 && fake_rc.seek_to < 14.5, "and seeks to where it was (%.2f)", fake_rc.seek_to);
+            pc = 9361;
+            return ev_key(b, w_browser, -1, ' ');                   /* paused */
+        case 9361:
+            CHECK(player_paused() && last_poll == 0x400E1 && idle_time - fake_cs > 2000 && idle_time - fake_cs <= 3000,
+                  "paused, converted: woken now and then (%d cs)", idle_time - fake_cs);
+            count0 = log_count("/video/:/transcode/universal/ping", NULL, NULL);
+            fake_cs = idle_time;
+            pc = 9362;
+            return NULL_EVENT;
+        case 9362:
+            CHECK(log_count("/video/:/transcode/universal/ping", NULL, NULL) == count0 + 1,
+                  "the server told the conversion is still wanted");
+            pc = 937;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
         case 937:
             count0 = log_count("/video/:/transcode/universal/stop", NULL, NULL);
+            fake_rc.clock_start = 0;
             pc++;
             return ev_menu(b, MP_STOP, -1);
         case 938:
@@ -2044,7 +2086,18 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 79:
-            pc++;
+            report_answer = 2;                                  /* Cancel */
+            prev_reports = reports;
+            pc = 790;
+            return ev_menu(b, MB_SIGNOUT, -1);
+        case 790:
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "Sign out?") && win(w_browser)->open &&
+                  strstr(read_file(choices), "server_token SRV-TOKEN\n"), "Sign out asks first; Cancel keeps you signed in");
+            report_answer = 1;
+            pc = 791;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 791:
+            pc = 80;
             return ev_menu(b, MB_SIGNOUT, -1);
         case 80:
             CHECK(!win(w_browser)->open, "signed out: the browser closed");

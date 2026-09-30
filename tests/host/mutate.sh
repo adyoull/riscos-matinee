@@ -6,7 +6,7 @@
 set -e
 TOP=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=${WORK:-/tmp/plexro-mutate}
-REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}
+REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at reel-0.1.21 (riscos14)
 export REEL_SRC
 survived=0
 n=0
@@ -86,8 +86,6 @@ mutate "no MB/s while saving" src/ui.c \
 # the built-in player
 mutate "the overlay not clipped above the bar (full screen)" src/player.c \
   'if (P.fullscreen && P.bar_shown)\n        c.y0 = P.bar.y1;' ''
-mutate "a converted stream seeked in place" src/player.c \
-  'if (P.convert) {                /* the caller' 'if (0) {                /* the caller'
 mutate "the server not told of a pause" src/ui.c \
   'case PE_PAUSED:\n        builtin_timeline("paused");' 'case PE_PAUSED:'
 mutate "no next episode" src/ui.c \
@@ -96,8 +94,8 @@ mutate "Accept: JSON given to reelcore" src/ui.c \
   'if (strncmp(in, "Accept:", 7) && o + n < size) {' 'if (o + n < size) {'
 mutate "sleeping while buffering" src/player.c \
   'if (reelcore_net(P.v, &ns) && (ns.buffering || ns.opening))\n        return 0;' ''
-mutate "Resume ignored in direct play" src/player.c \
-  'if (P.start > 0 && !P.convert)\n        reelcore_seek(P.v, P.start - P.base);' ''
+mutate "Resume ignored" src/player.c \
+  'if (P.start > 0)\n        reelcore_seek(P.v, P.start - P.base);' ''
 mutate "Stretch not given to the overlay" src/player.c \
   'if (P.pic_mode != PIC_STRETCH) {' 'if (1) {'
 mutate "the player page scrolls" src/ui.c \
@@ -126,6 +124,17 @@ mutate "the cache trimmed in any order" src/imgcache.c \
   'qsort(l.v, l.n, sizeof(*l.v), older);' '(void)older;'
 mutate "Clear image cache deletes nothing" src/imgcache.c \
   'if (remove(path) == 0) {\n        (*gone)++;' 'if (0) {\n        (*gone)++;'
+# test8: in-stream seeking, the keep-alive, the pointer, the panel, sign out
+mutate "a new sound track keeps the old conversion" src/ui.c \
+  'if (*S.pl.sid && !S.pl.p.direct)\n            plex_transcode_stop(&S.px, S.pl.sid);' ''
+mutate "no keep-alive while paused" src/ui.c \
+  'plex_transcode_ping(&S.px, S.pl.sid);' '(void)0;'
+mutate "the pointer never hidden" src/player.c \
+  '        pointer_show(0);' '        (void)0;'
+mutate "the panel not scaled for the overlay" src/player.c \
+  'reelcore_set_yuv_scale(P.v, (double)ov.fw / rw);' '(void)rw;'
+mutate "Sign out without asking" src/ui.c \
+  'if (ask("Sign out?' 'if (1 || ask("Sign out?'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

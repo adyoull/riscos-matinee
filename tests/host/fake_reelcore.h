@@ -23,6 +23,7 @@ typedef struct {
     double pos_offset;          /* set by the test: the stream counts from here */
     double stream_end;          /* set by the test: a converted stream ends here (0: never) */
     double len;                 /* set by the test: a file's length (0: FAKE_LEN) */
+    double yuv_scale;           /* reelcore_set_yuv_scale: the panel drawn that much bigger */
     double clock_start;         /* set by the test: the clock counts from here (a stream's start_time) */
 } fake_rc_t;
 

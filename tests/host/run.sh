@@ -15,7 +15,7 @@
 # qemu-user.
 set -e
 TOP=$(cd "$(dirname "$0")/../.." && pwd)
-REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}
+REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at reel-0.1.21 (riscos14): reelcore.h, panel_font.h
 OUT=${OUT:-/tmp/plexro-tests}
 PORT=${PORT:-18411}
 [ -f "$REEL_SRC/player/sources.c" ] || { echo "run.sh: set REEL_SRC to a riscos-ffmpeg checkout" >&2; exit 2; }

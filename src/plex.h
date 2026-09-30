@@ -205,6 +205,8 @@ int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t t
 int plex_search(plex_ctx *c, const char *query, plex_list *out);
 /* Asks the server to stop converting for a session. 0 = ok. */
 int plex_transcode_stop(plex_ctx *c, const char *session);
+/* Tells the server a session's conversion is still wanted (paused). 0 = ok. */
+int plex_transcode_ping(plex_ctx *c, const char *session);
 /* The episode after it (the next in the show, across seasons), as a list
    of one; n = 0 if it was the last. 0 = ok. */
 int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out);

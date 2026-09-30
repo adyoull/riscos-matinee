@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test7
+!PlexRO - a Plex client for RISC OS                  0.1.0-test8
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -130,7 +130,14 @@ Stats and Full screen.
   click          pause, play; double-click: full screen
 
 Full screen is a window over the whole screen, still in the desktop:
-other programs carry on. Move the pointer to see the controls.
+other programs carry on. Move the pointer to see the controls; a pointer
+left still over the picture for 2 seconds is hidden (*Set
+PlexRO$NoHidePointer 1 to keep it).
+
+The stats (S) are drawn in the picture at a size you can read, in a
+window or full screen: the connection's speed, how much has come in and
+how much is read ahead (with graphs), the codecs, the timing, and what's
+left out to keep up (Keeping Up), as in ReelEGL.
 
 Menu over the picture: Sound track, Volume, Picture (Fit, Fill (crop) or
 Stretch), Stats, Full screen, Hardware overlay, Stop.
@@ -149,8 +156,10 @@ computer's network name, Inet$HostName, if it has one). At
 the end of an episode the next one is offered, and starts in 10 seconds
 (Return: now; Escape: back).
 
-To seek in a video the server is converting, PlexRO asks for a new
-stream from that place, which takes a few seconds.
+Seeking in a video the server is converting works as in a file: the
+server starts converting from the new place, which can take a few
+seconds. While one is paused, PlexRO tells the server now and then that
+it's still wanted.
 
 A log of what the player did goes to <Wimp$ScrapDir>.PlexROLog (*Set
 PlexRO$Log off to stop it, or to a file's name).
@@ -204,6 +213,8 @@ quicker the next time. It holds up to 64 MB (image_cache_mb in the
 Choices file; 0 turns it off): past that the oldest go when PlexRO
 starts. Clear image cache on the icon's menu empties it, and says how
 big it was.
+
+Sign out (on the icon's menu) asks first.
 
 Choices
 -------

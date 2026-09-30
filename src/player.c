@@ -41,9 +41,11 @@
 #define BAR_H     168               /* the controls, OS units: the title and time over the buttons */
 #define BTN_R     32                /* a round button's radius */
 #define SHOW_BAR  300               /* full screen: cs the bar stays after the pointer moves */
+#define HIDE_POINTER 200            /* full screen: cs before a still pointer is hidden */
 #define NOTE_CS   300
 #define MIN_SPRITE_BYTES (1024 * 1024)
 #define YV12_FOURCC 0x32315659
+#define OV_MAX_PIXELS (1920L * 1088 * 11 / 10)   /* the most an overlay is made with */
 
 typedef struct { int x0, y0, x1, y1; } box_t;
 
@@ -61,8 +63,6 @@ static struct {
     double base, start, duration;
     int convert, based;             /* based: base checked against the stream's own times */
     double sync0;                   /* position - clock at the first picture (see panel_update) */
-    double seek_to;
-    int seek_wanted;
     int opened_cs;
     /* the screen */
     int xeig, yeig, log2bpp, trgb, scr_w, scr_h;
@@ -71,6 +71,7 @@ static struct {
     box_t pic, bar;
     int bar_shown;                  /* full screen: the bar is showing (until bar_until) */
     int bar_until, ptr_x, ptr_y, ptr_cs;
+    int ptr_hidden;                 /* full screen: the pointer hidden (it hasn't moved for a while) */
     /* the picture sprite */
     int *area;
     int spr_w, spr_h, spr_rows, have_frame;
@@ -212,6 +213,7 @@ static void set_caret(int w)
 }
 
 static int cur_win(void) { return P.fullscreen ? P.full : P.win; }
+static void pointer_show(int on);
 
 /* ---- where things go ------------------------------------------------------ */
 
@@ -585,6 +587,8 @@ static int ov_place(int w)
     if (swi(ov.swi[OV_POSITION], &r))
         return -1;
     memcpy(ov.placed, want, sizeof(want));
+    if (ov.fw > 0)                  /* the stats panel: drawn into the frame this much bigger */
+        reelcore_set_yuv_scale(P.v, (double)ov.fw / rw);
     lg("overlay: %dx%d pixels at %d,%d in window &%x", rw, rh, x, y, w);
     return 1;
 }
@@ -604,6 +608,13 @@ static int ov_show_frame(void)
     }
     fw &= ~1;
     fh &= ~1;
+    /* bigger than HD (4K): halved into the overlay (NEON), to at most about
+       1920x1088's pixels, as Reel 0.1.21: a full-size 4K overlay (3 buffers
+       of 12 MB) ran the Pi's GPU short and the screen kept going black */
+    while ((long)fw * fh > OV_MAX_PIXELS || fw > 2048 || fh > 2048) {
+        fw = fw / 2 & ~1;
+        fh = fh / 2 & ~1;
+    }
     reelcore_draw_yuv420(P.v, NULL, NULL, 0, 0, &colour);
     mode = ov_mode_sig();
     if ((ov.id || ov.failed) && (ov.fw != fw || ov.fh != fh || ov.colour != colour || ov.mode != mode)) {
@@ -895,7 +906,7 @@ static void bar_refresh(void)
 
 #define GRAPH_N 60
 static struct {
-    float speed[GRAPH_N], buf[GRAPH_N];
+    float speed[GRAPH_N], act[GRAPH_N], buf[GRAPH_N];
     int n;
     ReelCoreStats prev;
     int prev_cs;
@@ -942,15 +953,37 @@ static void graph_scale(float *out, const float *a)
         out[i] = i < GRAPH_N - G.n ? 0 : (float)(a[i - (GRAPH_N - G.n)] / m);
 }
 
+/* Media info's long names made short (as Reel's panel): a codec's short
+   name is in its last brackets ("H.264 / AVC / ... (h264)" -> "h264"); a
+   container's long name comes before them */
+static char *panel_short(char *t, int codec)
+{
+    char *o = strrchr(t, '(');
+    size_t n = strlen(t);
+    if (!o || n < 2 || t[n - 1] != ')')
+        return t;
+    if (codec) {
+        t[n - 1] = 0;
+        return o + 1;
+    }
+    while (o > t && o[-1] == ' ')
+        o--;
+    *o = 0;
+    return t;
+}
+
+/* The stats panel: ReelEGL's rows (Reel 0.1.21), drawn into the picture by
+   reelcore at the size it's seen (through the overlay too) */
 static void panel_update(int sample)
 {
-    static float g_speed[GRAPH_N], g_buf[GRAPH_N];
+    static float g_speed[GRAPH_N], g_act[GRAPH_N], g_buf[GRAPH_N];
     ReelCoreStats st;
     ReelCoreNet ns;
-    char a[96], c[96];
+    char a[96], b[96], c[96], d[96];
     int t = now_cs(), fw = 0, fh = 0, i = 0, net;
     double dt, rate, got, ahead;
     unsigned dec, draws;
+    time_t now;
     if (!P.stats || !P.v || !P.ready)
         return;
     if (G.of != P.v) {
@@ -970,17 +1003,19 @@ static void panel_update(int sample)
     ahead = net ? ns.ahead : st.sound_queued;
     if (sample && dt > 0.5) {
         graph_push(G.speed, rate);
+        graph_push(G.act, got / 1024);
         graph_push(G.buf, ahead);
         if (G.n < GRAPH_N) G.n++;
     }
     graph_scale(g_speed, G.speed);
+    graph_scale(g_act, G.act);
     graph_scale(g_buf, G.buf);
     memset(&G.pp, 0, sizeof(G.pp));
     reelcore_frame_size(P.v, &fw, &fh);
 
     media_value("File", "Container", a, sizeof(a));
-    snprintf(G.val[i], sizeof(G.val[i]), "%.60s / %s", P.title,
-             P.convert ? "converted by the server" : "direct play");
+    snprintf(G.val[i], sizeof(G.val[i]), "%.60s / %s%s%.30s", P.title,
+             P.convert ? "converted by the server" : "direct play", a[0] ? ", " : "", a[0] ? panel_short(a, 0) : "");
     G.pp.label[i] = "Video / Source"; G.pp.value[i] = G.val[i]; i++;
 
     snprintf(G.val[i], sizeof(G.val[i]), "%dx%d / %u dropped of %u", (P.pic.x1 - P.pic.x0) >> P.xeig,
@@ -990,10 +1025,20 @@ static void panel_update(int sample)
     snprintf(G.val[i], sizeof(G.val[i]), "%dx%d@%.3g / %s", fw, fh, st.fps, ov.shown ? "hardware overlay" : "sprite");
     G.pp.label[i] = "Current Res / Drawn"; G.pp.value[i] = G.val[i]; i++;
 
+    snprintf(G.val[i], sizeof(G.val[i]), "%d%%", (int)(P.vol * 100 + 0.5));
+    G.pp.label[i] = "Volume"; G.pp.value[i] = G.val[i]; i++;
+
     media_value("Video", "Codec", a, sizeof(a));
+    media_value("Video", "Profile", b, sizeof(b));
     media_value("Audio", "Codec", c, sizeof(c));
-    snprintf(G.val[i], sizeof(G.val[i]), "%.60s / %.60s", a[0] ? a : "none", c[0] ? c : "none");
+    media_value("Audio", "Profile", d, sizeof(d));
+    snprintf(G.val[i], sizeof(G.val[i]), "%.30s%s%.20s%s / %.30s%s%.20s%s", a[0] ? panel_short(a, 1) : "none",
+             b[0] ? " (" : "", b, b[0] ? ")" : "", c[0] ? panel_short(c, 1) : "none", d[0] ? " (" : "", d, d[0] ? ")" : "");
     G.pp.label[i] = "Codecs"; G.pp.value[i] = G.val[i]; i++;
+
+    media_value("Video", "Colours", a, sizeof(a));
+    snprintf(G.val[i], sizeof(G.val[i]), "%.100s", a[0] ? a : "?");
+    G.pp.label[i] = "Color"; G.pp.value[i] = G.val[i]; i++;
 
     snprintf(G.val[i], sizeof(G.val[i]), "%.40s, %s", strncmp(P.url, "https:", 6) ? "http" : "https (AcornSSL)",
              net ? (ns.buffering ? "BUFFERING" : ns.ended ? "all read" : "reading ahead") : "a file");
@@ -1003,7 +1048,11 @@ static void panel_update(int sample)
     G.pp.label[i] = "Connection Speed"; G.pp.value[i] = G.val[i];
     G.pp.graph[i] = g_speed; G.pp.graph_rgb[i] = 0x1E88E5; i++;
 
-    snprintf(G.val[i], sizeof(G.val[i]), "%.2f s (%u KB)", ahead, net ? ns.bytes_ahead / 1024 : 0);
+    snprintf(G.val[i], sizeof(G.val[i]), "%.0f KB", got / 1024);
+    G.pp.label[i] = "Network Activity"; G.pp.value[i] = G.val[i];
+    G.pp.graph[i] = g_act; G.pp.graph_rgb[i] = 0x26A69A; i++;
+
+    snprintf(G.val[i], sizeof(G.val[i]), "%.2f s", ahead);
     G.pp.label[i] = "Buffer Health"; G.pp.value[i] = G.val[i];
     G.pp.graph[i] = g_buf; G.pp.graph_rgb[i] = 0xFFB300; i++;
 
@@ -1021,12 +1070,22 @@ static void panel_update(int sample)
              (int)((st.position - st.clock - P.sync0) * 1000));
     G.pp.label[i] = "Timing"; G.pp.value[i] = G.val[i]; i++;
 
-    snprintf(G.val[i], sizeof(G.val[i]), "%d%%", (int)(P.vol * 100 + 0.5));
-    G.pp.label[i] = "Volume"; G.pp.value[i] = G.val[i]; i++;
+    if (st.auto_fast || st.skip_level) {          /* what's being left out to keep up */
+        snprintf(G.val[i], sizeof(G.val[i]), "%s%s%s", st.auto_fast ? "no deblocking" : "",
+                 st.auto_fast && st.skip_level ? ", " : "",
+                 st.skip_level == 2 ? "keyframes only" : st.skip_level ? "non-reference frames skipped" : "");
+        G.pp.label[i] = "Keeping Up"; G.pp.value[i] = G.val[i]; i++;
+    }
+
+    now = time(NULL);
+    strftime(G.val[i], sizeof(G.val[i]), "%a %b %d %Y %H:%M:%S", localtime(&now));
+    G.pp.label[i] = "Date"; G.pp.value[i] = G.val[i]; i++;
 
     G.pp.rows = i;
     G.pp.graph_n = GRAPH_N;
-    G.pp.yuv_scale = ov.shown && ov.placed[1] > 0 && fw > 0 ? (double)fw / ov.placed[1] : 1;
+    /* through the overlay the display scales the picture: the panel is drawn
+       that much bigger in the frame, so it's the same size on the screen */
+    G.pp.yuv_scale = ov.shown && ov.placed[1] > 0 && ov.fw > 0 ? (double)ov.fw / ov.placed[1] : 1;
     reelcore_set_panel(P.v, &G.pp);
     if (sample && dt > 0.5) {
         G.prev = st;
@@ -1102,6 +1161,7 @@ void player_set_fullscreen(int on)
                 P.ptr_x = p[0];
                 P.ptr_y = p[1];
             }
+            P.ptr_cs = now_cs();
         }
         b[0] = P.full; b[1] = 0; b[2] = 0; b[3] = P.scr_w; b[4] = P.scr_h;
         b[5] = 0; b[6] = 0; b[7] = -1;
@@ -1113,6 +1173,7 @@ void player_set_fullscreen(int on)
         force_redraw(P.full, 0, -P.scr_h, P.scr_w, 0);
         set_caret(P.full);
     } else {
+        pointer_show(1);
         r.r[1] = (intptr_t)&P.full;
         swi(Wimp_CloseWindow, &r);
         P.fullscreen = 0;
@@ -1158,7 +1219,6 @@ int player_open(const player_src *s, int win)
     P.convert = s->convert;
     P.based = 0;
     P.ready = P.ended = P.failed = 0;
-    P.seek_wanted = 0;
     P.error[0] = 0;
     P.note[0] = 0;
     P.card = 0;
@@ -1188,6 +1248,7 @@ static void close_video(int keep_full)
     if (!P.v && !P.full && !P.failed)
         return;
     lg("close");
+    pointer_show(1);
     ov_destroy();
     if (P.fullscreen && !keep_full) {
         _kernel_swi_regs r;
@@ -1243,7 +1304,6 @@ double player_duration(void)
     return d > 0 ? d + stream_base() : P.duration;
 }
 
-double player_seek_to(void) { return P.seek_to; }
 int player_paused(void) { return P.v && P.ready && reelcore_paused(P.v); }
 
 void player_pause(int paused)
@@ -1255,6 +1315,8 @@ void player_pause(int paused)
         player_seek(0);
     }
     reelcore_pause(P.v, paused);
+    if (paused)
+        pointer_show(1);
     lg("%s at %.2f", paused ? "pause" : "play", player_position());
     if (paused)
         ov_hide_and_draw();
@@ -1269,12 +1331,10 @@ void player_seek(double t)
     if (t < 0) t = 0;
     if (d > 0 && t > d - 1) t = d - 1;
     P.ended = 0;
-    if (P.convert) {                /* the caller starts another stream there */
-        P.seek_to = t;
-        P.seek_wanted = 1;
-        lg("seek to %.1f: a new stream", t);
-        return;
-    }
+    /* a converted stream too: the server's playlist covers the whole video,
+       and the server starts converting from the segment asked for (as the
+       Plex apps seek; test7 started a new stream there instead, which the
+       server could answer with 400 Bad Request) */
     if (!P.ready) {
         P.start = t;
         return;
@@ -1297,7 +1357,7 @@ static void opened(void)
         lg("streams: %s", info);
     }
     reelcore_set_volume(P.v, P.vol * P.vol);
-    if (P.start > 0 && !P.convert)
+    if (P.start > 0)
         reelcore_seek(P.v, P.start - P.base);
     pic_make();
     if (P.stats)
@@ -1309,7 +1369,7 @@ int player_poll_cs(void)
     ReelCoreNet ns;
     if (!P.v)
         return -1;
-    if (!P.ready || P.ov_pending || P.seek_wanted)
+    if (!P.ready || P.ov_pending)
         return 0;
     if (P.ended || reelcore_paused(P.v))
         return P.fullscreen || P.card || P.note[0] ? 25 : -1;  /* the bar and the card still need time */
@@ -1318,6 +1378,19 @@ int player_poll_cs(void)
     if (reelcore_net(P.v, &ns) && (ns.buffering || ns.opening))
         return 0;
     return P.idle_cs > 0 ? P.idle_cs : 0;
+}
+
+/* The pointer shown again (shape 1), or hidden (OS_Byte 106) */
+static void pointer_show(int on)
+{
+    _kernel_swi_regs r;
+    if (on == !P.ptr_hidden)
+        return;
+    r.r[0] = 106;
+    r.r[1] = on ? 1 : 0;
+    swi(OS_Byte, &r);
+    P.ptr_hidden = !on;
+    lg("pointer %s", on ? "shown" : "hidden");
 }
 
 static void watch_pointer(void)
@@ -1329,9 +1402,16 @@ static void watch_pointer(void)
     r.r[1] = (intptr_t)p;
     if (swi(Wimp_GetPointerInfo, &r))
         return;
+    /* full screen: the pointer goes after HIDE_POINTER while it's still over
+       the picture and playing (PlexRO$NoHidePointer: never), back when it moves */
+    if (p[0] == P.ptr_x && p[1] == P.ptr_y && !P.ptr_hidden && p[3] == P.full && !reelcore_paused(P.v) &&
+        !P.ended && !P.card && now_cs() - P.ptr_cs >= HIDE_POINTER && !getenv("PlexRO$NoHidePointer"))
+        pointer_show(0);
     if (p[0] != P.ptr_x || p[1] != P.ptr_y) {
         P.ptr_x = p[0];
         P.ptr_y = p[1];
+        P.ptr_cs = now_cs();
+        pointer_show(1);
         P.bar_until = now_cs() + SHOW_BAR;
         if (!P.bar_shown) {
             P.bar_shown = 1;
@@ -1350,10 +1430,6 @@ int player_null(void)
     int r2, t = now_cs();
     if (!P.v)
         return PE_NONE;
-    if (P.seek_wanted) {
-        P.seek_wanted = 0;
-        return PE_SEEK;
-    }
     if (!P.ready) {
         r2 = reelcore_update(P.v);
         if (r2 == REELCORE_OPENING) {
@@ -1481,6 +1557,8 @@ int player_click(const int *b)
     int st[9], x, y, buttons = b[2], w = b[3];
     if (w != cur_win())
         return PE_NONE;
+    pointer_show(1);
+    P.ptr_cs = now_cs();
     if (buttons & 2)
         return PE_MENU;
     window_state(w, st);

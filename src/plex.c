@@ -858,20 +858,23 @@ int plex_search(plex_ctx *c, const char *query, plex_list *out)
     return 0;
 }
 
-int plex_transcode_stop(plex_ctx *c, const char *session)
+static int transcode_call(plex_ctx *c, const char *what, const char *session)
 {
     char url[512], esc[96], headers[1024];
     net_buf b;
     if (!session || !*session)
         return -1;
     net_escape(session, esc, sizeof(esc));
-    snprintf(url, sizeof(url), "%s/video/:/transcode/universal/stop?session=%s", c->base, esc);
+    snprintf(url, sizeof(url), "%s/video/:/transcode/universal/%s?session=%s", c->base, what, esc);
     plex_headers(c, c->token, headers, sizeof(headers));
     if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
     net_buf_free(&b);
     return 0;
 }
+
+int plex_transcode_stop(plex_ctx *c, const char *session) { return transcode_call(c, "stop", session); }
+int plex_transcode_ping(plex_ctx *c, const char *session) { return transcode_call(c, "ping", session); }
 
 int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out)
 {

@@ -253,4 +253,6 @@ int reelcore_set_panel(ReelCore *v, const ReelCorePanel *p)
     return 0;
 }
 
+void reelcore_set_yuv_scale(ReelCore *v, double k) { (void)v; fake_rc.yuv_scale = k; }
+
 void reelcore_panel_size(const ReelCore *v, int *w, int *h) { (void)v; *w = fake_rc.panel_rows ? 400 : 0; *h = fake_rc.panel_rows * 20; }

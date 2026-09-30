@@ -250,7 +250,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"MediaContainer": {"size": len(hubs), "Hub": [h for h in hubs if h["Metadata"]]}})
         if p == "/library/metadata/20/allLeaves":
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": episodes()}})
-        if p in ("/:/timeline", "/video/:/transcode/universal/stop"):
+        if p in ("/:/timeline", "/video/:/transcode/universal/stop", "/video/:/transcode/universal/ping"):
             return self.send(200, raw=b"")
         if p == "/library/metadata/21/children":
             return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": episodes()}})

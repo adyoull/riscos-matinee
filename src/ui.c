@@ -238,6 +238,8 @@ static struct {
         plex_list det;              /* the video's details (one item) */
         play_t p;                   /* how it's played (the stream's session) */
         plex_playing pq;            /* its play queue on the server, and the session */
+        char sid[32];               /* the playback's session id ("" before the first part) */
+        int ping_cs;                /* a converted stream, paused: when to tell the server it's wanted */
         int prev_page;              /* the page to go back to */
         int prev_st[9];             /* and the window's size then (0: unchanged) */
         int tl_cs;                  /* when the server is told where it's got to next */
@@ -2475,6 +2477,7 @@ static void play_item(const plex_item *it, int how)
 static void player_menu_open(void);
 
 #define TIMELINE_CS 1000
+#define PING_CS     3000            /* paused: the server's converting kept alive */
 #define UPNEXT_CS   1000
 
 static void builtin_timeline(const char *state)
@@ -2516,21 +2519,27 @@ static void builtin_title(const plex_item *it, char *out, size_t size)
     latin1(t, out, size);
 }
 
-/* Plays S.pl.det's video from t seconds (a converted stream starts there) */
-static int builtin_open_at(double t)
+/* Plays S.pl.det's video from t seconds. A converted stream always starts
+   at the beginning and the player seeks in it (the server's playlist
+   covers the whole video, and converting starts from the segment asked
+   for), under one session id for the whole playback. new_session: a new
+   conversion (another sound track), the one before stopped. */
+static int builtin_open_at(double t, int new_session)
 {
     const plex_item *it = &S.pl.det.v[0];
     caps_t k;
     player_src src;
-    char title[200], headers[1400], old[32];
-    snprintf(old, sizeof(old), "%s", S.pl.p.direct ? "" : S.pl.p.session);
+    char title[200], headers[1400];
+    if (new_session || !*S.pl.sid) {
+        if (*S.pl.sid && !S.pl.p.direct)
+            plex_transcode_stop(&S.px, S.pl.sid);
+        caps_session_id(&S.px, S.pl.sid, sizeof(S.pl.sid));
+    }
     caps_for(S.quality, &k);
-    if (caps_play_at(&S.px, it, &k, S.direct, (long)t, &S.pl.p) != 0) {
+    if (caps_play_at(&S.px, it, &k, S.direct, 0, S.pl.sid, &S.pl.p) != 0) {
         set_status("%s", S.pl.p.why);
         return -1;
     }
-    if (*old)
-        plex_transcode_stop(&S.px, old);    /* the stream before (a seek) */
     media_headers(S.pl.p.headers, headers, sizeof(headers));
     /* the stream and the timeline under one session id: how the server
        ties them together (the dashboard's Now Playing) */
@@ -2545,8 +2554,8 @@ static int builtin_open_at(double t)
     src.user_agent = S.agent;
     src.title = title;
     src.convert = !S.pl.p.direct;
-    src.base = S.pl.p.direct ? 0 : S.pl.p.offset_s;
-    src.start = S.pl.p.direct ? t : 0;
+    src.base = 0;
+    src.start = t;
     src.duration = it->duration_ms / 1000.0;
     snprintf(S.play_why, sizeof(S.play_why), "%s", S.pl.p.why);
     set_status("%s", S.pl.p.why);
@@ -2555,6 +2564,7 @@ static int builtin_open_at(double t)
         return -1;
     }
     S.pl.tl_cs = now_cs() + TIMELINE_CS;
+    S.pl.ping_cs = now_cs() + PING_CS;
     return 0;
 }
 
@@ -2586,8 +2596,9 @@ static void builtin_stop(int leave)
         return;
     if (player_ready() && !player_ended())
         builtin_timeline("stopped");
-    if (!S.pl.p.direct)
-        plex_transcode_stop(&S.px, S.pl.p.session);
+    if (!S.pl.p.direct && *S.pl.sid)
+        plex_transcode_stop(&S.px, S.pl.sid);
+    S.pl.sid[0] = 0;
     player_close();
     S.pl.on = 0;
     S.pl.upnext_cs = 0;
@@ -2645,7 +2656,8 @@ static void builtin_play(const plex_item *it, int how)
     open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
     set_caret(S.browser_w, -1, NULL);
     t = how != PLAY_START && d.v[0].view_offset_ms > 0 ? d.v[0].view_offset_ms / 1000.0 : 0;
-    if (builtin_open_at(t) != 0)
+    S.pl.sid[0] = 0;                /* a new playback */
+    if (builtin_open_at(t, 1) != 0)
         builtin_stop(1);
 }
 
@@ -2711,10 +2723,6 @@ static void builtin_event(int e)
     case PE_PLAYING:
         builtin_timeline("playing");
         break;
-    case PE_SEEK:                   /* a converted stream: another from there */
-        if (builtin_open_at(player_seek_to()) != 0)
-            builtin_stop(1);
-        break;
     case PE_END:
         builtin_ended();
         break;
@@ -2761,6 +2769,12 @@ static void builtin_nulls(void)
     }
     if (player_ready() && !player_paused() && !player_ended() && now_cs() - S.pl.tl_cs >= 0)
         builtin_timeline("playing");
+    /* paused in a converted stream: the server stops converting for a
+       client it hasn't heard from, so it's told the session is wanted */
+    if (player_paused() && !S.pl.p.direct && now_cs() - S.pl.ping_cs >= 0) {
+        plex_transcode_ping(&S.px, S.pl.sid);
+        S.pl.ping_cs = now_cs() + PING_CS;
+    }
 }
 
 /* ---- saving the original file ---------------------------------------------------- */
@@ -3352,7 +3366,7 @@ static void choose_audio(int k)
     for (int i = 0; i < it->nauds; i++)
         it->auds[i].selected = i == k;
     player_note("Changing the sound track...");
-    if (builtin_open_at(player_position()) != 0)
+    if (builtin_open_at(player_position(), 1) != 0)
         builtin_stop(1);
 }
 
@@ -3492,8 +3506,10 @@ static int menu_select(const int *sel)
             set_status("Image cache cleared: %d picture%s (%.1f MB).", n, n == 1 ? "" : "s", b / 1048576.0);
             break;
         }
-        case MB_SIGNOUT:
-            sign_out();
+        case MB_SIGNOUT:            /* easily chosen by mistake: asked first */
+            if (ask("Sign out? PlexRO forgets the server and your sign-in, and you'll need a new code "
+                    "from plex.tv/link (or the server's token) to sign in again."))
+                sign_out();
             break;
         case MB_QUIT:
             if (S.save.active && !ask("A file is being saved. Stop saving it and quit?"))
@@ -4066,6 +4082,8 @@ int plexro_main(int argc, char **argv)
             int cs = player_poll_cs();
             if (S.pl.upnext_cs && (cs < 0 || cs > 25))
                 cs = 25;                /* the card's countdown */
+            if (cs < 0 && player_paused() && !S.pl.p.direct)
+                cs = S.pl.ping_cs - now_cs() > 0 ? S.pl.ping_cs - now_cs() : 1;   /* the keep-alive */
             if (cs > 0) {
                 reason = Wimp_PollIdle;
                 r.r[2] = now_cs() + cs;
