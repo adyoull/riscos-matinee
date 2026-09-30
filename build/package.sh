@@ -1,6 +1,6 @@
 #!/bin/sh
 # package.sh - $DIST/PlexRO-<version>.zip: !PlexRO with !RunImage (from
-# build.sh), !Sprites, PThreadTicker, the licences and the source. The zip
+# build.sh), !Sprites and !Sprites11, PThreadTicker, the licences and the source. The zip
 # carries RISC OS filetypes (tools/mkrozip.py).
 set -e
 . "$(dirname "$0")/env.sh"
@@ -12,6 +12,7 @@ mkdir -p "$A"
 cp "$TOP/app/!PlexRO/"* "$A/"
 cp "$OUT/!RunImage,ff8" "$A/"
 python3 "$TOP/tools/mksprites.py" "$A/!Sprites,ff9"
+python3 "$TOP/tools/mksprites.py" --hi "$A/!Sprites11,ff9"   # IconSprites picks it in high-resolution modes
 ( cd "$TOP/third_party/pthreadticker" && sha256sum -c PThrTicker.sha256 >/dev/null ) ||
   { echo "PThrTicker's checksum is wrong" >&2; exit 1; }
 cp "$TOP/third_party/pthreadticker/PThrTicker" "$A/PThrTicker,ffa"
