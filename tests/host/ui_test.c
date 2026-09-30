@@ -103,7 +103,8 @@ static int clip[4] = { 0, 0, FB_W * 2, FB_H * 2 };      /* OS units, x1 y1 exclu
 static unsigned gcol, text_fg, font_fg;
 static int pts[2][2];                   /* the last two points plotted */
 static int redraw_ox, redraw_oy;        /* the window being redrawn: its work area origin */
-static int shapes;
+static int shapes, glyphs;
+static int *last_glyph;                 /* the last smooth shape plotted */
 
 static unsigned rgb_of(long pal)        /* &BBGGRR00 -> 0xRRGGBB */
 {
@@ -185,7 +186,7 @@ static void fb_sprite(const int *spr, int x0, int y0, int x1, int y1)
     int w = spr[4] + 1, h = spr[5] + 1, words = (w + 31) / 32;
     const unsigned *img = (const unsigned *)((const char *)spr + spr[8]);
     const unsigned *mask = spr[9] != spr[8] ? (const unsigned *)((const char *)spr + spr[9]) : NULL;
-    int sx = ((x0 + x1) / 2 >> 1) - w / 2, sy = FB_H - 1 - ((y0 + y1) / 2 >> 1) - h / 2;
+    int sx = ((x0 + x1) / 2 >> 1) - w / 2, sy = FB_H - (((y0 + y1) / 2) >> 1) - h / 2;
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             unsigned p = img[y * w + x];
@@ -234,7 +235,6 @@ static const char *icon_text(int w, int i)
     return x && i < x->nicons ? (const char *)(intptr_t)x->icon[i].data[0] : "";
 }
 
-static char *icon_buffer(int w, int i) { return (char *)(intptr_t)win(w)->icon[i].data[0]; }
 
 /* a menu item's text and the rest */
 static const char *menu_text(const int *m, int i) { return (const char *)(intptr_t)m[7 + i * 6 + 3]; }
@@ -389,9 +389,15 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         const icon_t *ic = (const icon_t *)(intptr_t)in->r[1];
         plots++;
         if ((ic->flags & 3) == 2 && (ic->flags & 0x100)) {
-            plot_sprites++;
-            plotted_area = (int *)(intptr_t)ic->data[1];
-            fb_sprite(plotted_area + 4, redraw_ox + ic->box[0], redraw_oy + ic->box[1],
+            int *area = (int *)(intptr_t)ic->data[1];
+            if (*(const char *)(intptr_t)ic->data[0] == 'p') {  /* a poster or backdrop ("g": a shape) */
+                plot_sprites++;
+                plotted_area = area;
+            } else {
+                glyphs++;
+                last_glyph = area;
+            }
+            fb_sprite(area + 4, redraw_ox + ic->box[0], redraw_oy + ic->box[1],
                       redraw_ox + ic->box[2], redraw_oy + ic->box[3]);
         } else if (ic->flags & 1) {
             plot_texts++;
@@ -567,7 +573,7 @@ static char *read_file(const char *p)
 
 /* ---- events ---------------------------------------------------------------------- */
 
-static int w_signin, w_browser, w_save;
+static int w_browser, w_save;
 
 static int ev_click(int *b, int w, int i, int x, int y, int buttons)
 {
@@ -641,7 +647,6 @@ static unsigned file_sum(const char *p, long *len)
 
 /* ---- the script --------------------------------------------------------------------- */
 
-static int w_det;
 static int pc, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
 
@@ -666,6 +671,7 @@ static int ev_redraw(int *b, int w)
     plot_sprites = 0;
     plotted_area = NULL;
     shapes = 0;
+    glyphs = 0;
     return 1;                                           /* Redraw_Window_Request */
 }
 
@@ -685,13 +691,14 @@ static const char *started_url(void)
 
 static int script(int *b, int mask)
 {
-    static int wait_save;
+    static int wait_save, type_i;
+    static char type_str[80];
     char want[400];
     for (;;) {
         switch (pc) {
         /* ---- start-up: sign in with a code */
         case 0:
-            ui_test_windows(&w_signin, &w_browser, &w_save, &w_det);
+            ui_test_windows(&w_browser, &w_save);
             CHECK(bar_icon_made == 1 && !strcmp(bar_sprite, "!plexro"), "icon bar icon '%s'", bar_sprite);
             CHECK(proginfo_made == 1, "Info window");
             CHECK(strstr(read_file(choices), "client_id plexro-") != NULL, "a client id kept from the start");
@@ -699,22 +706,30 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);             /* Select on the icon */
         case 1:
-            CHECK(win(w_signin)->open, "Select before signing in opens the sign-in window");
-            CHECK(!strcmp(icon_text(w_signin, SI_CODE), "ABCD"), "the code: %s", icon_text(w_signin, SI_CODE));
+            CHECK(win(w_browser)->open && ui_test_page() == PG_SIGNIN,
+                  "Select before signing in: the window, on its sign-in page");
+            CHECK(!strcmp(ui_test_signin(0), "ABCD"), "the code: %s", ui_test_signin(0));
             CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 200, "checked every 2 s (PollIdle %d, now %d)",
                   idle_time, fake_cs);
+            pc = 150;
+            return ev_redraw(b, w_browser);
+        case 150:
+            CHECK(strstr(plotted_text, "Sign in|") && strstr(plotted_text, "Sign in with a code|") &&
+                  strstr(plotted_text, "A  B  C  D|") && strstr(plotted_text, "Waiting for the code...|") &&
+                  strstr(plotted_text, "Use these|"), "the sign-in page drawn: %s", plotted_text);
+            save_picture("signin.ppm", w_browser);
             fake_cs = idle_time;
-            pc++;
+            pc = 2;
             return NULL_EVENT;
         case 2:
-            CHECK(win(w_signin)->open && !win(w_browser)->open, "not signed in after the first check");
-            CHECK(strstr(icon_text(w_signin, SI_STATUS), "Waiting"), "status: %s", icon_text(w_signin, SI_STATUS));
+            CHECK(ui_test_page() == PG_SIGNIN, "not signed in after the first check");
+            CHECK(strstr(ui_test_signin(1), "Waiting"), "status: %s", ui_test_signin(1));
             fake_cs = idle_time;
             pc++;
             return NULL_EVENT;
         case 3:
-            CHECK(!win(w_signin)->open, "the sign-in window closes when signed in");
-            CHECK(win(w_browser)->open, "and the browser opens");
+            CHECK(ui_test_page() == PG_GRID, "signed in: the grid");
+            CHECK(win(w_browser)->open, "in the same window");
             CHECK(ui_test_items() == 4, "the top list: %d items", ui_test_items());
             CHECK(!strcmp(ui_test_path(), "Attic"), "where: %s", ui_test_path());
             CHECK(!strcmp(ui_test_item(1, 0), "Films") && !strcmp(ui_test_item(3, 0), "Music"), "tiles %s, %s",
@@ -733,7 +748,23 @@ static int script(int *b, int mask)
             CHECK(strstr(plotted_text, "Continue wa...|") && strstr(plotted_text, "Films|") &&
                   strstr(plotted_text, "TV Programmes|") && strstr(plotted_text, "Folder|"),
                   "the tiles drawn: %s", plotted_text);
-            CHECK(shapes > 20 && !plot_sprites, "drawn in shapes, no posters yet (%d shapes)", shapes);
+            CHECK(shapes > 20 && glyphs > 20 && !plot_sprites, "drawn in shapes and smooth corners, no posters yet (%d, %d)",
+                  shapes, glyphs);
+            {   /* a smooth shape has colours between its own and the background's */
+                const int *g = last_glyph + 4;
+                const unsigned *px = (const unsigned *)(g + 11);
+                int n = (g[4] + 1) * (g[5] + 1), ncol = 0;
+                unsigned col[3];
+                for (int i = 0; i < n && ncol < 3; i++) {
+                    int k = 0;
+                    while (k < ncol && col[k] != px[i])
+                        k++;
+                    if (k == ncol)
+                        col[ncol++] = px[i];
+                }
+                CHECK(last_glyph && ncol >= 3, "anti-aliased edges (%d colours: more than the shape's and the background's)",
+                      ncol);
+            }
             CHECK(!(mask & 1), "null events for the posters");
             pc++;
             continue;
@@ -800,13 +831,20 @@ static int script(int *b, int mask)
             CHECK(!ui_test_saving(), "and not saved");
             setenv("ReelEGL$Dir", "SDFS::Pi.$.Apps.!ReelEGL", 1);
             setenv("Reel$Dir", "SDFS::Pi.$.Apps.!Reel", 1);
-            pc++;
+            pc = 130;
+            memset(b, 0, 32);                                   /* scrolled down a little first */
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[5] = 0; b[6] = -40; b[7] = -1;
+            return 2;
+        case 130:
+            CHECK(win(w_browser)->sy == -40, "scrolled");
+            pc = 14;
             return ev_tile(b, find_tile("Big Buck Bunny"), 4);  /* double-click: the details */
         /* ---- the details window */
         case 14: {
-            int st, a, c, d, e;
-            st = ui_test_windows(&a, &c, &d, &e);
-            CHECK(st & 4 && win(w_det)->open, "double-click on a video: its details");
+            CHECK(ui_test_page() == PG_DETAILS && win(w_browser)->open && win(w_browser)->sy == 0,
+                  "double-click on a video: its details, in the same window, from the top");
+            CHECK(!strcmp(ui_test_path(), "Attic > Films > Big Buck Bunny"), "where: %s", ui_test_path());
             CHECK(!strcmp(ui_test_det(0), "Big Buck Bunny"), "title %s", ui_test_det(0));
             CHECK(strstr(ui_test_det(1), "2008") && strstr(ui_test_det(1), "1h 30m") && strstr(ui_test_det(1), "PG") &&
                   strstr(ui_test_det(1), "7.5"), "year, time, rating: %s", ui_test_det(1));
@@ -818,27 +856,28 @@ static int script(int *b, int mask)
                   "how it will play: %s", ui_test_det(2));
             CHECK(log_count("/library/metadata/101", NULL, NULL) >= 1 &&
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000") == 1 &&
-                  log_count("/photo/:/transcode", "width", "500") >= 1, "the details and the backdrop fetched (%d, %d, %d)",
+                  log_count("/photo/:/transcode", "width", "554") >= 1, "the details and the backdrop fetched (%d, %d, %d)",
                   log_count("/library/metadata/101", NULL, NULL),
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000"),
-                  log_count("/photo/:/transcode", "width", "500"));
+                  log_count("/photo/:/transcode", "width", "554"));
             pc++;
-            return ev_redraw(b, w_det);
+            return ev_redraw(b, w_browser);
         }
         case 15: {
             const int *spr = plotted_area ? plotted_area + 4 : NULL;
             int w = spr ? spr[4] + 1 : 0, h = spr ? spr[5] + 1 : 0;
             unsigned bottom = spr ? ((const unsigned *)(spr + 11))[(h - 1) * w + w / 2] : 0;
-            CHECK(spr && w == 500 && h == 281 && spr[9] == spr[8], "the backdrop: 500 x 281, no mask");
+            CHECK(spr && w == 554 && h == 311 && spr[9] == spr[8], "the backdrop: the window's width, 16:9, no mask (%d x %d)",
+                  w, h);
             CHECK(abs((int)(bottom & 255) - 0x18) < 3 && abs((int)(bottom >> 8 & 255) - 0x1A) < 3 &&
                   abs((int)(bottom >> 16) - 0x1F) < 3, "faded to the window's grey at its foot (%06x)", bottom);
             CHECK(strstr(plotted_text, "Big Buck Bunny|") && strstr(plotted_text, "Play|") &&
                   strstr(plotted_text, "Resume from 42:10|") && strstr(plotted_text, "Subtitles: None|"),
                   "the details drawn: %s", plotted_text);
-            save_picture("details.ppm", w_det);
+            save_picture("details.ppm", w_browser);
             prev_started = nstarted;
             pc++;
-            return ev_button(b, w_det, D_PLAY, 4);
+            return ev_button(b, w_browser, D_PLAY, 4);
         }
         case 16: {
             int k = (nstarted - 1) & 7;
@@ -875,7 +914,7 @@ static int script(int *b, int mask)
             prev_nsent = nsent;
             prev_started = nstarted;
             pc++;
-            return ev_key(b, w_det, -1, 13);                    /* Return in the details: Play */
+            return ev_key(b, w_browser, -1, 13);                    /* Return in the details: Play */
         case 19: {
             const sent_t *s = last_sent(5);
             CHECK(s && nsent == prev_nsent + 1 && s->reason == 18 && s->to == 0x777 && s->b[10] == 0xBF4,
@@ -901,10 +940,10 @@ static int script(int *b, int mask)
         case 22:
             CHECK(strstr(read_file(choices), "player Reel\n") != NULL, "player kept");
             pc++;
-            return ev_tile(b, find_tile("Hevc Film"), 0x400);   /* select it: the details follow */
+            return ev_key(b, w_browser, -1, 0x18D);             /* Right: the next video's details */
         case 23:
-            CHECK(!strcmp(ui_test_det(0), "Hevc Film") && ui_test_button(D_SUBS) == NULL,
-                  "the details follow the selection: %s", ui_test_det(0));
+            CHECK(!strcmp(ui_test_det(0), "Hevc Film") && ui_test_button(D_SUBS) == NULL &&
+                  ui_test_page() == PG_DETAILS, "Right: the next video: %s", ui_test_det(0));
             prev_nsent = nsent;
             prev_started = nstarted;
             pc++;
@@ -940,7 +979,12 @@ static int script(int *b, int mask)
             pc++;
             return ev_menu(b, MB_PLAYER, 0);                    /* back to ReelEGL */
         case 28:
-            pc++;
+            pc = 280;
+            return ev_key(b, w_browser, -1, 0x1B);              /* Escape: back to the grid */
+        case 280:
+            CHECK(ui_test_page() == PG_GRID && win(w_browser)->sy == -40 && ui_test_sel() == find_tile("Hevc Film"),
+                  "back to the grid, where it was (%d), the last video selected", win(w_browser)->sy);
+            pc = 29;
             return ev_tile(b, find_tile("Big Buck Bunny"), 2);  /* Menu on it */
         case 29:
             CHECK(menu_open && !strcmp(menu_text(menu_open, MI_RESUME), "Resume from 42:10") &&
@@ -948,7 +992,6 @@ static int script(int *b, int mask)
             CHECK(menu_open && menu_sub(menu_open, MI_SAVE) == w_save, "the save box is Save's submenu");
             CHECK(menu_open && !menu_shaded(menu_open, MI_SUBS) && menu_sub(menu_open, MI_SUBS) > 0x10000,
                   "Subtitles has its submenu");
-            CHECK(!strcmp(ui_test_det(0), "Big Buck Bunny"), "the details followed");
             prev_started = nstarted;
             pc++;
             return ev_menu(b, MI_RESUME, -1);
@@ -967,8 +1010,12 @@ static int script(int *b, int mask)
             snprintf(want, sizeof(want), "%s/library/parts/11/101/file.mp4", base);
             CHECK(nstarted == prev_started + 1 && !strcmp(started_url(), want) && !started_src[k].key,
                   "Play from start: direct, without the carry-on key");
-            pc++;
-            return ev_button(b, w_det, D_SUBS, 4);              /* Subtitles in the details */
+            pc = 320;
+            return ev_tile(b, find_tile("Big Buck Bunny"), 4);  /* its details */
+        case 320:
+            CHECK(ui_test_page() == PG_DETAILS && !strcmp(ui_test_det(0), "Big Buck Bunny"), "details again");
+            pc = 33;
+            return ev_button(b, w_browser, D_SUBS, 4);          /* Subtitles */
         }
         /* ---- subtitles */
         case 33:
@@ -995,7 +1042,7 @@ static int script(int *b, int mask)
             CHECK(strstr(ui_test_status(), "Subtitles: English (SRT External)"), "status %s", ui_test_status());
             prev_started = nstarted;
             pc++;
-            return ev_button(b, w_det, D_PLAY, 4);
+            return ev_button(b, w_browser, D_PLAY, 4);
         }
         case 35:
             CHECK(nstarted == prev_started + 1 && strstr(started_url(), "start.m3u8") &&
@@ -1009,14 +1056,14 @@ static int script(int *b, int mask)
             CHECK(ui_test_button(D_SUBS) && !strcmp(ui_test_button(D_SUBS), "Subtitles: None"), "none again");
             CHECK(strstr(ui_test_status(), "Subtitles off"), "status %s", ui_test_status());
             pc++;
-            return ev_button(b, w_det, D_WATCHED, 4);
+            return ev_button(b, w_browser, D_WATCHED, 4);
         case 38:
             CHECK(log_count("/:/scrobble", "key", "101") == 1, "marked watched on the server");
             CHECK(!strcmp(ui_test_button(D_WATCHED), "Mark unwatched"), "the button turns round");
             CHECK(strstr(ui_test_status(), "watched"), "status: %s", ui_test_status());
             /* ---- Save original file, from the details */
             pc++;
-            return ev_button(b, w_det, D_SAVE, 4);
+            return ev_button(b, w_browser, D_SAVE, 4);
         case 39:
             CHECK(menu_window == w_save, "Save file: the save box, as a menu");
             CHECK(!strcmp(icon_text(w_save, SV_NAME), "Big\xa0" "Buck\xa0" "Bunny\xa0(2008)/mp4"), "save as: %s",
@@ -1113,19 +1160,18 @@ static int script(int *b, int mask)
             CHECK(!ui_test_saving() && !file_exists(save_path2), "stopped, the half file deleted");
             CHECK(strstr(ui_test_status(), "Stopped saving"), "status: %s", ui_test_status());
             pc++;
-            return ev_key(b, w_det, -1, 0x1B);                  /* Escape closes the details */
+            return ev_key(b, w_browser, -1, 0x1B);              /* Escape: back */
         case 51:
-            CHECK(!win(w_det)->open, "Escape: details closed");
+            CHECK(ui_test_page() == PG_GRID && win(w_browser)->sy == -40, "Escape: the grid, where it was (%d)",
+                  win(w_browser)->sy);
             pc++;
             return ev_key(b, w_browser, -1, 'I');               /* I: details again */
         case 52:
-            CHECK(win(w_det)->open && !strcmp(ui_test_det(0), "Big Buck Bunny"), "I: details");
-            memset(b, 0, 64);
-            b[0] = w_det;
+            CHECK(ui_test_page() == PG_DETAILS && !strcmp(ui_test_det(0), "Big Buck Bunny"), "I: details");
             pc++;
-            return 3;                                           /* Close_Window_Request */
+            return ev_button(b, w_browser, B_BACK, 0x400);      /* the Back button */
         case 53:
-            CHECK(!win(w_det)->open, "closed");
+            CHECK(ui_test_page() == PG_GRID, "Back: the grid");
             /* ---- TV: show, season, episodes, Back */
             pc++;
             return ev_key(b, w_browser, -1, 8);                 /* Backspace */
@@ -1271,19 +1317,44 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);
         case 81:
-            CHECK(win(w_signin)->open, "Select: the sign-in window again");
-            snprintf(icon_buffer(w_signin, SI_ADDR), 256, "127.0.0.1:%s", base + 17);
-            snprintf(icon_buffer(w_signin, SI_TOK), 256, "WRONG");
-            pc++;
-            return ev_click(b, w_signin, SI_USE, 0, 0, 4);
+            CHECK(ui_test_page() == PG_SIGNIN && win(w_browser)->open, "Select: the sign-in page again");
+            snprintf(type_str, sizeof(type_str), "127.0.0.1:%sx", base + 17);   /* x: a slip, deleted */
+            type_i = 0;
+            pc = 810;
+            return ev_button(b, w_browser, S_ADDR, 0x400);      /* the address field */
+        case 810:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            pc = 811;
+            return ev_key(b, w_browser, -1, 8);                 /* Backspace */
+        case 811:
+            snprintf(want, sizeof(want), "127.0.0.1:%s", base + 17);
+            CHECK(ui_test_field() == 0 && !strcmp(ui_test_signin(2), want), "typed: %s", ui_test_signin(2));
+            snprintf(type_str, sizeof(type_str), "WRONG");
+            type_i = 0;
+            pc = 812;
+            return ev_key(b, w_browser, -1, 9);                 /* Tab: the token */
+        case 812:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            CHECK(ui_test_field() == 1 && !strcmp(ui_test_signin(3), "WRONG"), "the token typed");
+            pc = 82;
+            return ev_button(b, w_browser, S_USE, 0x400);
         case 82:
-            CHECK(win(w_signin)->open && strstr(icon_text(w_signin, SI_STATUS), "didn't take the token"),
-                  "a wrong token: %s", icon_text(w_signin, SI_STATUS));
-            snprintf(icon_buffer(w_signin, SI_TOK), 256, "SRV-TOKEN");
-            pc++;
-            return ev_key(b, w_signin, SI_TOK, 13);             /* Return in the token */
+            CHECK(ui_test_page() == PG_SIGNIN && strstr(ui_test_signin(1), "didn't take the token"),
+                  "a wrong token: %s", ui_test_signin(1));
+            snprintf(type_str, sizeof(type_str), "SRV-TOKEN");
+            type_i = 0;
+            pc = 820;
+            return ev_key(b, w_browser, -1, 21);                /* Ctrl-U: empty it */
+        case 820:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            CHECK(!strcmp(ui_test_signin(3), "SRV-TOKEN"), "the token again");
+            pc = 83;
+            return ev_key(b, w_browser, -1, 13);                /* Return in the token: Use these */
         case 83:
-            CHECK(!win(w_signin)->open && win(w_browser)->open && ui_test_items() == 4, "by hand: the browser");
+            CHECK(ui_test_page() == PG_GRID && win(w_browser)->open && ui_test_items() == 4, "by hand: the grid");
             snprintf(want, sizeof(want), "server_base %s\n", base);
             CHECK(strstr(read_file(choices), want) && strstr(read_file(choices), "server_token SRV-TOKEN\n") &&
                   strstr(read_file(choices), "account_token \n"), "Choices:\n%s", read_file(choices));
@@ -1291,11 +1362,11 @@ static int script(int *b, int mask)
             return ev_msg(b, 0, 0, 0);                          /* Message_Quit */
         /* ---- the second run: Choices remembered */
         case 100:
-            CHECK(!win(w_signin)->open && !win(w_browser)->open, "second run: nothing open yet");
+            CHECK(!win(w_browser)->open, "second run: nothing open yet");
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);
         case 101:
-            CHECK(win(w_browser)->open && ui_test_items() == 4 && !win(w_signin)->open,
+            CHECK(win(w_browser)->open && ui_test_items() == 4 && ui_test_page() == PG_GRID,
                   "Select: straight to the browser, from Choices");
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);

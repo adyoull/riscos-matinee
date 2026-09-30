@@ -63,8 +63,14 @@ mutate "subtitles chosen, yet played directly" src/caps.c \
   'if (allow_direct && plex_sub_selected(it) >= 0) {' 'if (0) {'
 mutate "the subtitle track chosen isn't sent" src/ui.c \
   'k ? it->subs[k - 1].id : 0' '0'
-mutate "details don't follow the selection" src/ui.c \
-  'if (S.det_open && i >= 0 && i < S.list.n && S.list.v[i].kind == PI_VIDEO)\n        det_show(i);' ''
+mutate "Back from the details forgets where the grid was" src/ui.c \
+  'open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, S.grid_sy);' 'open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);'
+mutate "Right doesn't go to the next video's details" src/ui.c \
+  'det_show(j);\n                        break;' 'break;'
+mutate "typing ignored on the sign-in page" src/ui.c \
+  'f[n] = (char)k;\n            f[n + 1] = 0;' '(void)0;'
+mutate "the shapes' edges not smoothed" src/draw.c \
+  'n += inside(g, (x + (i + 0.5) / 4) / w, (y + (j + 0.5) / 4) / h);' 'n = 16 * inside(g, (x + 0.5) / w, (y + 0.5) / h);'
 mutate "the pointer's poster not found" src/ui.c \
   'set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);' 'set_hover(-1);'
 mutate "backdrop not faded" src/ui.c \
