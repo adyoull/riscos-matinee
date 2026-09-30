@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test6
+!PlexRO - a Plex client for RISC OS                  0.1.0-test7
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -195,6 +195,15 @@ menu while it's saving.
 
 RISC OS's filing systems hold files of up to 4GB, so bigger files are
 refused at once.
+
+The image cache
+---------------
+The posters, backdrops and cast photos the server sends are kept on the
+disc, in Choices (PlexRO.Cache), so lists and details pages come up
+quicker the next time. It holds up to 64 MB (image_cache_mb in the
+Choices file; 0 turns it off): past that the oldest go when PlexRO
+starts. Clear image cache on the icon's menu empties it, and says how
+big it was.
 
 Choices
 -------

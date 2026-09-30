@@ -63,6 +63,7 @@
 #include "proginfo.h"
 #include "draw.h"
 #include "player.h"
+#include "imgcache.h"
 
 #define OS_File                    0x08
 #define OS_ReadMonotonicTime       0x42
@@ -245,6 +246,7 @@ static struct {
         int menu_audio;             /* the Sound track submenu is the server's tracks */
     } pl;
     int overlay, pic_mode;          /* Choices for the built-in player */
+    int cache_mb;                   /* Choices: the image cache's size */
     double volume;
 
     /* hand-offs waiting for DataLoadAck */
@@ -427,10 +429,10 @@ static void choices_save(void)
     fprintf(f, "# " APP " choices\n"
             "client_id %s\naccount_token %s\nserver_base %s\nserver_token %s\n"
             "server_name %s\nserver_id %s\nserver_local %d\nplayer %s\nquality %d\ndirect_play %d\n"
-            "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\n",
+            "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\nimage_cache_mb %d\n",
             S.px.client_id, S.px.account_token, S.px.base, S.px.token,
             S.px.server_name, S.px.server_id, S.px.local, player_names[S.player], S.quality, S.direct,
-            S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5));
+            S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5), S.cache_mb);
     fclose(f);
 }
 
@@ -461,6 +463,7 @@ static void choices_load(void)
     S.overlay = 1;
     S.pic_mode = PIC_FIT;
     S.volume = 1;
+    S.cache_mb = 64;
     if (f) {
         while (fgets(line, sizeof(line), f)) {
             if (value(line, "client_id", v, sizeof(v)))
@@ -473,6 +476,8 @@ static void choices_load(void)
                 S.overlay = atoi(v) != 0;
             else if (value(line, "picture", v, sizeof(v)))
                 S.pic_mode = atoi(v) >= 0 && atoi(v) < PIC_COUNT ? atoi(v) : PIC_FIT;
+            else if (value(line, "image_cache_mb", v, sizeof(v)))
+                S.cache_mb = atoi(v) >= 0 ? atoi(v) : 64;
             else if (value(line, "volume", v, sizeof(v)))
                 S.volume = atoi(v) >= 0 && atoi(v) <= 100 ? atoi(v) / 100.0 : 1;
             else if (value(line, "quality", v, sizeof(v)))
@@ -883,6 +888,20 @@ static void sprite_fade(int *area, int w, int h)
 
 /* A picture from the server (a poster, or a backdrop when art), into the
    cache under key */
+/* A picture from the server at w x h pixels: from the disc if it's been
+   fetched before, else fetched and kept there (imgcache) */
+static int picture_get(const char *thumb, int w, int h, char **jpeg, size_t *len)
+{
+    char key[600];
+    snprintf(key, sizeof(key), "%s|%s|%dx%d", S.px.server_id, thumb, w, h);
+    if (imgcache_get(key, jpeg, len) == 0)
+        return 0;
+    if (plex_poster(&S.px, thumb, w, h, jpeg, len) != 0)
+        return -1;
+    imgcache_put(key, *jpeg, *len);
+    return 0;
+}
+
 /* art: 0 a poster (rounded corners), 1 a backdrop (faded), 2 a person's
    photo (round, filling the circle) */
 static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, int art)
@@ -894,7 +913,7 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
     if (!p)
         return NULL;
     snprintf(p->thumb, sizeof(p->thumb), "%s", key);
-    if (plex_poster(&S.px, thumb, w, h, &jpeg, &len) != 0 ||
+    if (picture_get(thumb, w, h, &jpeg, &len) != 0 ||
         !(p->area = sprite_make(w, h, round, &p->bytes)) ||
         jpeg_into(p->area, w, h, jpeg, len, art != 0) != 0) {
         free(p->area);
@@ -3173,6 +3192,13 @@ static void bar_menu_build(void)
     menu_add(&m_bar, "Quality", 0, 0, (int)(intptr_t)&m_quality.m, 0);
     menu_add(&m_bar, "Poster size", 0, 0, (int)(intptr_t)&m_size.m, 0);
     menu_add(&m_bar, "Direct play when possible", S.direct, 0, -1, 1);
+    {
+        char t[64];
+        int n;
+        long long b = imgcache_size(&n);
+        snprintf(t, sizeof(t), "Clear image cache (%.1f MB)", b / 1048576.0);
+        menu_add(&m_bar, t, 0, n == 0, -1, 0);
+    }
     menu_add(&m_bar, "Sign out", 0, !signed_in && !*S.px.base, -1, 0);
     menu_add(&m_bar, "Quit", 0, 0, -1, 0);
     menu_end(&m_bar);
@@ -3460,6 +3486,12 @@ static int menu_select(const int *sel)
             choices_save();
             det_repaint();          /* how it will play */
             break;
+        case MB_CACHE: {
+            long long b = imgcache_size(NULL);
+            int n = imgcache_clear();
+            set_status("Image cache cleared: %d picture%s (%.1f MB).", n, n == 1 ? "" : "s", b / 1048576.0);
+            break;
+        }
         case MB_SIGNOUT:
             sign_out();
             break;
@@ -4010,6 +4042,20 @@ int plexro_main(int argc, char **argv)
     iconbar_icon();
     S.proginfo = proginfo_create(APP, PURPOSE, APP_AUTHOR, PLEXRO_VERSION " (" PLEXRO_DATE ")");
     player_init(S.task, S.overlay, S.pic_mode, S.volume);
+    {
+        /* the image cache: in Choices, or PlexRO$Cache */
+        const char *c = getenv(APP "$Cache"), *d = getenv(APP "$ChoicesDir");
+        char dir[300];
+        if (c && *c)
+            snprintf(dir, sizeof(dir), "%s", c);
+        else if (d && *d)
+            snprintf(dir, sizeof(dir), "%s" SEP "Cache", d);
+        else {
+            make_dir("<Choices$Write>." APP);
+            snprintf(dir, sizeof(dir), "<Choices$Write>." APP ".Cache");
+        }
+        imgcache_init(dir, (long long)S.cache_mb << 20);
+    }
 
     for (;;) {
         int mask = 1 << 11 | 1 << 12;  /* no caret events */

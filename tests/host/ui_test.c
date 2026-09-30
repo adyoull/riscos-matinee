@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <unistd.h>
 #include "kernel.h"
 #include "ui.h"
@@ -31,6 +32,7 @@
 #include "panel_font.h"         /* Reel's bitmap font (riscos-ffmpeg reelcore/), for the pictures */
 #include "player.h"
 #include "fake_reelcore.h"
+#include "imgcache.h"
 
 static int fails, checks;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
@@ -376,6 +378,42 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
             clip[0] = b[7]; clip[1] = b[8]; clip[2] = b[9]; clip[3] = b[10];
             redraw_ox = ox; redraw_oy = oy;
         }
+        return NULL;
+    }
+    case 0x0C: {                                    /* OS_GBPB 10: a directory's entries with their information */
+        DIR *d = opendir((const char *)(intptr_t)in->r[1]);
+        struct dirent *e;
+        char *o = (char *)(intptr_t)in->r[2];
+        int k = 0, n = 0, want = (int)in->r[3], skip = (int)in->r[4];
+        if (in->r[0] != 10 || !d) {
+            if (d) closedir(d);
+            return &err;
+        }
+        while ((e = readdir(d)) != NULL) {
+            struct stat st;
+            char path[600];
+            int *w = (int *)o;
+            if (e->d_name[0] == '.')
+                continue;
+            if (k++ < skip)
+                continue;
+            if (n == want)
+                break;
+            snprintf(path, sizeof(path), "%s/%s", (const char *)(intptr_t)in->r[1], e->d_name);
+            if (stat(path, &st) != 0)
+                continue;
+            w[0] = (int)(0xFFFFFF00u);                  /* a stamp: the file's time, in the exec word */
+            w[1] = (int)st.st_mtime;
+            w[2] = (int)st.st_size;
+            w[3] = 3;
+            w[4] = S_ISDIR(st.st_mode) ? 2 : 1;
+            strcpy(o + 20, e->d_name);
+            o += (20 + strlen(e->d_name) + 1 + 3) & ~3;
+            n++;
+        }
+        out->r[3] = n;
+        out->r[4] = e ? k - 1 : -1;
+        closedir(d);
         return NULL;
     }
     case 0x08:                                      /* OS_File */
@@ -2066,10 +2104,36 @@ static int script(int *b, int mask)
         case 101:
             CHECK(win(w_browser)->open && ui_test_items() == 4 && ui_test_page() == PG_GRID,
                   "Select: straight to the browser, from Choices");
+            drain_n = 0;
+            pc = 1010;
+            continue;
+        case 1010:                                          /* the posters: from the disc this time */
+            DRAIN(20);
+            if (pc == 1011)
+                continue;
+            return NULL_EVENT;
+        case 1011:
+            CHECK(ui_test_posters(NULL) >= 1 && log_count("/photo/:/transcode", NULL, NULL) == prev_count,
+                  "the posters from the image cache: none fetched (%d)", log_count("/photo/:/transcode", NULL, NULL) - prev_count);
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
+        case 1012:
+            CHECK(menu_open && !strncmp(menu_text(menu_open, MB_CACHE), "Clear image cache (", 19) &&
+                  !menu_shaded(menu_open, MB_CACHE), "Clear image cache, with its size: %s",
+                  menu_open ? menu_text(menu_open, MB_CACHE) : "");
+            pc++;
+            return ev_menu(b, MB_CACHE, -1);
+        case 1013: {
+            char cmd[400];
+            snprintf(cmd, sizeof(cmd), "test $(find %s/choices/Cache -type f | wc -l) = 0", outdir);
+            CHECK(system(cmd) == 0 && strstr(ui_test_status(), "Image cache cleared: "), "cleared: %s", ui_test_status());
+            pc = 102;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
         case 102:
             CHECK(menu_open && menu_flags(menu_open, MB_QUIT) & 0x80, "Quit is the last item");
+            CHECK(menu_open && menu_shaded(menu_open, MB_CACHE) && !strcmp(menu_text(menu_open, MB_CACHE),
+                  "Clear image cache (0.0 MB)"), "and now empty: %s", menu_open ? menu_text(menu_open, MB_CACHE) : "");
             {
                 const int *pm = (const int *)(intptr_t)menu_sub(menu_open, MB_PLAYER);
                 CHECK(pm && (menu_flags(pm, PLAYER_BUILTIN) & 1) && !(menu_flags(pm, PLAYER_REELEGL) & 1),
@@ -2136,6 +2200,12 @@ int main(int argc, char **argv)
             fclose(f);
         }
     }
+    {
+        char cmd[400];
+        snprintf(cmd, sizeof(cmd), "test $(find %s/choices/Cache -type f | wc -l) -ge 10", outdir);
+        CHECK(system(cmd) == 0, "the pictures kept on disc, in the image cache");
+    }
+    prev_count = log_count("/photo/:/transcode", NULL, NULL);
     nwins = 0; pc = 100; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
     CHECK(plexro_main(1, argv) == 0, "second run ends cleanly");
@@ -2146,6 +2216,33 @@ int main(int argc, char **argv)
     ntasks = 1;
     CHECK(plexro_main(1, argv) == 0 && bar_icon_made == 0, "one copy only");
 
+    {
+        /* the image cache held to its size: the oldest go first */
+        char dir[400], cmd[800], *d = NULL;
+        size_t n;
+        static char pic[1000];
+        snprintf(dir, sizeof(dir), "%s/cache2", outdir);
+        snprintf(cmd, sizeof(cmd), "rm -rf %s", dir);
+        CHECK(system(cmd) == 0, "a fresh cache");
+        imgcache_init(dir, 1 << 20);
+        for (int i = 0; i < 4; i++) {
+            char key[16];
+            snprintf(key, sizeof(key), "pic%d", i);
+            memset(pic, 'a' + i, sizeof(pic));
+            imgcache_put(key, pic, sizeof(pic));
+        }
+        CHECK(imgcache_size(NULL) == 4000, "four kept (%lld bytes)", imgcache_size(NULL));
+        for (int i = 0; i < 4; i++) {           /* pic0's file the oldest, pic3's the newest */
+            snprintf(cmd, sizeof(cmd), "for f in $(find %s -type f); do head -c1 $f | grep -q %c && touch -d @%d $f; done; true",
+                     dir, 'a' + i, 1000000000 + i);
+            CHECK(system(cmd) == 0, "dated");
+        }
+        imgcache_init(dir, 3000);                               /* 4000 > 3000: down to 2250 or less */
+        CHECK(imgcache_size(NULL) == 2000 && imgcache_get("pic0", &d, &n) != 0 && imgcache_get("pic1", &d, &n) != 0,
+              "trimmed: the two oldest gone (%lld)", imgcache_size(NULL));
+        CHECK(imgcache_get("pic3", &d, &n) == 0 && n == 1000 && d[0] == 'd', "the newest kept");
+        free(d);
+    }
     printf("ui_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

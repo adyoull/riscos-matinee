@@ -119,6 +119,13 @@ mutate "search results in the server's order" src/plex.c \
   '{ "movie", "show", "episode" }' '{ "episode", "movie", "show" }'
 mutate "Back to a search forgets its words" src/ui.c \
   'latin1(path + 7, S.query, sizeof(S.query));' '(void)0;'
+# the image cache
+mutate "the image cache not read" src/ui.c \
+  'if (imgcache_get(key, jpeg, len) == 0)\n        return 0;' ''
+mutate "the cache trimmed in any order" src/imgcache.c \
+  'qsort(l.v, l.n, sizeof(*l.v), older);' '(void)older;'
+mutate "Clear image cache deletes nothing" src/imgcache.c \
+  'if (remove(path) == 0) {\n        (*gone)++;' 'if (0) {\n        (*gone)++;'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
