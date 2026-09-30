@@ -205,6 +205,8 @@ static struct {
     int nhist;
     int sel, cols, width;
     char title[96], where[256], status[200];
+    char query[100];                /* the search field (Latin-1), while a search is shown */
+    int search_due;                 /* when to search for what's been typed (0: nothing to do) */
     int posters_wanted;             /* a scan for missing posters is due */
     int hover, in_browser;          /* the poster under the pointer (-1: none) */
     poster_t *cache;
@@ -217,6 +219,11 @@ static struct {
     char det_title[120], det_meta[160], det_how[200], det_how_l[2][160], det_lines[10][160];
     int det_how_n;
     int det_nlines, det_h;
+    /* the rest of the metadata: label and value lines, and the cast */
+    char det_cred[8][2][160];
+    int det_ncred;
+    struct { poster_t *photo; char name[64], role[64]; int x0, y0; } cast[16];
+    int ncast, cast_wanted;         /* cast_wanted: photos still to fetch (null events) */
     struct { int id, x0, y0, x1, y1; char label[48]; } btn[DET_BTN_MAX + 4];
     int nbtn;
 
@@ -228,7 +235,8 @@ static struct {
     struct {
         int on;
         plex_list det;              /* the video's details (one item) */
-        play_t p;                   /* how it's played (a converted stream's session) */
+        play_t p;                   /* how it's played (the stream's session) */
+        plex_playing pq;            /* its play queue on the server, and the session */
         int prev_page;              /* the page to go back to */
         int prev_st[9];             /* and the window's size then (0: unchanged) */
         int tl_cs;                  /* when the server is told where it's got to next */
@@ -484,6 +492,13 @@ static void choices_load(void)
         snprintf(id, sizeof(id), "plexro-%08x%08x", a, b);
     }
     plex_ctx_init(c, id, PLEXRO_VERSION);
+    {
+        /* the name the server shows for this computer (the dashboard, the
+           other apps' "play on"): the network's host name, if it has one */
+        const char *h = getenv("Inet$HostName");
+        if (h && *h)
+            snprintf(c->device_name, sizeof(c->device_name), "%s", h);
+    }
     if (f) {
         rewind(f);
         while (fgets(line, sizeof(line), f)) {
@@ -692,6 +707,9 @@ static void cache_free_all(void)
     for (int i = 0; S.disp && i < S.list.n; i++)
         S.disp[i].poster = NULL;
     S.det_art = NULL;
+    for (int i = 0; i < S.ncast; i++)
+        S.cast[i].photo = NULL;
+    S.cast_wanted = S.ncast > 0;
 }
 
 /* Frees posters the list shown doesn't use, once the cache is big */
@@ -705,6 +723,8 @@ static void cache_trim(void)
         int used = 0;
         for (int i = 0; S.disp && i < S.list.n && !used; i++)
             used = S.disp[i].poster == p;
+        for (int i = 0; i < S.ncast && !used; i++)
+            used = S.cast[i].photo == p;
         if (!used && p != S.det_art) {
             *pp = p->next;
             S.cache_bytes -= p->bytes;
@@ -863,8 +883,11 @@ static void sprite_fade(int *area, int w, int h)
 
 /* A picture from the server (a poster, or a backdrop when art), into the
    cache under key */
+/* art: 0 a poster (rounded corners), 1 a backdrop (faded), 2 a person's
+   photo (round, filling the circle) */
 static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, int art)
 {
+    int round = art == 2 ? w / 2 : art ? 0 : 12 >> S.xeig;
     poster_t *p = calloc(1, sizeof(*p));
     char *jpeg = NULL;
     size_t len = 0;
@@ -872,16 +895,16 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
         return NULL;
     snprintf(p->thumb, sizeof(p->thumb), "%s", key);
     if (plex_poster(&S.px, thumb, w, h, &jpeg, &len) != 0 ||
-        !(p->area = sprite_make(w, h, art ? 0 : 12 >> S.xeig, &p->bytes)) ||
-        jpeg_into(p->area, w, h, jpeg, len, art) != 0) {
+        !(p->area = sprite_make(w, h, round, &p->bytes)) ||
+        jpeg_into(p->area, w, h, jpeg, len, art != 0) != 0) {
         free(p->area);
         p->area = NULL;
         p->bytes = 0;
         p->failed = 1;
-    } else if (art) {
+    } else if (art == 1) {
         sprite_fade(p->area, w, h);
     } else {
-        sprite_round(p->area, w, h, 12 >> S.xeig);
+        sprite_round(p->area, w, h, round);
     }
     free(jpeg);
     p->next = S.cache;
@@ -987,13 +1010,19 @@ static void header_button(int id, int vis_w, int *x0, int *y0, int *x1, int *y1)
 {
     *y0 = -HEADER_H + 32;
     *y1 = *y0 + BTN;
-    *x0 = id == B_BACK ? 28 : vis_w - 28 - 80;
+    *x0 = id == B_BACK ? 28 : id == B_SEARCH ? vis_w - 28 - 80 - 20 - 80 : vis_w - 28 - 80;
     *x1 = *x0 + 80;
 }
 
 static int header_has(int id)
 {
-    return S.page != PG_SIGNIN && (id == B_BACK || id == B_REFRESH);
+    return S.page != PG_SIGNIN && (id == B_BACK || id == B_REFRESH || (id == B_SEARCH && S.page == PG_GRID));
+}
+
+/* The grid is showing a search: its field is in the bar */
+static int searching(void)
+{
+    return S.page == PG_GRID && S.have_list && !strncmp(S.path, "search:", 7);
 }
 
 /* ox, oy: the work area's origin on the screen; vis_w: the width shown */
@@ -1015,6 +1044,33 @@ static void draw_header(int ox, int oy, int vis_w)
         draw_round(ox + x0, oy + y0, ox + x1, oy + y1, BTN / 2, C_CARD, C_HEADER);
         draw_glyph(G_REFRESH, ox + x0 + 16, oy + y0 + 8, ox + x1 - 16, oy + y1 - 8, C_TEXT, C_CARD);
         right = x0 - 28;
+    }
+    header_button(B_SEARCH, vis_w, &x0, &y0, &x1, &y1);
+    if (header_has(B_SEARCH) && x0 > tx + 200) {
+        int on = searching();
+        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, BTN / 2, on ? C_ACCENT : C_CARD, C_HEADER);
+        draw_glyph(G_SEARCH, ox + x0 + 20, oy + y0 + 12, ox + x1 - 20, oy + y1 - 12, C_TEXT, on ? C_ACCENT : C_CARD);
+        right = x0 - 28;
+    }
+    if (searching()) {          /* the field, where "where you are" would be */
+        char q[120], n[40];
+        int fx0 = tx, fx1 = right, fy0 = -HEADER_H + 32, fy1 = fy0 + BTN, qw, room = fx1 - fx0 - 64;
+        snprintf(n, sizeof(n), "%d found", S.list.n);
+        draw_round(ox + fx0, oy + fy0, ox + fx1, oy + fy1, BTN / 2, C_CARD, C_HEADER);
+        snprintf(q, sizeof(q), "%s", S.query);
+        /* how many were found, on the right, when there's room for it too */
+        if (S.query[0] && !S.search_due && draw_width(D_BOLD, q) + draw_width(D_BODY, n) + 40 < room) {
+            draw_text(D_BODY, ox + fx1 - 28 - draw_width(D_BODY, n), oy + fy0 + 22, n, C_SUB, C_CARD);
+            room -= draw_width(D_BODY, n) + 40;
+        }
+        draw_fit(D_BOLD, q, room);
+        qw = S.query[0] ? draw_width(D_BOLD, q) : 0;
+        if (S.query[0])
+            draw_text(D_BOLD, ox + fx0 + 28, oy + fy0 + 22, q, C_TEXT, C_CARD);
+        else
+            draw_text(D_BODY, ox + fx0 + 60, oy + fy0 + 22, "Search films and TV", C_SUB, C_CARD);
+        draw_rect(ox + fx0 + 28 + qw + 4, oy + fy0 + 14, ox + fx0 + 28 + qw + 8, oy + fy1 - 14, C_ACCENT);   /* the caret */
+        return;
     }
     snprintf(where, sizeof(where), "%s", S.where);
     draw_fit(D_BOLD, where, right - tx);
@@ -1232,6 +1288,8 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     S.hover = -1;
     S.page = PG_GRID;
     snprintf(S.path, sizeof(S.path), "%s", path);
+    if (!strncmp(path, "search:", 7))       /* the field shows what was searched for */
+        latin1(path + 7, S.query, sizeof(S.query));
     S.sel = sel >= 0 && sel < l.n ? sel : l.n ? 0 : -1;
     make_disp();
     set_where();
@@ -1246,7 +1304,9 @@ static int show_list(const char *path, const char *back_title, int push, int sel
         set_caret(S.browser_w, -1, NULL);
     }
     S.posters_wanted = 1;
-    if (!l.n)
+    if (!strncmp(path, "search:", 7))
+        set_status(path[7] ? "%d found." : "Type what to look for.", l.n);
+    else if (!l.n)
         set_status("Nothing here.");
     else if (l.total > l.n)
         set_status("The first %d of %d.", l.n, l.total);
@@ -1269,6 +1329,77 @@ static void go_back(void)
     h = S.hist[--S.nhist];
     if (show_list(h.path, "", 0, h.sel) != 0)
         S.nhist++;                  /* still where it was */
+}
+
+/* ---- search ------------------------------------------------------------------------
+
+   The Search button (or / or Ctrl-F on the grid) shows an empty list with
+   a field in the bar; typing goes into it, and a moment after the last key
+   (SEARCH_WAIT) the server is asked (/hubs/search, every library). The
+   results are a list like any other ("search:<words>"), so Back returns to
+   them from a film's details or a show, and Refresh asks again. */
+
+#define SEARCH_WAIT 40              /* cs after the last key */
+
+/* Latin-1 (typed) as UTF-8 (for the server) */
+static void to_utf8(const char *s, char *out, size_t size)
+{
+    size_t o = 0;
+    for (; *s && o + 3 < size; s++) {
+        unsigned char c = (unsigned char)*s;
+        if (c < 0x80)
+            out[o++] = (char)c;
+        else {
+            out[o++] = (char)(0xC0 | c >> 6);
+            out[o++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    out[o] = 0;
+}
+
+static void search_now(void)
+{
+    char path[256];
+    size_t n = snprintf(path, sizeof(path), "search:");
+    to_utf8(S.query, path + n, sizeof(path) - n);
+    S.search_due = 0;
+    show_list(path, "", 0, 0);
+}
+
+static void search_open(void)
+{
+    if (searching())
+        return;
+    S.query[0] = 0;
+    S.search_due = 0;
+    show_list("search:", S.list.title[0] ? S.list.title : "Home", S.have_list, 0);
+}
+
+/* A key on the search page: 1 if it was the field's */
+static int search_key(int k)
+{
+    size_t n = strlen(S.query);
+    if ((k >= 32 && k < 127) || (k >= 160 && k <= 255)) {
+        if (n + 1 < sizeof(S.query)) {
+            S.query[n] = (char)k;
+            S.query[n + 1] = 0;
+        }
+    } else if (k == 8 || k == 0x7F) {
+        if (!n)
+            return 0;               /* an empty field: Back */
+        S.query[n - 1] = 0;
+    } else if (k == 21) {           /* Ctrl-U */
+        S.query[0] = 0;
+    } else if (k == 13 && S.search_due) {
+        search_now();
+        return 1;
+    } else
+        return 0;
+    S.search_due = now_cs() + SEARCH_WAIT;
+    if (!S.search_due)
+        S.search_due = 1;
+    force_redraw(S.browser_w, 0, -HEADER_H, S.scr_w, 0);
+    return 1;
 }
 
 static void refresh_list(void)
@@ -1314,8 +1445,10 @@ static int header_hit(int sx, int sy)
     window_state(S.browser_w, st);
     wx = sx - (st[1] - st[5]);
     wy = sy - (st[4] - st[6]);
-    for (int id = B_BACK; id <= B_REFRESH; id++) {
+    for (int id = B_BACK; id <= B_SEARCH; id++) {
         int x0, y0, x1, y1;
+        if ((id > B_REFRESH && id < B_SEARCH) || !header_has(id))
+            continue;
         header_button(id, st[3] - st[1], &x0, &y0, &x1, &y1);
         if (wx >= x0 && wx < x1 && wy >= y0 && wy < y1)
             return id;
@@ -1365,6 +1498,11 @@ static void select_tile(int i)
    where it was. */
 
 static int det_subs_y, det_how_y, det_sum_y;    /* baselines, work area */
+static int det_cred_y, det_cast_y;              /* the credits' first baseline; the cast heading's */
+#define CAST_W  200                             /* a cast tile: the photo, the name and the part */
+#define CAST_PH 144                             /* the photo's diameter */
+#define CAST_H  (CAST_PH + 100)
+#define CRED_X  300                             /* the credits' values, after their labels */
 static int det_wd = 1000, art_w, art_h;         /* the width laid out for; the backdrop's box */
 
 static const plex_item *det_item(void)
@@ -1426,6 +1564,10 @@ static int det_fetch(const plex_item *it, int with_art)
     S.det = d;
     S.have_det = 1;
     S.det_art = NULL;
+    for (int i = 0; i < (int)(sizeof(S.cast) / sizeof(S.cast[0])); i++)
+        S.cast[i].photo = NULL;
+    S.ncast = 0;
+    S.cast_wanted = 1;              /* laid out by det_layout, fetched from null events */
     if (with_art)
         det_fetch_art();
     hourglass(0);
@@ -1449,6 +1591,132 @@ static void det_button(int id, const char *label, int *x, int *y)
     snprintf(S.btn[S.nbtn].label, sizeof(S.btn[0].label), "%s", label);
     S.nbtn++;
     *x += w + 20;
+}
+
+/* "2008-04-10" as "10 April 2008" */
+static void nice_date(const char *iso, char *out, size_t size)
+{
+    static const char *const months[12] = { "January", "February", "March", "April", "May", "June", "July",
+                                            "August", "September", "October", "November", "December" };
+    int y = 0, m = 0, d = 0;
+    if (sscanf(iso, "%d-%d-%d", &y, &m, &d) == 3 && m >= 1 && m <= 12)
+        snprintf(out, size, "%d %s %d", d, months[m - 1], y);
+    else
+        snprintf(out, size, "%s", iso);
+}
+
+/* The file, in a line: "1080p H.264 · AAC 5.1 · MKV · 4.2 GB" (UTF-8) */
+static void tech_line(const plex_item *it, char *out, size_t size)
+{
+    static const char dot[] = "   \xc2\xb7   ";
+    char res[16] = "", v[24] = "", a[32] = "", ct[16] = "";
+    size_t n;
+    if (it->height >= 2000) snprintf(res, sizeof(res), "4K ");
+    else if (it->height >= 1000) snprintf(res, sizeof(res), "1080p ");
+    else if (it->height >= 700) snprintf(res, sizeof(res), "720p ");
+    else if (it->height > 0) snprintf(res, sizeof(res), "%dp ", it->height);
+    if (it->vcodec)
+        snprintf(v, sizeof(v), "%s", !strcmp(it->vcodec, "h264") ? "H.264" : !strcmp(it->vcodec, "hevc") ? "HEVC" :
+                 !strcmp(it->vcodec, "mpeg2video") ? "MPEG-2" : it->vcodec);
+    if (it->acodec)
+        snprintf(a, sizeof(a), "%s%s", it->acodec, it->channels == 6 ? " 5.1" : it->channels == 8 ? " 7.1" :
+                 it->channels == 2 ? " stereo" : it->channels == 1 ? " mono" : "");
+    for (char *p = a; *p && *p != ' '; p++)             /* codec names in capitals */
+        if (*p >= 'a' && *p <= 'z')
+            *p = (char)(*p - 32);
+    snprintf(ct, sizeof(ct), "%s", it->container ? it->container : "");
+    for (char *p = ct; *p; p++)
+        if (*p >= 'a' && *p <= 'z')
+            *p = (char)(*p - 32);
+    n = snprintf(out, size, "%s%s", res, v);
+    if (*a && n < size)
+        n += snprintf(out + n, size - n, "%s%s", n ? dot : "", a);
+    if (*ct && n < size)
+        n += snprintf(out + n, size - n, "%s%s", n ? dot : "", ct);
+    if (it->part_size > 0 && n < size)
+        snprintf(out + n, size - n, "%s%.1f GB", n ? dot : "", it->part_size / 1e9);
+}
+
+/* The credits and the cast, under the summary from y; the page's height */
+static void det_layout_more(const plex_item *it, int y)
+{
+    char t[400], v[400];
+    int n = 0, cols, w = det_wd - 80;
+#define CRED(label, ...) do { if (n < 8) { \
+        snprintf(S.det_cred[n][0], sizeof(S.det_cred[0][0]), "%s", label); \
+        snprintf(t, sizeof(t), __VA_ARGS__); latin1(t, v, sizeof(v)); \
+        draw_fit(D_BODY, v, w - CRED_X); \
+        snprintf(S.det_cred[n][1], sizeof(S.det_cred[0][1]), "%s", v); n++; } } while (0)
+    if (it->genres) CRED("Genre", "%s", it->genres);
+    if (it->directors) CRED("Directed by", "%s", it->directors);
+    if (it->writers) CRED("Written by", "%s", it->writers);
+    if (it->studio) CRED("Studio", "%s", it->studio);
+    if (it->released) {
+        nice_date(it->released, v, sizeof(v));
+        CRED(it->type && !strcmp(it->type, "episode") ? "First shown" : "Released", "%s", v);
+    }
+    if (it->country) CRED("Country", "%s", it->country);
+    if (it->rating > 0 && it->audience_rating > 0)
+        CRED("Ratings", "Critics %.1f   \xc2\xb7   Audience %.1f", it->rating, it->audience_rating);
+    else if (it->audience_rating > 0)
+        CRED("Ratings", "Audience %.1f", it->audience_rating);
+    tech_line(it, v, sizeof(v));
+    if (*v) {
+        char l1[400];
+        snprintf(l1, sizeof(l1), "%s", v);
+        CRED("File", "%s", l1);
+    }
+#undef CRED
+    S.det_ncred = n;
+    det_cred_y = y - 12;
+    y -= n * 40 + (n ? 24 : 0);
+    /* the cast: rows of photos with the name and the part under them */
+    S.ncast = it->ncast < (int)(sizeof(S.cast) / sizeof(S.cast[0])) ? it->ncast : (int)(sizeof(S.cast) / sizeof(S.cast[0]));
+    det_cast_y = 0;
+    if (S.ncast) {
+        det_cast_y = y - 36;
+        y -= 60;
+        cols = (w + 24) / (CAST_W + 24);
+        if (cols < 1)
+            cols = 1;
+        for (int i = 0; i < S.ncast; i++) {
+            const plex_person *p = &it->cast[i];
+            S.cast[i].x0 = 40 + (i % cols) * (CAST_W + 24);
+            S.cast[i].y0 = y - (i / cols) * (CAST_H + 24) - CAST_H;
+            latin1(p->name, S.cast[i].name, sizeof(S.cast[i].name));
+            latin1(p->role ? p->role : "", S.cast[i].role, sizeof(S.cast[i].role));
+            draw_fit(D_BODY, S.cast[i].name, CAST_W);
+            draw_fit(D_BODY, S.cast[i].role, CAST_W);
+        }
+        y -= ((S.ncast + cols - 1) / cols) * (CAST_H + 24);
+    }
+    S.det_h = -y + 40;
+}
+
+/* A cast photo not fetched yet, fetched (one each null event): 1 if one was */
+static int det_cast_step(void)
+{
+    const plex_item *it = det_item();
+    if (S.page != PG_DETAILS || !S.browser_open || !it) {
+        S.cast_wanted = 0;
+        return 0;
+    }
+    for (int i = 0; i < S.ncast && i < it->ncast; i++) {
+        const char *th = it->cast[i].thumb;
+        char key[320];
+        int px = CAST_PH >> S.xeig;
+        if (!th || S.cast[i].photo)
+            continue;
+        snprintf(key, sizeof(key), "cast:%s@%d", th, px);
+        if (!(S.cast[i].photo = cache_find(key))) {
+            S.cast[i].photo = poster_fetch(th, key, px, CAST_PH >> S.yeig, 2);
+            cache_trim();
+        }
+        force_redraw(S.browser_w, S.cast[i].x0, S.cast[i].y0, S.cast[i].x0 + CAST_W, S.cast[i].y0 + CAST_H);
+        return 1;
+    }
+    S.cast_wanted = 0;
+    return 0;
 }
 
 /* The texts and buttons, where they go, and the page's height */
@@ -1528,7 +1796,8 @@ static void det_layout(void)
         S.det_nlines = draw_wrap(D_BODY, sum, det_wd - 80, S.det_lines, 10);
     }
     det_sum_y = y - 12;
-    S.det_h = -(det_sum_y - S.det_nlines * 40) + 40;
+    y = det_sum_y - S.det_nlines * 40 - 24;
+    det_layout_more(it, y);
 }
 
 static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
@@ -1566,6 +1835,27 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
         draw_text(D_BODY, ox + 40, oy + det_how_y - l * 40, S.det_how_l[l], C_SUB, C_BG);
     for (int l = 0; l < S.det_nlines; l++)
         draw_text(D_BODY, ox + 40, oy + det_sum_y - l * 40, S.det_lines[l], C_TEXT, C_BG);
+    for (int l = 0; l < S.det_ncred; l++) {
+        draw_text(D_BODY, ox + 40, oy + det_cred_y - l * 40, S.det_cred[l][0], C_SUB, C_BG);
+        draw_text(D_BODY, ox + CRED_X, oy + det_cred_y - l * 40, S.det_cred[l][1], C_TEXT, C_BG);
+    }
+    if (det_cast_y) {
+        draw_text(D_BOLD, ox + 40, oy + det_cast_y, "Cast", C_TEXT, C_BG);
+        for (int i = 0; i < S.ncast; i++) {
+            int x0 = S.cast[i].x0, y0 = S.cast[i].y0, px = x0 + (CAST_W - CAST_PH) / 2;
+            int py0 = y0 + CAST_H - CAST_PH;
+            if (y0 > cy1 || y0 + CAST_H < cy0)
+                continue;
+            if (S.cast[i].photo && S.cast[i].photo->area)
+                plot_sprite(S.cast[i].photo, px, py0, px + CAST_PH, py0 + CAST_PH);
+            else
+                draw_glyph(G_CIRCLE, ox + px, oy + py0, ox + px + CAST_PH, oy + py0 + CAST_PH, C_CARD, C_BG);
+            draw_text(D_BODY, ox + x0 + (CAST_W - draw_width(D_BODY, S.cast[i].name)) / 2, oy + py0 - 36,
+                      S.cast[i].name, C_TEXT, C_BG);
+            draw_text(D_BODY, ox + x0 + (CAST_W - draw_width(D_BODY, S.cast[i].role)) / 2, oy + py0 - 76,
+                      S.cast[i].role, C_SUB, C_BG);
+        }
+    }
 }
 
 static void set_where(void);
@@ -2175,7 +2465,7 @@ static void builtin_timeline(const char *state)
         return;
     it = &S.pl.det.v[0];
     plex_timeline(&S.px, it, state, (int64_t)(player_position() * 1000), (int64_t)(player_duration() * 1000),
-                  S.pl.p.direct ? NULL : S.pl.p.session);
+                  &S.pl.pq);
     S.pl.tl_cs = now_cs() + TIMELINE_CS;
 }
 
@@ -2213,7 +2503,7 @@ static int builtin_open_at(double t)
     const plex_item *it = &S.pl.det.v[0];
     caps_t k;
     player_src src;
-    char title[200], headers[1024], old[32];
+    char title[200], headers[1400], old[32];
     snprintf(old, sizeof(old), "%s", S.pl.p.direct ? "" : S.pl.p.session);
     caps_for(S.quality, &k);
     if (caps_play_at(&S.px, it, &k, S.direct, (long)t, &S.pl.p) != 0) {
@@ -2223,6 +2513,12 @@ static int builtin_open_at(double t)
     if (*old)
         plex_transcode_stop(&S.px, old);    /* the stream before (a seek) */
     media_headers(S.pl.p.headers, headers, sizeof(headers));
+    /* the stream and the timeline under one session id: how the server
+       ties them together (the dashboard's Now Playing) */
+    snprintf(S.pl.pq.session, sizeof(S.pl.pq.session), "%s", S.pl.p.session);
+    if (strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))
+        snprintf(headers + strlen(headers), sizeof(headers) - strlen(headers), "X-Plex-Session-Identifier: %s\r\n",
+                 S.pl.p.session);
     builtin_title(it, title, sizeof(title));
     memset(&src, 0, sizeof(src));
     src.url = S.pl.p.url;
@@ -2296,10 +2592,12 @@ static void builtin_play(const plex_item *it, int how)
         report("Can't get %s from the server: %s", it->title, S.px.err);
         return;
     }
-    hourglass(0);
     builtin_stop(0);
     S.pl.det = d;
     S.pl.on = 1;
+    /* a play queue of one, as the Plex apps play from (without one it still plays) */
+    plex_play_queue(&S.px, &d.v[0], &S.pl.pq);
+    hourglass(0);
     S.pl.prev_page = prev == PG_PLAYER ? PG_GRID : prev;
     if (!S.browser_open)
         browser_open();
@@ -3358,9 +3656,11 @@ static void click(int *b)
     if (w == S.browser_w) {
         int t, h = S.page != PG_SIGNIN ? header_hit(b[0], b[1]) : 0;
         set_caret(S.browser_w, -1, NULL);
-        if (h && (buttons & 0x505)) {           /* Back, Refresh */
+        if (h && (buttons & 0x505)) {           /* Back, Refresh, Search */
             if (h == B_BACK)
                 go_back();
+            else if (h == B_SEARCH)
+                search_open();
             else if (S.page == PG_DETAILS)
                 det_refresh();
             else
@@ -3447,9 +3747,17 @@ static void key(int *b)
             return;
         }
     }
+    if (w == S.browser_w && searching() && search_key(k))
+        return;
     if (w == S.browser_w && S.page == PG_GRID) {
         int n = S.have_list ? S.list.n : 0, s = S.sel;
         switch (k) {
+        case '/': case 6:           /* / or Ctrl-F: search */
+            if (!searching()) {
+                search_open();
+                return;
+            }
+            break;
         case 8: case 0x1B: case 0x7F:
             go_back();
             return;
@@ -3621,10 +3929,18 @@ static void nulls(void)
         builtin_nulls();
         return;
     }
+    if (S.search_due && now_cs() - S.search_due >= 0) {
+        if (searching())
+            search_now();
+        S.search_due = 0;
+        return;
+    }
     if (S.pin_id && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.pin_next >= 0) {
         pin_check();
         return;
     }
+    if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
+        return;
     if (S.posters_wanted && poster_step())
         return;
     if (S.in_browser && S.browser_open) {   /* the poster under the pointer */
@@ -3709,7 +4025,10 @@ int plexro_main(int argc, char **argv)
                 r.r[2] = now_cs() + cs;
             } else if (cs < 0)
                 mask |= 1;
-        } else if (S.posters_wanted) {
+        } else if (S.search_due && searching()) {
+            reason = Wimp_PollIdle;         /* the search, a moment after the last key */
+            r.r[2] = S.search_due;
+        } else if (S.posters_wanted || (S.cast_wanted && S.page == PG_DETAILS && S.browser_open)) {
             /* null events at once */
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
@@ -3845,6 +4164,7 @@ const char *ui_test_button(int id)
 int ui_test_hover(void) { return S.hover; }
 int ui_test_player(void) { return S.pl.on; }
 int ui_test_upnext(void) { return S.pl.upnext_cs != 0; }
+const char *ui_test_query(void) { return searching() ? S.query : ""; }
 const char *ui_test_det(int what)
 {
     return what == 0 ? S.det_title : what == 1 ? S.det_meta : what == 2 ? S.det_how :

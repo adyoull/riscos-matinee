@@ -153,6 +153,9 @@ static int inside(int g, double u, double v)
     case G_CORNER_TR: return u * u + (1 - v) * (1 - v) <= 1;
     case G_CORNER_BL: return (1 - u) * (1 - u) + v * v <= 1;
     case G_CORNER_BR: return u * u + v * v <= 1;
+    case G_SEARCH:                  /* a magnifying glass: a ring, and a handle to the bottom right */
+        a = sqrt((u - 0.42) * (u - 0.42) + (v - 0.42) * (v - 0.42));
+        return (a >= 0.2 && a <= 0.3) || seg_dist(u, v, 0.63, 0.63, 0.88, 0.88) <= 0.08;
     }
     return 0;
 }

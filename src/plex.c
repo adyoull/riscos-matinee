@@ -41,8 +41,10 @@ void plex_headers(const plex_ctx *c, const char *token, char *out, size_t size)
                      "X-Plex-Version: %s\r\n"
                      "X-Plex-Client-Identifier: %s\r\n"
                      "X-Plex-Platform: %s\r\n"
+                     "X-Plex-Platform-Version: 5\r\n"
                      "X-Plex-Device: %s\r\n"
-                     "X-Plex-Device-Name: %s\r\n",
+                     "X-Plex-Device-Name: %s\r\n"
+                     "X-Plex-Provides: player\r\n",
                      c->product, c->version, c->client_id, c->platform, c->device, c->device_name);
     if (token && *token && n > 0 && (size_t)n < size)
         snprintf(out + n, size - n, "X-Plex-Token: %s\r\n", token);
@@ -416,6 +418,52 @@ static void media(plex_item *it, const cJSON *m)
     }
 }
 
+/* The names in one of a metadata's tag arrays ("Genre": [{"tag": "Comedy"}...]),
+   at most max, joined with ", "; NULL if there are none */
+static char *tags(const cJSON *m, const char *name, int max)
+{
+    const cJSON *t;
+    char out[400] = "";
+    size_t n = 0;
+    int k = 0;
+    cJSON_ArrayForEach(t, cJSON_GetObjectItemCaseSensitive(m, name)) {
+        const char *s = jstr(t, "tag");
+        if (!s || k >= max)
+            continue;
+        n += snprintf(out + n, n < sizeof(out) ? sizeof(out) - n : 0, "%s%s", k ? ", " : "", s);
+        k++;
+        if (n >= sizeof(out))
+            break;
+    }
+    return k ? dup_s(out) : NULL;
+}
+
+#define CAST_MAX 12
+
+/* The cast (Role), in Plex's order: the leads first */
+static void cast(plex_item *it, const cJSON *m)
+{
+    const cJSON *r, *roles = cJSON_GetObjectItemCaseSensitive(m, "Role");
+    int n = cJSON_GetArraySize(roles);
+    if (n <= 0)
+        return;
+    if (n > CAST_MAX)
+        n = CAST_MAX;
+    if (!(it->cast = calloc(n, sizeof(plex_person))))
+        return;
+    cJSON_ArrayForEach(r, roles) {
+        plex_person *p;
+        if (it->ncast >= n)
+            break;
+        if (!jstr(r, "tag"))
+            continue;
+        p = &it->cast[it->ncast++];
+        p->name = dup_s(jstr(r, "tag"));
+        p->role = dup_s(jstr(r, "role"));
+        p->thumb = dup_s(jstr(r, "thumb"));
+    }
+}
+
 static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *path, int on_deck)
 {
     plex_item *it;
@@ -442,6 +490,15 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->parent_index = (int)jnum(m, "parentIndex", 0);
     it->grandparent_key = dup_s(jstr(m, "grandparentRatingKey"));
     it->grandparent_title = dup_s(jstr(m, "grandparentTitle"));
+    it->genres = tags(m, "Genre", 4);
+    it->directors = tags(m, "Director", 3);
+    it->writers = tags(m, "Writer", 3);
+    it->country = tags(m, "Country", 2);
+    it->studio = dup_s(jstr(m, "studio"));
+    it->released = dup_s(jstr(m, "originallyAvailableAt"));
+    it->guid = dup_s(jstr(m, "guid"));
+    it->audience_rating = jnum(m, "audienceRating", 0);
+    cast(it, m);
     it->rating = jnum(m, "rating", 0) > 0 ? jnum(m, "rating", 0) : jnum(m, "audienceRating", 0);
     if (!type)
         it->kind = PI_OTHER;
@@ -551,6 +608,12 @@ int plex_list_get(plex_ctx *c, const char *path, plex_list *out)
         set_err(c, "no server chosen%s", NULL);
         return -1;
     }
+    if (!strncmp(path, "search:", 7)) {        /* a search, as a list (Back, Refresh) */
+        if (plex_search(c, path + 7, out) != 0)
+            return -1;
+        snprintf(out->title, sizeof(out->title), "Search");
+        return 0;
+    }
     if (!*path) {
         /* the top: Continue watching, then the libraries */
         plex_list secs;
@@ -592,6 +655,12 @@ static void item_free(plex_item *it)
     free(it->part_key); free(it->part_file);
     free(it->summary); free(it->art); free(it->content_rating); free(it->tagline);
     free(it->grandparent_key); free(it->grandparent_title);
+    free(it->genres); free(it->directors); free(it->writers); free(it->studio); free(it->country);
+    free(it->released); free(it->guid);
+    for (int i = 0; i < it->ncast; i++) {
+        free(it->cast[i].name); free(it->cast[i].role); free(it->cast[i].thumb);
+    }
+    free(it->cast);
     for (int i = 0; i < it->nsubs; i++) {
         free(it->subs[i].title); free(it->subs[i].codec); free(it->subs[i].language); free(it->subs[i].key);
     }
@@ -683,26 +752,109 @@ int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id)
 
 /* ---- playing: where it's got to, and what's next -------------------------------- */
 
-int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
-                  const char *session)
+int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl)
 {
-    char url[768], esc[64], key[160], headers[1200];
+    char uri[256], esc[512], url[1024];
+    cJSON *j, *mc, *m0;
+    pl->pq_id = pl->pq_item_id = 0;
+    pl->pq_version = 0;
+    if (!it->rating_key || !*c->server_id)
+        return -1;
+    snprintf(uri, sizeof(uri), "server://%s/com.plexapp.plugins.library/library/metadata/%s", c->server_id,
+             it->rating_key);
+    net_escape(uri, esc, sizeof(esc));
+    snprintf(url, sizeof(url), "%s/playQueues?type=video&uri=%s&continuous=0&repeat=0&own=1&includeChapters=0",
+             c->base, esc);
+    if (!(j = get_json(c, url, c->token, "", API_TIMEOUT, NULL)))
+        return -1;
+    mc = cJSON_GetObjectItemCaseSensitive(j, "MediaContainer");
+    pl->pq_id = (long)jnum(mc, "playQueueID", 0);
+    pl->pq_version = (int)jnum(mc, "playQueueVersion", 1);
+    pl->pq_item_id = (long)jnum(mc, "playQueueSelectedItemID", 0);
+    m0 = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(mc, "Metadata"), 0);
+    if (!pl->pq_item_id && m0)
+        pl->pq_item_id = (long)jnum(m0, "playQueueItemID", 0);
+    cJSON_Delete(j);
+    if (!pl->pq_id) {
+        set_err(c, "the server made no play queue%s", NULL);
+        return -1;
+    }
+    return 0;
+}
+
+int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
+                  const plex_playing *pl)
+{
+    char url[1400], esc[64], guid[300], headers[1200];
     net_buf b;
-    size_t n;
+    size_t n, u;
     if (!it->rating_key)
         return -1;
     net_escape(it->rating_key, esc, sizeof(esc));
-    snprintf(key, sizeof(key), "%%2Flibrary%%2Fmetadata%%2F%s", esc);
-    snprintf(url, sizeof(url), "%s/:/timeline?ratingKey=%s&key=%s&state=%s&time=%lld&duration=%lld&hasMDE=1",
-             c->base, esc, key, state, (long long)(time_ms < 0 ? 0 : time_ms), (long long)duration_ms);
+    if (time_ms < 0)
+        time_ms = 0;
+    u = snprintf(url, sizeof(url),
+                 "%s/:/timeline?ratingKey=%s&key=%%2Flibrary%%2Fmetadata%%2F%s&state=%s&time=%lld&duration=%lld"
+                 "&playbackTime=%lld&hasMDE=1&identifier=com.plexapp.plugins.library&type=video"
+                 "&mediaIndex=0&partIndex=0&partCount=1",
+                 c->base, esc, esc, state, (long long)time_ms, (long long)duration_ms, (long long)time_ms);
+    if (it->guid && u < sizeof(url)) {
+        net_escape(it->guid, guid, sizeof(guid));
+        u += snprintf(url + u, sizeof(url) - u, "&guid=%s", guid);
+    }
+    if (pl && pl->pq_id && u < sizeof(url))     /* as the Plex apps: from a play queue */
+        u += snprintf(url + u, sizeof(url) - u,
+                      "&containerKey=%%2FplayQueues%%2F%ld&playQueueID=%ld&playQueueVersion=%d&playQueueItemID=%ld",
+                      pl->pq_id, pl->pq_id, pl->pq_version, pl->pq_item_id);
     plex_headers(c, c->token, headers, sizeof(headers));
     n = strlen(headers);
-    if (session && *session)        /* ties the report to the converted stream */
-        snprintf(headers + n, sizeof(headers) - n, "X-Plex-Session-Identifier: %s\r\n", session);
+    if (pl && *pl->session)         /* the same id the stream was asked for with */
+        snprintf(headers + n, sizeof(headers) - n, "X-Plex-Session-Identifier: %s\r\n", pl->session);
     /* short: it's sent while playing, from the desktop's own time */
     if (net_fetch(url, headers, NULL, &b, 3000, c->err, sizeof(c->err)) != 0)
         return -1;
     net_buf_free(&b);
+    return 0;
+}
+
+int plex_search(plex_ctx *c, const char *query, plex_list *out)
+{
+    static const char *const kinds[3] = { "movie", "show", "episode" };
+    char esc[400], url[1024];
+    cJSON *j, *hubs, *h, *m;
+    int cap = 0;
+    memset(out, 0, sizeof(*out));
+    snprintf(out->title, sizeof(out->title), "Search");
+    if (!query || !*query)
+        return 0;
+    net_escape(query, esc, sizeof(esc));
+    snprintf(url, sizeof(url), "%s/hubs/search?query=%s&limit=20&includeCollections=0", c->base, esc);
+    if (!(j = get_json(c, url, c->token, NULL, API_TIMEOUT, NULL)))
+        return -1;
+    hubs = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(j, "MediaContainer"), "Hub");
+    for (int k = 0; k < 3; k++)                 /* films, then shows, then episodes */
+        cJSON_ArrayForEach(h, hubs) {
+            const char *t = jstr(h, "type");
+            if (!t || strcmp(t, kinds[k]))
+                continue;
+            cJSON_ArrayForEach(m, cJSON_GetObjectItemCaseSensitive(h, "Metadata")) {
+                plex_item *it;
+                char sub[160];
+                int before = out->n;
+                add_metadata(out, &cap, m, "/hubs/search", k == 2);
+                if (out->n == before)
+                    continue;
+                it = &out->v[out->n - 1];
+                if (k < 2) {                    /* what it is, before its year or seasons */
+                    snprintf(sub, sizeof(sub), "%s%s%s", k ? "Show" : "Film", it->subtitle ? " \xc2\xb7 " : "",
+                             it->subtitle ? it->subtitle : "");
+                    free(it->subtitle);
+                    it->subtitle = dup_s(sub);
+                }
+            }
+        }
+    out->total = out->n;
+    cJSON_Delete(j);
     return 0;
 }
 

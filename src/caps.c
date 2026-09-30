@@ -140,6 +140,7 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
         snprintf(why, sizeof(why), "direct play is off");
     if (allow_direct && caps_direct_ok(k, it, why, sizeof(why))) {
         out->direct = 1;
+        session_id(c, out->session, sizeof(out->session));  /* for the timeline, and the dashboard */
         snprintf(out->url, sizeof(out->url), "%s%s", c->base, it->part_key);
         snprintf(out->why, sizeof(out->why), "Direct play: %s", why);
         /* Reel's own "carry on from where you stopped" goes by this */

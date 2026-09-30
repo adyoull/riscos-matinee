@@ -31,7 +31,7 @@
 enum { D_BODY, D_BOLD, D_TITLE, D_FONTS };
 
 /* Glyphs, drawn smooth in a box */
-enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR };
+enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH };
 
 void draw_init(int xeig, int yeig);     /* the fonts and the screen (again after a mode change) */
 void draw_done(void);                   /* lets the fonts and the shape sprites go */

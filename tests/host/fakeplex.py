@@ -71,6 +71,17 @@ def movie(rk, title, year, vcodec, w, h, kbps, acodec="aac", container="mp4", pr
                               "size": size}]}]}
     if offset:
         m["viewOffset"] = offset
+    if rk == 101:               # the rest of the metadata, as the details of one item give it
+        m.update({"guid": "plex://movie/5d776825880197001ec967c6", "studio": "Blender Foundation",
+                  "originallyAvailableAt": "2008-04-10", "audienceRating": 8.1,
+                  "Genre": [{"tag": "Animation"}, {"tag": "Comedy"}, {"tag": "Short"}],
+                  "Director": [{"tag": "Sacha Goedegebure"}],
+                  "Writer": [{"tag": "Sacha Goedegebure"}, {"tag": "Ton Roosendaal"}],
+                  "Country": [{"tag": "Netherlands"}],
+                  "Role": [{"tag": "Bunny", "role": "Himself", "thumb": "https://metadata-static.plex.tv/people/bunny.jpg"},
+                           {"tag": "Frank", "role": "Flying squirrel", "thumb": "https://metadata-static.plex.tv/people/frank.jpg"},
+                           {"tag": "Rinky", "role": "Red squirrel"},
+                           {"tag": "Gamera", "role": "Chinchilla", "thumb": "https://metadata-static.plex.tv/people/gamera.jpg"}]})
     return m
 
 
@@ -134,10 +145,21 @@ class H(BaseHTTPRequestHandler):
                 LOG.clear()
             return self.send(200, {})
         self.record(body)
+        if p == "/playQueues":
+            if self.token() != SERVER:
+                return self.send(401, {})
+            return self.post_playqueue(parse_qs(urlsplit(self.path).query))
         if p == "/api/v2/pins":
             PIN_POLLS["n"] = 0
             return self.send(201, {"id": 4242, "code": "ABCD", "authToken": None})
         self.send(404, {})
+
+    def post_playqueue(self, q):
+        uri = (q.get("uri") or [""])[0]
+        rk = uri.rsplit("/", 1)[-1]
+        return self.send(200, {"MediaContainer": {"playQueueID": 3141, "playQueueVersion": 1,
+                                                  "playQueueSelectedItemID": 59265, "size": 1,
+                                                  "Metadata": [{"ratingKey": rk, "playQueueItemID": 59265}]}})
 
     def do_PUT(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -214,6 +236,18 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": [
                 {"ratingKey": "21", "key": "/library/metadata/21/children", "type": "season",
                  "title": "Series 1", "index": 1, "leafCount": 6, "viewedLeafCount": 2}]}})
+        if p == "/hubs/search":
+            words = (q.get("query") or [""])[0].lower()
+            films = [m for m in MOVIES if words in m["title"].lower()]
+            eps = [e for e in episodes() if words in e["title"].lower() or words in "space show"]
+            shows = [{"ratingKey": "20", "key": "/library/metadata/20/children", "type": "show",
+                      "title": "Space Show", "childCount": 2, "thumb": "/library/metadata/20/thumb/1"}] \
+                if words in "space show" else []
+            hubs = [{"type": "episode", "hubIdentifier": "episode", "Metadata": eps},   # not in PlexRO's order
+                    {"type": "actor", "hubIdentifier": "actor", "Metadata": [{"tag": "Nobody"}]},
+                    {"type": "movie", "hubIdentifier": "movie", "Metadata": films},
+                    {"type": "show", "hubIdentifier": "show", "Metadata": shows}]
+            return self.send(200, {"MediaContainer": {"size": len(hubs), "Hub": [h for h in hubs if h["Metadata"]]}})
         if p == "/library/metadata/20/allLeaves":
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": episodes()}})
         if p in ("/:/timeline", "/video/:/transcode/universal/stop"):

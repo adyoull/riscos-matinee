@@ -16,13 +16,16 @@ against a scripted fake Wimp under qemu.
 - Servers, and a dark poster browser: Continue watching, films, TV shows, seasons and
   episodes, with shadows, a highlight under the pointer, and three poster sizes.
 - One window: the sign-in page, the posters, and a details page (the backdrop, title,
-  year, running time, rating, summary and buttons). Smooth, anti-aliased buttons and
+  year, running time, rating, summary and buttons; the genres, director, writers, studio,
+  dates, ratings and file; the cast with photos). Smooth, anti-aliased buttons and
   corners.
+- Search across every library, with results as you type.
 - Subtitles: choose a track (kept on the server); the server burns it in.
 - The built-in player: in the window, or full screen in the desktop; the picture through
   a hardware overlay (VideoOverlay), which scales it for nothing; the stats; sound
   tracks; seeking (a converted stream is started again at the new place); the server
-  told where you've got to; the next episode offered at the end.
+  told where you've got to, from a play queue (so it shows in the dashboard's Now
+  Playing); the next episode offered at the end.
 - The direct-play or transcode decision, and the hand-off to ReelEGL or Reel.
 - Resume, Play from start, Mark watched or unwatched.
 - Save original file: the file itself, up to 4GB−1, with its speed shown.

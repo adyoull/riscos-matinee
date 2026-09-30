@@ -13,7 +13,7 @@ enum { PG_GRID, PG_DETAILS, PG_SIGNIN, PG_PLAYER };
 enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK };
 
 /* The browser's and details window's buttons (drawn, not icons) */
-enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS };
+enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS, B_SEARCH };
 
 /* The save box's icons */
 enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
@@ -51,7 +51,8 @@ int ui_test_button_xy(int w, int id, int *x, int *y);   /* a drawn button's midd
 const char *ui_test_button(int id);             /* a details button's label, or NULL */
 int ui_test_hover(void);
 int ui_test_player(void);                      /* the built-in player is playing (or has the card up) */
-int ui_test_upnext(void);                      /* the Up next card is counting down */
+int ui_test_upnext(void);
+const char *ui_test_query(void);               /* the search field's text ("": not searching) */                      /* the Up next card is counting down */
 const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how it plays, 3 summary */
 int ui_test_psize(void);
 #endif

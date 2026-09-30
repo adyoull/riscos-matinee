@@ -792,7 +792,7 @@ static int player_button(int *b, int w, int id)
 
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
-static int n_null, open0, count0, draws0, wfull;
+static int n_null, open0, count0, draws0, wfull, items0;
 static double p0;
 
 #define NULL_EVENT 0
@@ -1020,12 +1020,51 @@ static int script(int *b, int mask)
                   strstr(plotted_text, "Resume from 42:10|") && strstr(plotted_text, "Subtitles: None|"),
                   "the details drawn: %s", plotted_text);
             save_picture("details.ppm", w_browser);
+            CHECK(!(mask & 1) || last_poll == 0x400E1, "null events: the cast's photos to fetch");
+            drain_n = 0;
+            pc = 1500;
+            return NULL_EVENT;
+        }
+        case 1500:                                               /* the cast's photos, one a null event */
+            DRAIN(10);
+            if (pc != 1501)
+                return NULL_EVENT;
+            continue;
+        case 1501:
+            CHECK(log_count("/photo/:/transcode", "url", "https://metadata-static.plex.tv/people/frank.jpg") == 1 &&
+                  log_count("/photo/:/transcode", "url", "https://metadata-static.plex.tv/people/bunny.jpg") == 1 &&
+                  log_count("/photo/:/transcode", "url", "https://metadata-static.plex.tv/people/gamera.jpg") == 1 &&
+                  log_count("/photo/:/transcode", "width", "72") >= 3, "the cast's photos fetched, 72 pixels");
+            memset(b, 0, 32);                                   /* down to the cast */
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[6] = -1300; b[7] = -1;
+            pc = 1502;
+            return 2;
+        case 1502:
+            pc = 1503;
+            return ev_redraw(b, w_browser);
+        case 1503: {
+            const int *spr = plotted_area ? plotted_area + 4 : NULL;
+            CHECK(strstr(plotted_text, "Directed by|Sacha Goedegebure|") && strstr(plotted_text, "Genre|Animation, Comedy, Short|") &&
+                  strstr(plotted_text, "Released|10 April 2008|") && strstr(plotted_text, "Critics 7.5") &&
+                  strstr(plotted_text, "Audience 8.1") && strstr(plotted_text, "1080p H.264") && strstr(plotted_text, "AAC 5.1"),
+                  "the credits: %s", plotted_text);
+            CHECK(strstr(plotted_text, "Cast|") && strstr(plotted_text, "Frank|Flying s") &&
+                  strstr(plotted_text, "Gamera|Chinchilla|"), "the cast, with their parts");
+            CHECK(spr && spr[4] + 1 == 72 && spr[9] != spr[8], "a photo: round (masked), 72 pixels");
+            save_picture("cast.ppm", w_browser);
+            memset(b, 0, 32);                                   /* back to the top */
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[6] = 0; b[7] = -1;
             prev_started = nstarted;
-            pc++;
-            return ev_button(b, w_browser, D_PLAY, 4);
+            pc = 16;
+            return 2;
         }
         case 16: {
-            int k = (nstarted - 1) & 7;
+            int k;
+            if (nstarted == prev_started && ev_button(b, w_browser, D_PLAY, 4))
+                return 6;                                       /* Play (after the scroll back) */
+            k = (nstarted - 1) & 7;
             snprintf(want, sizeof(want), "Run <ReelEGL$Dir>.!Run %s/PlexRO/Play0", scrap);
             CHECK(nstarted == prev_started + 1 && !strcmp(started[k], want), "Play: started %s", started[k]);
             CHECK(strstr(started_url(), "/video/:/transcode/universal/start.m3u8?") &&
@@ -1539,6 +1578,11 @@ static int script(int *b, int mask)
                   "open, and carried on from 42:10 (%.2f)", fake_rc.seek_to);
             CHECK(log_count("/:/timeline", "state", "playing") >= 1 && log_count("/:/timeline", "time", "2530000") >= 1,
                   "the server told: playing, at 42:10");
+            CHECK(log_count("/playQueues", NULL, NULL) >= 1 && log_count("/:/timeline", "playQueueItemID", "59265") >= 1 &&
+                  log_count("/:/timeline", "containerKey", "/playQueues/3141") >= 1,
+                  "played from a play queue, as the Plex apps (the dashboard's Now Playing)");
+            CHECK(strstr(fake_rc.headers, "X-Plex-Session-Identifier: ") && strstr(fake_rc.headers, "X-Plex-Provides: player"),
+                  "the stream asked for with the session id");
             n_null = 0;
             pc++;
             continue;
@@ -1881,6 +1925,80 @@ static int script(int *b, int mask)
             return ev_key(b, w_browser, -1, 0x1B);
         case 952:
             CHECK(ui_test_page() == PG_GRID, "the grid");
+            items0 = ui_test_items();
+            pc = 960;
+            return ev_key(b, w_browser, -1, '/');
+        /* ---- search */
+        case 960:
+            CHECK(ui_test_page() == PG_GRID && ui_test_items() == 0 && !strcmp(ui_test_query(), "") &&
+                  !strcmp(ui_test_path() + strlen(ui_test_path()) - 6, "Search"), "/: the search page (%s)", ui_test_path());
+            count0 = log_count("/hubs/search", NULL, NULL);
+            snprintf(type_str, sizeof(type_str), "bun");
+            type_i = 0;
+            pc++;
+            continue;
+        case 961:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            CHECK(!strcmp(ui_test_query(), "bun") && log_count("/hubs/search", NULL, NULL) == count0,
+                  "typed, and nothing asked yet");
+            CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 40, "asleep until a moment after the last key");
+            fake_cs = idle_time;
+            pc++;
+            return NULL_EVENT;
+        case 962:
+            CHECK(log_count("/hubs/search", NULL, NULL) == count0 + 1 && log_count("/hubs/search", "query", "bun") == 1 &&
+                  ui_test_items() == 1 && !strcmp(ui_test_item(0, 0), "Big Buck Bunny") &&
+                  !strcmp(ui_test_item(0, 1), "Film \xb7 2008"), "one search, a moment later: %d found", ui_test_items());
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 963:
+            CHECK(strstr(plotted_text, "bun|") != NULL, "the field: %s", plotted_text);
+            pc++;
+            return ev_key(b, w_browser, -1, 21);                /* Ctrl-U */
+        case 964:
+            snprintf(type_str, sizeof(type_str), "space");
+            type_i = 0;
+            pc++;
+            continue;
+        case 965:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            fake_cs = idle_time;
+            pc++;
+            return NULL_EVENT;
+        case 966:
+            CHECK(ui_test_items() == 7 && !strcmp(ui_test_item(0, 0), "Space Show") &&
+                  strstr(ui_test_item(1, 1), "S1 E1"), "the show first, then its episodes");
+            DRAIN(10);
+            if (pc == 967)
+                return ev_redraw(b, w_browser);
+            continue;
+        case 967:
+            save_picture("search.ppm", w_browser);
+            pc++;
+            return ev_tile(b, 0, 4);                            /* the show */
+        case 968:
+            CHECK(!strcmp(ui_test_query(), "") && find_tile("Series 1") >= 0, "the show opens");
+            pc = 9680;
+            return ev_key(b, w_browser, -1, '/');               /* another search from there */
+        case 9680:
+            pc = 9681;
+            return ev_key(b, w_browser, -1, 'x');
+        case 9681:
+            CHECK(!strcmp(ui_test_query(), "x"), "typed in the second search");
+            pc = 9682;
+            return ev_key(b, w_browser, -1, 0x1B);              /* Back: the show */
+        case 9682:
+            pc = 969;
+            return ev_key(b, w_browser, -1, 0x1B);              /* Back: the first search */
+        case 969:
+            CHECK(!strcmp(ui_test_query(), "space") && ui_test_items() == 7, "Back: the search, as it was");
+            pc++;
+            return ev_key(b, w_browser, -1, 0x1B);
+        case 970:
+            CHECK(!strcmp(ui_test_query(), "") && ui_test_items() == items0 && ui_test_page() == PG_GRID,
+                  "Escape: out of the search, the list before it");
             pc = 78;
             continue;
         /* ---- sign out, then a server typed by hand */

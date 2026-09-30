@@ -74,7 +74,7 @@ mutate "the shapes' edges not smoothed" src/draw.c \
 mutate "the pointer's poster not found" src/ui.c \
   'set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);' 'set_hover(-1);'
 mutate "backdrop not faded" src/ui.c \
-  '    } else if (art) {\n        sprite_fade(p->area, w, h);\n    }' '    }'
+  '    } else if (art == 1) {\n        sprite_fade(p->area, w, h);\n    }' '    }'
 mutate "posters not rounded (no mask)" src/ui.c \
   'art ? 0 : 12 >> S.xeig' '0'
 mutate "the speed test's time limit ignored" src/ui.c \
@@ -104,6 +104,21 @@ mutate "the player page scrolls" src/ui.c \
   '        b[5] = 0;\n        b[6] = 0;\n' ''
 mutate "sync counted from the stream's start" src/player.c \
   '(int)((st.position - st.clock - P.sync0) * 1000)' '(int)((st.position - st.clock) * 1000)'
+# metadata, search, the dashboard
+mutate "the cast's photos not fetched" src/ui.c \
+  'if (!th || S.cast[i].photo)\n            continue;' 'continue;'
+mutate "cast photos square" src/ui.c \
+  'int round = art == 2 ? w / 2 :' 'int round = art == 2 ? 0 :'
+mutate "the timeline without the play queue" src/plex.c \
+  'if (pl && pl->pq_id && u < sizeof(url))' 'if (0)'
+mutate "the stream without the session id" src/ui.c \
+  'if (strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))' 'if (0)'
+mutate "a search on every key" src/ui.c \
+  'S.search_due = now_cs() + SEARCH_WAIT;\n    if (!S.search_due)\n        S.search_due = 1;' 'search_now();\n    return 1;'
+mutate "search results in the server's order" src/plex.c \
+  '{ "movie", "show", "episode" }' '{ "episode", "movie", "show" }'
+mutate "Back to a search forgets its words" src/ui.c \
+  'latin1(path + 7, S.query, sizeof(S.query));' '(void)0;'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

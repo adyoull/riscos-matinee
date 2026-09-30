@@ -72,6 +72,12 @@ typedef struct {
 } plex_sub;
 typedef plex_sub plex_audio;
 
+/* Someone in the cast (Plex's Role): the actor, the part, and a photo (a
+   URL the server fetches for us through /photo/:/transcode), or NULL */
+typedef struct {
+    char *name, *role, *thumb;
+} plex_person;
+
 typedef struct {
     plex_kind kind;
     char *title;            /* UTF-8 as Plex sends it; ui converts for the desktop */
@@ -98,6 +104,14 @@ typedef struct {
     int index, parent_index;
     char *grandparent_key;  /* the show's ratingKey (for the next episode) */
     char *grandparent_title;
+    /* the rest of the metadata (a video's details, plex_details()): names
+       joined with ", ", or NULL */
+    char *genres, *directors, *writers, *studio, *country;
+    char *released;         /* originallyAvailableAt: "2008-04-10" (an episode's air date) */
+    char *guid;             /* plex://movie/..., for the timeline */
+    double audience_rating; /* out of 10; 0 = none */
+    plex_person *cast;
+    int ncast;
     /* subtitle tracks: only in an item from plex_details() (lists leave
        them out) */
     plex_sub *subs;
@@ -165,11 +179,30 @@ int plex_audio_selected(const plex_item *it);
    stream then has that one). 0 = ok. */
 int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id);
 
+/* What's being played, as the server knows it: its play queue (the Plex
+   apps play from one; the dashboard's Now Playing goes by it) and the
+   session id the stream was asked for with */
+typedef struct {
+    long pq_id, pq_item_id;
+    int pq_version;
+    char session[40];
+} plex_playing;
+
+/* Makes a play queue of one video (POST /playQueues); fills pl's pq_*.
+   0 = ok (playing goes on without one if not) */
+int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl);
+
 /* Tells the server where playing has got to: state "playing", "paused" or
-   "stopped", time and duration in ms; session: a converted stream's
-   session id, or NULL. Continue watching and Resume come from this. 0 = ok. */
+   "stopped", time and duration in ms, with the play queue and session of
+   pl (may be NULL). Continue watching, Resume and the dashboard's Now
+   Playing come from this. 0 = ok. */
 int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
-                  const char *session);
+                  const plex_playing *pl);
+
+/* Searches every library: films, then shows, then episodes (as tiles:
+   "Film", "Show" or the episode's show and number under the title).
+   An empty query gives an empty list without asking. 0 = ok. */
+int plex_search(plex_ctx *c, const char *query, plex_list *out);
 /* Asks the server to stop converting for a session. 0 = ok. */
 int plex_transcode_stop(plex_ctx *c, const char *session);
 /* The episode after it (the next in the show, across seasons), as a list

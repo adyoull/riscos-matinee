@@ -37,7 +37,7 @@ typedef struct {
     char why[160];          /* for the status line: what, and why */
     char key[160];          /* Reel's "carry on" key (direct play only), or "" */
     long offset_s;          /* converted streams: where it starts */
-    char session[32];       /* converted streams: the server's session id */
+    char session[32];       /* the session id (the stream's, the timeline's) */
 } play_t;
 
 void caps_for(int quality, caps_t *out);

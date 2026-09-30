@@ -376,6 +376,59 @@ int main(int argc, char **argv)
         plex_list_free(&d);
     }
 
+    /* ---- the rest of the metadata, the play queue and timeline, search */
+    {
+        plex_list d, r;
+        plex_playing pl;
+        const plex_item *bb = find(&films, "Big Buck Bunny");
+        memset(&pl, 0, sizeof(pl));
+        CHECK(bb && plex_details(&c, bb, &d) == 0 && d.n == 1, "details again");
+        if (d.n == 1) {
+            const plex_item *it = &d.v[0];
+            CHECK(it->genres && !strcmp(it->genres, "Animation, Comedy, Short") &&
+                  it->directors && !strcmp(it->directors, "Sacha Goedegebure") &&
+                  it->writers && !strcmp(it->writers, "Sacha Goedegebure, Ton Roosendaal") &&
+                  it->studio && !strcmp(it->studio, "Blender Foundation") &&
+                  it->released && !strcmp(it->released, "2008-04-10") && it->audience_rating == 8.1 &&
+                  it->country && !strcmp(it->country, "Netherlands"), "genres, people, studio, dates");
+            CHECK(it->ncast == 4 && !strcmp(it->cast[1].name, "Frank") && !strcmp(it->cast[1].role, "Flying squirrel") &&
+                  !strcmp(it->cast[1].thumb, "https://metadata-static.plex.tv/people/frank.jpg") && !it->cast[2].thumb,
+                  "the cast, in order, with photos where there are");
+            CHECK(plex_play_queue(&c, it, &pl) == 0 && pl.pq_id == 3141 && pl.pq_item_id == 59265 && pl.pq_version == 1,
+                  "a play queue: %s", c.err);
+            snprintf(pl.session, sizeof(pl.session), "sess42");
+            CHECK(plex_timeline(&c, it, "playing", 61000, 5400000, &pl) == 0, "timeline");
+            log = server_log();
+            {
+                const cJSON *q = last(log, "/playQueues"), *t = last(log, "/:/timeline");
+                CHECK(q && !strcmp(cJSON_GetObjectItem(q, "method")->valuestring, "POST") &&
+                      !strcmp(qv(q, "uri"), "server://MID/com.plexapp.plugins.library/library/metadata/101") &&
+                      !strcmp(qv(q, "type"), "video"), "POST /playQueues for the video");
+                CHECK(t && !strcmp(qv(t, "state"), "playing") && !strcmp(qv(t, "time"), "61000") &&
+                      !strcmp(qv(t, "ratingKey"), "101") && !strcmp(qv(t, "key"), "/library/metadata/101") &&
+                      !strcmp(qv(t, "containerKey"), "/playQueues/3141") && !strcmp(qv(t, "playQueueItemID"), "59265") &&
+                      !strcmp(qv(t, "guid"), "plex://movie/5d776825880197001ec967c6") &&
+                      !strcmp(hdr(t, "X-Plex-Session-Identifier"), "sess42") &&
+                      !strcmp(hdr(t, "X-Plex-Provides"), "player") && !strcmp(hdr(t, "X-Plex-Client-Identifier"), c.client_id),
+                      "the timeline: the play queue, the session, the player's headers");
+            }
+            cJSON_Delete(log);
+            plex_list_free(&d);
+        }
+        CHECK(plex_search(&c, "bunny", &r) == 0 && r.n == 1 && !strcmp(r.v[0].title, "Big Buck Bunny") &&
+              !strcmp(r.v[0].subtitle, "Film \xc2\xb7 2008"), "search: a film (%d)", r.n);
+        plex_list_free(&r);
+        CHECK(plex_search(&c, "space", &r) == 0 && r.n == 7 && r.v[0].kind == PI_FOLDER &&
+              !strcmp(r.v[0].subtitle, "Show \xc2\xb7 2 seasons") && r.v[1].kind == PI_VIDEO &&
+              !strcmp(r.v[1].title, "Space Show") && strstr(r.v[1].subtitle, "S1 E1"),
+              "search: the show first, then its episodes (under the show's name)");
+        plex_list_free(&r);
+        CHECK(plex_search(&c, "", &r) == 0 && r.n == 0, "an empty search: nothing, and nothing asked");
+        plex_list_free(&r);
+        CHECK(plex_list_get(&c, "search:bunny", &r) == 0 && r.n == 1, "a search as a list");
+        plex_list_free(&r);
+    }
+
     plex_list_free(&top);
     plex_list_free(&films);
     plex_list_free(&tv);

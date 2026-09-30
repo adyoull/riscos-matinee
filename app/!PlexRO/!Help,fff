@@ -44,6 +44,7 @@ selected poster has a blue ring, and the one under the pointer a grey one.
 
   click          select
   double-click   open a library, show or season; a video's details page
+  / or Ctrl-F    search (or the magnifying glass in the bar)
   Return         open, or play, the poster that's selected
   I              the selected video's details page
   arrow keys     move the selection
@@ -67,13 +68,27 @@ Menu on a poster:
   Mark watched, Mark unwatched
   Back, Refresh
 
+Searching
+---------
+The magnifying glass in the bar (or / or Ctrl-F) opens the search: type,
+and a moment after you stop the films, shows and episodes that match
+appear, from all your libraries (films first, then shows, then
+episodes). Backspace deletes, Ctrl-U empties the field; Return opens or
+plays the poster that's selected, as elsewhere. Back (or Escape) leaves
+the search; from something you opened from it, Back returns to the
+results.
+
 The details page
 ----------------
 Double-click a film or episode (or press I) and the window shows its
 details: its backdrop across the top, its title, year, running time, age
 rating and score, its summary, and how it will play. Buttons: Play,
 Resume from h:mm:ss, From the start, Save file, Mark watched (or
-unwatched), and its subtitles.
+unwatched), and its subtitles. Under the summary: the genres, who
+directed and wrote it, the studio, when it came out (or was first
+shown), the ratings, and the file (such as "1080p H.264 . AAC 5.1 .
+MKV . 4.2 GB"); then the cast, with their photos and the parts they
+play (the photos arrive a moment after the page).
 
   Return         play
   Left, Right    the video before or after it in the list
@@ -128,7 +143,9 @@ the screen mode is too big), or while a menu or a window is over the
 picture, it's drawn the ordinary way instead.
 
 The server is told where you've got to as it plays, so Continue
-watching and Resume work in the Plex apps on your other devices too. At
+watching and Resume work in the Plex apps on your other devices too,
+and it shows in the server's dashboard under Now Playing (as the
+computer's network name, Inet$HostName, if it has one). At
 the end of an episode the next one is offered, and starts in 10 seconds
 (Return: now; Escape: back).
 
