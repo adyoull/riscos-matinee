@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test9
+!PlexRO - a Plex client for RISC OS                  0.1.0-test10
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -81,7 +81,8 @@ results.
 The details page
 ----------------
 Double-click a film or episode (or press I) and the window shows its
-details: its backdrop across the top, its title, year, running time, age
+details: its backdrop across the top (the window's width, and up to about
+half its height: it grows and shrinks with the window), its title, year, running time, age
 rating and score, its summary, and how it will play. Buttons: Play,
 Resume from h:mm:ss, From the start, Save file, Mark watched (or
 unwatched), and its subtitles. Under the summary: the genres, who
@@ -116,8 +117,8 @@ Playing
 Player on the icon's menu chooses what plays the video: Built-in (the
 default), ReelEGL or Reel.
 
-Built-in: the video plays in PlexRO's window, which grows to fit it if
-it's narrow. Play carries on from where you stopped (as Resume); From
+Built-in: the video plays in PlexRO's window, at the size the window is
+(the window opens at three quarters of the screen, in the middle). Play carries on from where you stopped (as Resume); From
 the start (or Play from start) begins again. Under the picture: the title and the time, Back, Play or
 Pause, back and on 10 seconds, the position bar (click to go there),
 Subtitles (when it has some), Stats and Full screen.
@@ -126,11 +127,13 @@ Subtitles (when it has some), Stats and Full screen.
   Left, Right    back, on 10 seconds
   Down, Up       back, on a minute
   F              full screen, or back
+  M              the mini player, or back (below)
   S              the stats (as YouTube's "Stats for nerds"), drawn in
                  the picture: the connection's speed, how much is read
                  ahead, the time decoding takes, and so on
   +, -           louder, quieter
-  Escape         out of full screen; else back to where you were
+  Escape         out of full screen or the mini player; else back to
+                 where you were
   Backspace      back
   click          pause, play; double-click: full screen
 
@@ -145,7 +148,27 @@ how much is read ahead (with graphs), the codecs, the timing, and what's
 left out to keep up (Keeping Up), as in ReelEGL.
 
 Menu over the picture: Sound track, Subtitles, Volume, Picture (Fit, Fill (crop) or
-Stretch), Stats, Full screen, Hardware overlay, Stop.
+Stretch), Stats, Full screen, Mini player, Keep on top, Hardware overlay,
+Stop.
+
+The mini player (M, or Mini player on the menu), as in Reel: the window
+gives way to a small one with no title bar in the bottom right of the
+screen, just above the icon bar: the picture (320 pixels wide at first),
+Play/Pause, the position bar and Normal. Drag the picture to move it,
+and the grip in its bottom right corner to make it bigger or smaller (it
+keeps the video's shape); it opens there, at that size, next time.
+Double-click the picture, click Normal, press M or Escape, or click
+PlexRO's icon, for the window again. The next episode plays on in it
+(the Up next card isn't shown; it starts after 10 seconds).
+
+It decodes a little less: the deblocking filter is skipped on the
+pictures nothing else is predicted from (about 15% less work, and
+nothing you can see at that size), and back on in the window.
+
+Keep on top: RISC OS has no "always on top" for ordinary windows, so
+with it ticked the mini player looks about once a second while playing
+and, if another window has been opened over it, comes back to the
+front. It never takes the caret from what you're typing in.
 
 Hardware overlay (on by default): the picture goes to the display
 through the VideoOverlay module, which scales it to the window or the

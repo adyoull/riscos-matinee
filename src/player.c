@@ -37,6 +37,7 @@
 #define Wimp_GetPointerInfo    0x400CF
 #define Wimp_ForceRedraw       0x400D1
 #define Wimp_SetCaretPosition  0x400D2
+#define Wimp_DragBox           0x400D0
 
 #define BAR_H     168               /* the controls, OS units: the title and time over the buttons */
 #define BTN_R     32                /* a round button's radius */
@@ -46,6 +47,14 @@
 #define MIN_SPRITE_BYTES (1024 * 1024)
 #define YV12_FOURCC 0x32315659
 #define OV_MAX_PIXELS (1920L * 1088 * 11 / 10)   /* the most an overlay is made with */
+/* the mini player (as Reel's): a small window with no furniture above the icon bar */
+#define MINI_BAR   72               /* its controls: Play, the position bar, Normal, the grip */
+#define MINI_W     640              /* its width at first, OS units (320 pixels on most screens) */
+#define MINI_MIN_W 480              /* narrowest when resized (the grip) */
+#define MINI_EDGE  32               /* its gap from the screen's right edge at first */
+#define MINI_LIFT  16               /* ... and above the icon bar */
+#define GRIP       32
+#define ONTOP_CS   100              /* Keep on top: how often it looks */
 
 typedef struct { int x0, y0, x1, y1; } box_t;
 
@@ -72,6 +81,10 @@ static struct {
     int bar_shown;                  /* full screen: the bar is showing (until bar_until) */
     int bar_until, ptr_x, ptr_y, ptr_cs;
     int ptr_hidden;                 /* full screen: the pointer hidden (it hasn't moved for a while) */
+    /* the mini player: its window (0: not made), where the normal window was */
+    int mini, mini_win, main_st[9];
+    int mini_w, mini_right, mini_bottom;    /* its width, gap from the right, bottom (-1: above the icon bar) */
+    int ontop, ontop_cs;
     /* the picture sprite */
     int *area;
     int spr_w, spr_h, spr_rows, have_frame;
@@ -212,7 +225,7 @@ static void set_caret(int w)
     swi(Wimp_SetCaretPosition, &r);
 }
 
-static int cur_win(void) { return P.fullscreen ? P.full : P.win; }
+static int cur_win(void) { return P.fullscreen ? P.full : P.mini ? P.mini_win : P.win; }
 static void pointer_show(int on);
 
 /* ---- where things go ------------------------------------------------------ */
@@ -225,9 +238,27 @@ static void layout_boxes(void)
         P.vis_w = P.scr_w;
         P.vis_h = P.scr_h;
     } else {
-        window_state(P.win, st);
+        window_state(cur_win(), st);
         P.vis_w = st[3] - st[1];
         P.vis_h = st[4] - st[2];
+    }
+    if (P.mini) {                   /* Play, the position bar, Normal, the grip; the rest out of sight */
+        P.bar = (box_t){ 0, -P.vis_h, P.vis_w, -P.vis_h + MINI_BAR };
+        P.pic = (box_t){ 0, -P.vis_h + MINI_BAR, P.vis_w, 0 };
+        if (P.pic.y1 - P.pic.y0 < 2)
+            P.pic.y0 = P.pic.y1 - 2;
+        memset(P.btn, 0, sizeof(P.btn));
+        cy = -P.vis_h + MINI_BAR / 2;
+        P.btn[PB_PLAY] = (box_t){ 12, cy - 28, 12 + 56, cy + 28 };
+        P.btn[PB_GRIP] = (box_t){ P.vis_w - GRIP, -P.vis_h, P.vis_w, -P.vis_h + GRIP };
+        r = P.vis_w - GRIP - 8;
+        P.btn[PB_NORMAL] = (box_t){ r - 128, cy - 24, r, cy + 24 };
+        mid0 = 12 + 56 + 24;
+        mid1 = r - 128 - 24;
+        if (mid1 < mid0 + 32)
+            mid1 = mid0 + 32;
+        P.btn[PB_TRACK] = (box_t){ mid0, cy - 12, mid1, cy + 12 };
+        return;
     }
     P.bar = (box_t){ 0, -P.vis_h, P.vis_w, -P.vis_h + BAR_H };
     P.pic = P.fullscreen ? (box_t){ 0, -P.vis_h, P.vis_w, 0 } : (box_t){ 0, -P.vis_h + BAR_H, P.vis_w, 0 };
@@ -743,12 +774,50 @@ static int track_fill(void)
     return t->x0 + (int)((t->x1 - t->x0) * f);
 }
 
+/* The position bar: how far it's got, and the knob */
+static void draw_track(int ox, int oy)
+{
+    const box_t *b;
+    int cy, fx;
+    b = &P.btn[PB_TRACK];
+    cy = (b->y0 + b->y1) / 2;
+    fx = track_fill();
+    P.fill_x = fx;
+    draw_round(ox + b->x0, oy + cy - 6, ox + b->x1, oy + cy + 6, 6, C_CARD, C_HEADER);
+    if (fx > b->x0 + 6)
+        draw_round(ox + b->x0, oy + cy - 6, ox + fx, oy + cy + 6, 6, C_ACCENT, C_CARD);
+    draw_glyph(G_CIRCLE, ox + fx - 12, oy + cy - 12, ox + fx + 12, oy + cy + 12, C_TEXT, C_CARD);
+}
+
+/* The mini player's controls: Play, the position bar, Normal, the grip */
+static void draw_mini_bar(int ox, int oy, int paused)
+{
+    const box_t *b;
+    b = &P.btn[PB_PLAY];
+    round_button(b, ox, oy, C_ACCENT, C_HEADER);
+    if (paused)
+        draw_glyph(G_PLAY, ox + b->x0 + 20, oy + b->y0 + 14, ox + b->x1 - 14, oy + b->y1 - 14, C_TEXT, C_ACCENT);
+    else {
+        draw_rect(ox + b->x0 + 18, oy + b->y0 + 16, ox + b->x0 + 25, oy + b->y1 - 16, C_TEXT);
+        draw_rect(ox + b->x1 - 25, oy + b->y0 + 16, ox + b->x1 - 18, oy + b->y1 - 16, C_TEXT);
+    }
+    pill(&P.btn[PB_NORMAL], ox, oy, "Normal", 0, C_HEADER);
+    b = &P.btn[PB_GRIP];                        /* three short diagonal steps */
+    for (int i = 0; i < 3; i++)
+        draw_rect(ox + b->x1 - 8 - i * 8, oy + b->y0 + 4, ox + b->x1 - 4 - i * 8, oy + b->y0 + 8 + i * 8, C_SUB);
+    draw_track(ox, oy);
+}
+
 static void draw_bar(int ox, int oy)
 {
     const box_t *b;
     char title[160];
-    int paused = !P.v || !P.ready || reelcore_paused(P.v) || P.ended, cy, fx;
+    int paused = !P.v || !P.ready || reelcore_paused(P.v) || P.ended;
     draw_rect(ox + P.bar.x0, oy + P.bar.y0, ox + P.bar.x1, oy + P.bar.y1, C_HEADER);
+    if (P.mini) {
+        draw_mini_bar(ox, oy, paused);
+        return;
+    }
     b = &P.btn[PB_BACK];
     round_button(b, ox, oy, C_CARD, C_HEADER);
     draw_glyph(G_BACK, ox + b->x0 + 20, oy + b->y0 + 16, ox + b->x1 - 20, oy + b->y1 - 16, C_TEXT, C_CARD);
@@ -786,14 +855,7 @@ static void draw_bar(int ox, int oy)
         draw_text(D_BOLD, ox + 24, oy + y, title, C_TEXT, C_HEADER);
         draw_text(D_BODY, ox + P.vis_w - 24 - tw, oy + y, P.time_text, C_SUB, C_HEADER);
     }
-    b = &P.btn[PB_TRACK];
-    cy = (b->y0 + b->y1) / 2;
-    fx = track_fill();
-    P.fill_x = fx;
-    draw_round(ox + b->x0, oy + cy - 6, ox + b->x1, oy + cy + 6, 6, C_CARD, C_HEADER);
-    if (fx > b->x0 + 6)
-        draw_round(ox + b->x0, oy + cy - 6, ox + fx, oy + cy + 6, 6, C_ACCENT, C_CARD);
-    draw_glyph(G_CIRCLE, ox + fx - 12, oy + cy - 12, ox + fx + 12, oy + cy + 12, C_TEXT, C_CARD);
+    draw_track(ox, oy);
 }
 
 static void draw_card(int ox, int oy)
@@ -845,7 +907,7 @@ static void draw_rect_of(int w, int *b, int update)
         r.r[1] = (intptr_t)b;
         swi(ov.swi[OV_REDRAW], &r);
     }
-    if (P.card)
+    if (P.card && !P.mini)          /* too small for the card: Up next plays on its own */
         draw_card(ox, oy);
     if (bar_visible() && b[8] < oy + P.bar.y1)
         draw_bar(ox, oy);
@@ -1157,6 +1219,8 @@ void player_set_fullscreen(int on)
     on = !!on;
     if (on == P.fullscreen || !P.v)
         return;
+    if (on && P.mini)
+        player_set_mini(0);
     lg("full screen %s", on ? "on" : "off");
     ov_hide();
     if (on) {
@@ -1199,13 +1263,214 @@ void player_set_fullscreen(int on)
 }
 
 int player_fullscreen(void) { return P.fullscreen; }
-int player_owns(int w) { return w && w == P.full; }
+int player_owns(int w) { return w && (w == P.full || w == P.mini_win); }
+
+/* ---- the mini player (as Reel's) ------------------------------------------------------ */
+
+/* No title bar or other furniture: drag the picture to move it, the grip
+   (bottom right) to resize it, double-click it for the normal window */
+static int create_mini_window(void)
+{
+    struct {
+        box_t vis;
+        int sx, sy, behind, flags;
+        unsigned char tfg, tbg, wfg, wbg, sofg, sibg, tfocus, xflags;
+        box_t ext;
+        int tflags, wbutton, sprites;
+        short minw, minh;
+        int title[3];
+        int nicons;
+    } w;
+    _kernel_swi_regs r;
+    memset(&w, 0, sizeof(w));
+    w.vis.x1 = MINI_W; w.vis.y1 = 400;
+    w.behind = -1;
+    w.flags = (int)0x80000002u;     /* new format, moveable; no furniture */
+    w.tfg = 0xFF;                   /* no title */
+    w.wfg = 7; w.wbg = 0xFF;        /* the task draws it all */
+    w.sofg = 3; w.sibg = 1; w.tfocus = 12;
+    w.ext.x0 = 0; w.ext.y0 = -8192; w.ext.x1 = 8192; w.ext.y1 = 0;
+    w.wbutton = 10 << 12;           /* click, drag, double-click */
+    w.sprites = 1;
+    w.minw = MINI_MIN_W; w.minh = MINI_BAR + 80;
+    r.r[1] = (intptr_t)&w;
+    if (swi(Wimp_CreateWindow, &r))
+        return -1;
+    P.mini_win = r.r[0];
+    return 0;
+}
+
+/* The top of the icon bar, OS units (the icon bar is window -2) */
+static int iconbar_top(void)
+{
+    int b[9];
+    window_state(-2, b);
+    return b[4] > 0 && b[4] < 512 ? b[4] : 134;
+}
+
+/* The mini player's picture height for a width: the video's shape */
+static int mini_pic_h(int vw)
+{
+    int ph = P.v && reelcore_width(P.v) > 0 ? (int)((long long)vw * reelcore_height(P.v) / reelcore_width(P.v))
+                                            : vw * 9 / 16;
+    int most = P.scr_h - MINI_BAR - 160;
+    if (ph < vw / 4) ph = vw / 4;   /* very wide, or tall: letterboxed */
+    if (ph > vw * 3 / 4) ph = vw * 3 / 4;
+    if (ph > most) ph = most;
+    return ph - ph % (1 << P.yeig);
+}
+
+static void open_at(int w, int x0, int y0, int x1, int y1, int behind)
+{
+    int b[8] = { w, x0, y0, x1, y1, 0, 0, behind };
+    _kernel_swi_regs r;
+    r.r[1] = (intptr_t)b;
+    swi(Wimp_OpenWindow, &r);
+}
+
+/* Opens (or moves and resizes) it for the video: the width it was last
+   given, as tall as the video's shape needs, in the bottom right just
+   above the icon bar, or where it was dragged to */
+static void mini_show(void)
+{
+    int vw = P.mini_w > 0 ? P.mini_w : MINI_W, vh, x1, y0;
+    read_screen();
+    if (vw > P.scr_w) vw = P.scr_w;
+    vh = mini_pic_h(vw) + MINI_BAR;
+    x1 = P.scr_w - P.mini_right;
+    y0 = P.mini_bottom >= 0 ? P.mini_bottom : iconbar_top() + MINI_LIFT;
+    if (x1 > P.scr_w) x1 = P.scr_w;         /* on the screen, even after a mode change */
+    if (x1 < vw) x1 = vw;
+    if (y0 + vh > P.scr_h) y0 = P.scr_h - vh;
+    if (y0 < 0) y0 = 0;
+    lg("mini player %dx%d OS units at %d,%d", vw, vh, x1 - vw, y0);
+    open_at(P.mini_win, x1 - vw, y0, x1, y0 + vh, -1);
+    ov.placed[0] = 0;
+    layout_boxes();
+    pic_make();
+    pic_refresh();
+    force_redraw(P.mini_win, 0, -8192, 8192, 0);
+}
+
+/* The mini player decodes a little less: no deblocking on the pictures
+   nothing is predicted from (invisible at that size), as Reel's */
+static void apply_fast(void)
+{
+    if (P.v)
+        reelcore_set_fast(P.v, P.mini ? REELCORE_FAST_LIGHT : REELCORE_FAST_OFF);
+}
+
+void player_set_mini(int on)
+{
+    _kernel_swi_regs r;
+    on = !!on;
+    if (on == P.mini || !P.v || !P.win)
+        return;
+    if (on && P.fullscreen)
+        player_set_fullscreen(0);
+    lg("mini player %s", on ? "on" : "off");
+    ov_hide();
+    ov.placed[0] = 0;
+    if (on) {
+        if (!P.mini_win && create_mini_window() < 0)
+            return;
+        window_state(P.win, P.main_st);     /* to come back to */
+        r.r[1] = (intptr_t)&P.win;
+        swi(Wimp_CloseWindow, &r);
+        P.mini = 1;
+        P.ontop_cs = now_cs();
+        apply_fast();
+        mini_show();
+        set_caret(P.mini_win);
+    } else {
+        r.r[1] = (intptr_t)&P.mini_win;
+        swi(Wimp_CloseWindow, &r);
+        P.mini = 0;
+        apply_fast();
+        open_at(P.win, P.main_st[1], P.main_st[2], P.main_st[3], P.main_st[4], -1);
+        layout_boxes();
+        pic_make();
+        pic_refresh();
+        force_redraw(P.win, 0, -0x7FFFFFF, 0x7FFFFFF, 0);
+        set_caret(P.win);
+    }
+}
+
+int player_mini(void) { return P.mini; }
+int player_ontop(void) { return P.ontop; }
+void player_set_ontop(int on) { P.ontop = !!on; P.ontop_cs = now_cs(); }
+
+void player_mini_place(int *w, int *right, int *bottom)
+{
+    *w = P.mini_w;
+    *right = P.mini_right;
+    *bottom = P.mini_bottom;
+}
+
+void player_set_mini_place(int w, int right, int bottom)
+{
+    P.mini_w = w >= MINI_MIN_W && w <= 4096 ? w : MINI_W;
+    P.mini_right = right >= 0 ? right : MINI_EDGE;
+    P.mini_bottom = bottom >= -1 ? bottom : -1;
+}
+
+/* Open_Window_Request for the mini player: the grip keeps the video's
+   shape (top left put); where it's dragged to is kept. 1 = the place or
+   size changed (the caller saves the choices). */
+int player_mini_open_request(int *b)
+{
+    _kernel_swi_regs r;
+    int st[9], moved, resized;
+    window_state(P.mini_win, st);
+    resized = b[3] - b[1] != st[3] - st[1] || b[4] - b[2] != st[4] - st[2];
+    if (resized) {
+        int vw = b[3] - b[1];
+        if (vw < MINI_MIN_W)
+            b[3] = b[1] + (vw = MINI_MIN_W);
+        b[2] = b[4] - (mini_pic_h(vw) + MINI_BAR);
+        P.mini_w = vw;
+    }
+    b[5] = b[6] = 0;
+    r.r[1] = (intptr_t)b;
+    swi(Wimp_OpenWindow, &r);
+    moved = P.mini_right != P.scr_w - b[3] || P.mini_bottom != b[2];
+    P.mini_right = P.scr_w - b[3] > 0 ? P.scr_w - b[3] : 0;
+    P.mini_bottom = b[2] > 0 ? b[2] : 0;
+    if (resized) {
+        ov.placed[0] = 0;
+        layout_boxes();
+        pic_make();
+        pic_refresh();
+        force_redraw(P.mini_win, 0, -8192, 8192, 0);
+    }
+    return moved || resized;
+}
+
+/* Keep on top: while playing, about once a second, it comes back to the
+   front if another window has been opened over it (never taking the caret) */
+static void mini_keep_on_top(int t)
+{
+    int st[9];
+    _kernel_swi_regs r;
+    if (!P.mini || !P.ontop || t - P.ontop_cs < ONTOP_CS)
+        return;
+    P.ontop_cs = t;
+    window_state(P.mini_win, st);
+    if (st[7] == -1)
+        return;
+    st[7] = -1;
+    r.r[1] = (intptr_t)st;
+    swi(Wimp_OpenWindow, &r);
+    lg("mini player: back on top");
+}
 
 /* ---- opening, closing ------------------------------------------------------- */
 
 void player_init(int task, int overlay, int pic_mode, double volume)
 {
     P.task = task;
+    if (!P.mini_w)
+        player_set_mini_place(MINI_W, MINI_EDGE, -1);
     P.hw = overlay;
     P.pic_mode = pic_mode >= 0 && pic_mode < PIC_COUNT ? pic_mode : PIC_FIT;
     P.vol = volume >= 0 && volume <= 1 ? volume : 1.0;
@@ -1216,7 +1481,8 @@ static void close_video(int keep_full);
 int player_open(const player_src *s, int win)
 {
     ReelCoreSource src;
-    int keep = P.fullscreen && P.full && P.win == win;  /* the next part (a seek, the next episode): stay full screen */
+    int keep = (P.fullscreen || P.mini) && P.win == win;    /* the next part (a seek, the next episode): stay full screen,
+                                                               or in the mini player */
     close_video(keep);
     log_open();
     reelcore_set_log(P.log ? ff_log : NULL, 0);
@@ -1259,11 +1525,17 @@ int player_open(const player_src *s, int win)
 
 static void close_video(int keep_full)
 {
-    if (!P.v && !P.full && !P.failed)
+    if (!P.v && !P.full && !P.failed && !P.mini)
         return;
     lg("close");
     pointer_show(1);
     ov_destroy();
+    if (P.mini && !keep_full) {     /* the caller opens its window again */
+        _kernel_swi_regs r;
+        r.r[1] = (intptr_t)&P.mini_win;
+        swi(Wimp_CloseWindow, &r);
+        P.mini = 0;
+    }
     if (P.fullscreen && !keep_full) {
         _kernel_swi_regs r;
         r.r[1] = (intptr_t)&P.full;
@@ -1371,6 +1643,10 @@ static void opened(void)
         lg("streams: %s", info);
     }
     reelcore_set_volume(P.v, P.vol * P.vol);
+    if (P.mini) {
+        apply_fast();
+        mini_show();                /* the video's shape */
+    }
     if (P.start > 0)
         reelcore_seek(P.v, P.start - P.base);
     pic_make();
@@ -1473,6 +1749,7 @@ int player_null(void)
         }
         return PE_NONE;
     }
+    mini_keep_on_top(t);
     r2 = reelcore_update(P.v);
     P.idle_cs = (int)(reelcore_idle_time(P.v) * 100);
     if (r2 == REELCORE_NEW_FRAME) {
@@ -1530,7 +1807,7 @@ int player_null(void)
 
 void player_layout(void)
 {
-    if (!P.win || P.fullscreen)
+    if (!P.win || P.fullscreen || P.mini)
         return;
     {
         int ow = P.vis_w, oh = P.vis_h;
@@ -1552,7 +1829,9 @@ void player_mode_change(void)
     if (P.fullscreen) {
         player_set_fullscreen(0);
         player_set_fullscreen(1);
-    } else
+    } else if (P.mini)
+        mini_show();                /* back on the screen, above the icon bar */
+    else
         player_layout();
 }
 
@@ -1588,6 +1867,40 @@ int player_click(const int *b)
             return buttons & 0x500 ? PE_CARD_1 : PE_NONE;
         if (in_box(&P.btn[PB_CARD2], x, y))
             return buttons & 0x500 ? PE_CARD_2 : PE_NONE;
+    }
+    if (P.mini) {
+        int d[10];
+        _kernel_swi_regs r;
+        memset(d, 0, sizeof(d));
+        d[0] = w;
+        if (in_box(&P.btn[PB_GRIP], x, y) && (buttons & 0x550)) {
+            d[1] = 2;                               /* the Wimp resizes it: Open_Window_Requests follow */
+            r.r[1] = (intptr_t)d;
+            swi(Wimp_DragBox, &r);
+            return PE_NONE;
+        }
+        if (in_box(&P.pic, x, y)) {
+            if (buttons & 0x50) {                   /* drag the picture: move it */
+                d[1] = 1;
+                r.r[1] = (intptr_t)d;
+                swi(Wimp_DragBox, &r);
+            } else if (buttons & 4)                 /* double-click: the normal window */
+                player_set_mini(0);
+            return PE_NONE;
+        }
+        if (!(buttons & 0x500))
+            return PE_NONE;
+        if (in_box(&P.btn[PB_PLAY], x, y))
+            return toggle_pause();
+        if (in_box(&P.btn[PB_NORMAL], x, y))
+            player_set_mini(0);
+        else if (x >= P.btn[PB_TRACK].x0 - 8 && x < P.btn[PB_TRACK].x1 + 8 && y >= P.btn[PB_TRACK].y0 - 12 &&
+                 y < P.btn[PB_TRACK].y1 + 12 && player_duration() > 0) {
+            const box_t *t = &P.btn[PB_TRACK];
+            int cx = x < t->x0 ? t->x0 : x > t->x1 ? t->x1 : x;
+            player_seek(player_duration() * (cx - t->x0) / (t->x1 - t->x0));
+        }
+        return PE_NONE;
     }
     if (bar_visible() && in_box(&P.bar, x, y)) {
         if (!(buttons & 0x500))
@@ -1638,6 +1951,9 @@ int player_key(int k)
     case 'f': case 'F':
         player_set_fullscreen(!P.fullscreen);
         return PE_NONE;
+    case 'm': case 'M':
+        player_set_mini(!P.mini);
+        return PE_NONE;
     case 's': case 'S':
         player_set_stats(!P.stats);
         return PE_NONE;
@@ -1652,6 +1968,10 @@ int player_key(int k)
     case 0x1B:
         if (P.fullscreen) {
             player_set_fullscreen(0);
+            return PE_NONE;
+        }
+        if (P.mini) {
+            player_set_mini(0);
             return PE_NONE;
         }
         return P.card ? PE_CARD_2 : PE_BACK;

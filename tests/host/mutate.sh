@@ -153,6 +153,18 @@ mutate "the player's subtitle choice isn't sent" src/ui.c \
 mutate "a new subtitle track in a converted stream keeps the old conversion" src/ui.c \
   'player_note(k ? "Changing the subtitles..." : "Subtitles off...");\n    if (builtin_open_at(player_position(), 1) != 0)' 'if (0)'
 
+# test10: the window's size, the mini player, the backdrop
+mutate "the window not centred" src/ui.c \
+  'int x0 = (S.scr_w - w - SCROLL_W) / 2,' 'int x0 = 0,'
+mutate "the mini player decodes in full" src/player.c \
+  'P.mini ? REELCORE_FAST_LIGHT : REELCORE_FAST_OFF' 'REELCORE_FAST_OFF'
+mutate "the mini player's grip loses the video's shape" src/player.c \
+  'b[2] = b[4] - (mini_pic_h(vw) + MINI_BAR);' '(void)0;'
+mutate "Normal doesn't open the window again" src/player.c \
+  'open_at(P.win, P.main_st[1], P.main_st[2], P.main_st[3], P.main_st[4], -1);' '(void)0;'
+mutate "the backdrop fetched on every resize" src/ui.c \
+  'art_due = now_cs() + 50;' 'art_due = now_cs();'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

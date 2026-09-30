@@ -287,3 +287,5 @@ int reelcore_add_subtitle_file(ReelCore *v, const char *path)
     fake_rc.sub_track = v->sub;
     return v->sub;
 }
+
+void reelcore_set_fast(ReelCore *v, int mode) { (void)v; fake_rc.fast = mode; }

@@ -29,6 +29,7 @@ typedef struct {
     int sub_files;              /* files added */
     char sub_file[512];         /* the last one, and what it held */
     char sub_text[256];
+    int fast;                   /* reelcore_set_fast */
     double clock_start;         /* set by the test: the clock counts from here (a stream's start_time) */
 } fake_rc_t;
 

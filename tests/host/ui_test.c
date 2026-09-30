@@ -55,6 +55,7 @@ typedef struct {
 } win_t;
 static win_t wins[8];
 static int nwins;
+static int drag_win, drag_type;             /* the last Wimp_DragBox */
 
 static int bar_icon_made, proginfo_made, info_sub = -99;
 static char bar_sprite[13];
@@ -560,6 +561,12 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     }
     case 0x400D1: redraws_forced++; return NULL;    /* Wimp_ForceRedraw */
+    case 0x400D0: {                                 /* Wimp_DragBox */
+        const int *d = (const int *)(intptr_t)in->r[1];
+        drag_win = d[0];
+        drag_type = d[1];
+        return NULL;
+    }
     case 0x400CD: icons_refreshed++; return NULL;   /* Wimp_SetIconState */
     case 0x400D2: case 0x400D3: return NULL;        /* caret */
     case 0x400F9:                                   /* Wimp_TextOp */
@@ -810,6 +817,15 @@ int fake_rc_cs(void) { return fake_cs; }
 #define NEAR(a, b, e) ((a) - (b) < (e) && (b) - (a) < (e))
 
 /* the full screen window: no furniture, open */
+/* the mini player: moveable, no furniture */
+static int mini_win(void)
+{
+    for (int i = 0; i < nwins; i++)
+        if (wins[i].flags == 0x80000002u)
+            return wins[i].handle;
+    return 0;
+}
+
 static int full_win(void)
 {
     for (int i = 0; i < nwins; i++)
@@ -835,7 +851,7 @@ static int player_button(int *b, int w, int id)
 
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
-static int n_null, open0, count0, draws0, wfull, items0;
+static int n_null, open0, count0, draws0, wfull, wmini, items0;
 static char sid0[40];
 static double p0;
 
@@ -900,6 +916,12 @@ static int script(int *b, int mask)
             CHECK(!strcmp(ui_test_signin(0), "ABCD"), "the code: %s", ui_test_signin(0));
             CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 200, "checked every 2 s (PollIdle %d, now %d)",
                   idle_time, fake_cs);
+            {   /* 75% of the screen (3840 x 2160; no icon bar in the fake Wimp: 134 high), in the middle */
+                win_t *x = win(w_browser);
+                CHECK(x->vis[2] - x->vis[0] == 2840 && x->vis[3] - x->vis[1] == 1478 && x->vis[0] == 480 &&
+                      x->vis[1] == 388, "the window: 75%% of the screen, centred (%d,%d %dx%d)", x->vis[0], x->vis[1],
+                      x->vis[2] - x->vis[0], x->vis[3] - x->vis[1]);
+            }
             pc = 150;
             return ev_redraw(b, w_browser);
         case 150:
@@ -914,8 +936,13 @@ static int script(int *b, int mask)
             CHECK(ui_test_page() == PG_SIGNIN, "not signed in after the first check");
             CHECK(strstr(ui_test_signin(1), "Waiting"), "status: %s", ui_test_signin(1));
             fake_cs = idle_time;
-            pc++;
+            pc = 151;
             return NULL_EVENT;
+        case 151:
+            pc = 3;
+            memset(b, 0, 32);                   /* the rest of the script: the size it was made for (4 posters a row) */
+            b[0] = w_browser; b[1] = 1366; b[2] = 570; b[3] = 1366 + 1108; b[4] = 570 + 1100; b[7] = -1;
+            return 2;                           /* Open_Window_Request */
         case 3:
             CHECK(ui_test_page() == PG_GRID, "signed in: the grid");
             CHECK(win(w_browser)->open, "in the same window");
@@ -1056,8 +1083,8 @@ static int script(int *b, int mask)
             const int *spr = plotted_area ? plotted_area + 4 : NULL;
             int w = spr ? spr[4] + 1 : 0, h = spr ? spr[5] + 1 : 0;
             unsigned bottom = spr ? ((const unsigned *)(spr + 11))[(h - 1) * w + w / 2] : 0;
-            CHECK(spr && w == 554 && h == 311 && spr[9] == spr[8], "the backdrop: the window's width, 16:9, no mask (%d x %d)",
-                  w, h);
+            CHECK(spr && w == 554 && h == 302 && spr[9] == spr[8],
+                  "the backdrop: the window's width, at most 55%% of its height, no mask (%d x %d)", w, h);
             CHECK(abs((int)(bottom & 255) - 0x18) < 3 && abs((int)(bottom >> 8 & 255) - 0x1A) < 3 &&
                   abs((int)(bottom >> 16) - 0x1F) < 3, "faded to the window's grey at its foot (%06x)", bottom);
             CHECK(strstr(plotted_text, "Big Buck Bunny|") && strstr(plotted_text, "Play|") &&
@@ -1079,6 +1106,31 @@ static int script(int *b, int mask)
                   log_count("/photo/:/transcode", "url", "https://metadata-static.plex.tv/people/bunny.jpg") == 1 &&
                   log_count("/photo/:/transcode", "url", "https://metadata-static.plex.tv/people/gamera.jpg") == 1 &&
                   log_count("/photo/:/transcode", "width", "72") >= 3, "the cast's photos fetched, 72 pixels");
+            memset(b, 0, 32);                                   /* taller: the backdrop grows */
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[2] -= 500; b[7] = -1;
+            pc = 15010;
+            return 2;
+        case 15010:
+            CHECK(last_poll == 0x400E1 && idle_time - fake_cs == 50, "the backdrop fetched again once resizing stops (%d cs)",
+                  idle_time - fake_cs);
+            CHECK(log_count("/photo/:/transcode", "height", "311") == 0, "not while it's being resized");
+            fake_cs = idle_time;
+            pc++;
+            return NULL_EVENT;
+        case 15011:
+            CHECK(log_count("/photo/:/transcode", "height", "311") == 1 && log_count("/photo/:/transcode", "width", "554") >= 2,
+                  "then at the new size: 554 x 311, 16:9");
+            memset(b, 0, 32);                                   /* back as it was */
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[2] += 500; b[7] = -1;
+            pc++;
+            return 2;
+        case 15012:
+            fake_cs = idle_time;
+            pc++;
+            return NULL_EVENT;
+        case 15013:
             memset(b, 0, 32);                                   /* down to the cast */
             memcpy(b + 1, win(w_browser)->vis, 16);
             b[0] = w_browser; b[6] = -1300; b[7] = -1;
@@ -1592,9 +1644,15 @@ static int script(int *b, int mask)
         }
         case 904:
             CHECK(ui_test_page() == PG_DETAILS, "its details");
+            pc = 9040;
+            memset(b, 0, 32);                   /* wider, for the player (as it opens: 75% of the screen) */
+            b[0] = w_browser; b[1] = 480; b[2] = 388; b[3] = 480 + 2840; b[4] = 388 + 1478; b[7] = -1;
+            return 2;
+        case 9040:
+            CHECK(ui_test_page() == PG_DETAILS, "still its details");
+            pc = 905;
             fake_rc.len = 5400;
             open0 = fake_rc.opens;
-            pc++;
             return ev_button(b, w_browser, D_PLAY, 0x400);                  /* Play: from where it was left */
         case 905:
             snprintf(want, sizeof(want), "%s/library/parts/11/101/file.mp4", base);
@@ -1835,6 +1893,71 @@ static int script(int *b, int mask)
             CHECK(fake_rc.sub_track == -1 && fake_rc.opens == open0 &&
                   log_count("/library/parts/11101", "subtitleStreamID", "0") >= 1, "None: off, on the server too");
             CHECK(strstr(player_test_time(), "Subtitles off"), "the bar says: %s", player_test_time());
+            n_null = 0;
+            pc = 9230;
+            return ev_key(b, w_browser, -1, 'M');
+        /* ---- the mini player */
+        case 9230: {
+            win_t *m = win(mini_win());
+            wmini = mini_win();
+            CHECK(player_mini() && m && m->open && !win(w_browser)->open, "M: the mini player, in place of the window");
+            CHECK(m && m->vis[2] == 3840 - 32 && m->vis[1] == 134 + 16 && m->vis[2] - m->vis[0] == 640 &&
+                  m->vis[3] - m->vis[1] == 360 + 72, "bottom right, above the icon bar, 640 x 360 + the controls (%d,%d-%d,%d)",
+                  m ? m->vis[0] : 0, m ? m->vis[1] : 0, m ? m->vis[2] : 0, m ? m->vis[3] : 0);
+            CHECK(fake_rc.fast == 2 /* REELCORE_FAST_LIGHT */, "decoding a little less (%d)", fake_rc.fast);
+            if (n_null++ < 3) {
+                fake_cs += 4;
+                return NULL_EVENT;
+            }
+            CHECK(ovl_win == wmini && ovl_scale[0] == 320 && ovl_scale[1] == 180, "the overlay in it, %dx%d",
+                  ovl_scale[0], ovl_scale[1]);
+            pc++;
+            return player_button(b, wmini, PB_GRIP);
+        }
+        case 9231: {
+            CHECK(drag_win == wmini && drag_type == 2, "the grip: the Wimp resizes it (%d)", drag_type);
+            memset(b, 0, 32);                                   /* made 800 wide by it, top left put */
+            b[0] = wmini; b[1] = 3840 - 32 - 640; b[2] = 134 + 16 - 100; b[3] = b[1] + 800; b[4] = 134 + 16 + 432; b[7] = -1;
+            pc++;
+            return 2;
+        }
+        case 9232: {
+            win_t *m = win(wmini);
+            CHECK(m->vis[2] - m->vis[0] == 800 && m->vis[3] - m->vis[1] == 450 + 72 && m->vis[3] == 134 + 16 + 432,
+                  "the video's shape kept, the top put (%d x %d)", m->vis[2] - m->vis[0], m->vis[3] - m->vis[1]);
+            pc++;
+            return player_button(b, wmini, PB_NORMAL);
+        }
+        case 9233:
+            CHECK(!player_mini() && win(w_browser)->open && !win(wmini)->open && win(w_browser)->vis[2] - win(w_browser)->vis[0] == 2840,
+                  "Normal: the window again, as it was");
+            CHECK(fake_rc.fast == 0, "decoding as before");
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 9234:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MP_MINI), "Mini player") &&
+                  !strcmp(menu_text(menu_open, MP_ONTOP), "Keep on top") && !(menu_flags(menu_open, MP_ONTOP) & 1),
+                  "the player's menu: Mini player, Keep on top");
+            pc++;
+            return ev_menu(b, MP_ONTOP, -1);
+        case 9235:
+            CHECK(player_ontop() && strstr(read_file(choices), "keep_on_top 1"), "Keep on top, kept in Choices");
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 9236:
+            pc++;
+            return ev_menu(b, MP_MINI, -1);
+        case 9237: {
+            win_t *m = win(wmini);
+            CHECK(player_mini() && m->open && m->vis[2] - m->vis[0] == 800, "from the menu, at the size it was given");
+            CHECK(strstr(read_file(choices), "mini_width 800"), "its size kept in Choices");
+            pc++;
+            return ev_key(b, wmini, -1, 0x1B);
+        }
+        case 9238:
+            CHECK(!player_mini() && win(w_browser)->open, "Escape: the window again");
             pc = 922;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);

@@ -96,6 +96,22 @@ void player_seek(double t);             /* a converted stream too: the server co
 int player_fullscreen(void);
 void player_set_fullscreen(int on);
 
+/* The mini player (as Reel's): a small window with no furniture above the
+   icon bar in place of the caller's window (closed meanwhile, opened again
+   where it was): the picture, Play/Pause, the position bar, Normal and a
+   grip. It decodes with no deblocking on pictures nothing is predicted
+   from. Keep on top brings it back to the front about once a second. */
+int player_mini(void);
+void player_set_mini(int on);
+int player_ontop(void);
+void player_set_ontop(int on);
+/* Its width, gap from the screen's right edge and bottom (-1: just above
+   the icon bar), OS units: kept in the caller's choices */
+void player_mini_place(int *w, int *right, int *bottom);
+void player_set_mini_place(int w, int right, int bottom);
+/* Open_Window_Request for it (player_owns): 1 = moved or resized */
+int player_mini_open_request(int *b);
+
 /* The file's sound tracks (a converted stream has one: the server's
    choice), reelcore's numbering */
 int player_tracks(void);
@@ -139,6 +155,6 @@ int player_test_idle(void);
 #endif
 
 /* The bar's buttons (player_test_button_xy) */
-enum { PB_BACK = 1, PB_PLAY, PB_REW, PB_FWD, PB_TRACK, PB_STATS, PB_FULL, PB_SUBS, PB_CARD1, PB_CARD2, PB_COUNT };
+enum { PB_BACK = 1, PB_PLAY, PB_REW, PB_FWD, PB_TRACK, PB_STATS, PB_FULL, PB_SUBS, PB_NORMAL, PB_GRIP, PB_CARD1, PB_CARD2, PB_COUNT };
 
 #endif

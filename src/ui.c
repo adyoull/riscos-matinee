@@ -241,7 +241,6 @@ static struct {
         char sid[32];               /* the playback's session id ("" before the first part) */
         int ping_cs;                /* a converted stream, paused: when to tell the server it's wanted */
         int prev_page;              /* the page to go back to */
-        int prev_st[9];             /* and the window's size then (0: unchanged) */
         int tl_cs;                  /* when the server is told where it's got to next */
         int upnext_cs;              /* the next episode starts then (0: no card) */
         plex_list next;             /* the next episode */
@@ -429,15 +428,19 @@ static FILE *choices_open(int write)
 static void choices_save(void)
 {
     FILE *f = choices_open(1);
+    int mw, mr, mb;
     if (!f)
         return;
+    player_mini_place(&mw, &mr, &mb);
     fprintf(f, "# " APP " choices\n"
             "client_id %s\naccount_token %s\nserver_base %s\nserver_token %s\n"
             "server_name %s\nserver_id %s\nserver_local %d\nplayer %s\nquality %d\ndirect_play %d\n"
-            "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\nimage_cache_mb %d\n",
+            "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\nimage_cache_mb %d\n"
+            "keep_on_top %d\nmini_width %d\nmini_right %d\nmini_bottom %d\n",
             S.px.client_id, S.px.account_token, S.px.base, S.px.token,
             S.px.server_name, S.px.server_id, S.px.local, player_names[S.player], S.quality, S.direct,
-            S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5), S.cache_mb);
+            S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5), S.cache_mb,
+            player_ontop(), mw, mr, mb);
     fclose(f);
 }
 
@@ -469,6 +472,21 @@ static void choices_load(void)
     S.pic_mode = PIC_FIT;
     S.volume = 1;
     S.cache_mb = 64;
+    {
+        int mw = 0, mr = -2, mb = -2, top = 0;
+        player_set_mini_place(0, -1, -1);           /* Reel's defaults: bottom right, above the icon bar */
+        if (f) {
+            while (fgets(line, sizeof(line), f)) {
+                if (value(line, "mini_width", v, sizeof(v))) mw = atoi(v);
+                else if (value(line, "mini_right", v, sizeof(v))) mr = atoi(v);
+                else if (value(line, "mini_bottom", v, sizeof(v))) mb = atoi(v);
+                else if (value(line, "keep_on_top", v, sizeof(v))) top = atoi(v) != 0;
+            }
+            rewind(f);
+            player_set_mini_place(mw, mr, mb);
+        }
+        player_set_ontop(top);
+    }
     if (f) {
         while (fgets(line, sizeof(line), f)) {
             if (value(line, "client_id", v, sizeof(v)))
@@ -1261,16 +1279,35 @@ static void set_where(void)
     }
 }
 
+/* The top of the icon bar (window -2), OS units */
+static int iconbar_top(void)
+{
+    int b[9];
+    window_state(-2, b);
+    return b[4] > 0 && b[4] < 512 ? b[4] : 134;
+}
+
+/* The window: 75% of the screen's width and of the height above the icon
+   bar, in the middle of that (its title bar and scroll bar included) */
+#define WIN_PERCENT 75
+#define TITLE_H     40              /* the Wimp's title bar and scroll bar (about) */
+#define SCROLL_W    40
 static void browser_open(void)
 {
-    int st[9], w = 4 * (TILE_W + GAP) + GAP, h = S.scr_h - 320;
-    if (h > 1100)
-        h = 1100;
+    int st[9], ib = iconbar_top(), w = S.scr_w * WIN_PERCENT / 100 - SCROLL_W,
+        h = (S.scr_h - ib) * WIN_PERCENT / 100 - TITLE_H;
+    w &= ~((1 << S.xeig) - 1);
+    h &= ~((1 << S.yeig) - 1);
+    if (player_mini()) {            /* playing in the mini player: the window again */
+        player_set_mini(0);
+        choices_save();
+        return;
+    }
     if (S.browser_open) {
         window_state(S.browser_w, st);
         open_front(S.browser_w, st[1], st[2], st[3], st[4], st[5], st[6]);
     } else {
-        int x0 = (S.scr_w - w) / 2, y0 = (S.scr_h - h) / 2 + 40;
+        int x0 = (S.scr_w - w - SCROLL_W) / 2, y0 = ib + (S.scr_h - ib - h - TITLE_H) / 2;
         S.cols = layout_cols(w);
         S.width = w;
         set_extent();
@@ -1528,6 +1565,7 @@ static int det_cred_y, det_cast_y;              /* the credits' first baseline; 
 #define CAST_H  (CAST_PH + 100)
 #define CRED_X  300                             /* the credits' values, after their labels */
 static int det_wd = 1000, art_w, art_h;         /* the width laid out for; the backdrop's box */
+static int art_fw, art_fh, art_due;             /* the size fetched; when to fetch it at the new size (0: not) */
 
 static const plex_item *det_item(void)
 {
@@ -1551,18 +1589,35 @@ static int vis_width(void)
     return st[3] - st[1];
 }
 
-/* The backdrop, for the width laid out for */
+/* The backdrop's box: the window's width, 16:9, but at most 55% of the
+   window's height (it grows and shrinks with the window) */
+static void det_art_box(void)
+{
+    int st[9], most = 720;
+    if (S.browser_open) {
+        window_state(S.browser_w, st);
+        most = (st[4] - st[2]) * 55 / 100;
+    }
+    if (most < 360)
+        most = 360;
+    art_w = det_wd;
+    art_h = art_w * 9 / 16;
+    if (art_h > most)
+        art_h = most;
+    art_w &= ~((1 << S.xeig) - 1);
+    art_h &= ~((1 << S.yeig) - 1);
+}
+
+/* The backdrop, for the box laid out for */
 static void det_fetch_art(void)
 {
     const plex_item *it = det_item();
     char key[320];
     S.det_art = NULL;
-    art_w = det_wd;
-    art_h = art_w * 9 / 16;
-    if (art_h > 720)
-        art_h = 720;
-    art_w &= ~((1 << S.xeig) - 1);
-    art_h &= ~((1 << S.yeig) - 1);
+    det_art_box();
+    art_fw = art_w;
+    art_fh = art_h;
+    art_due = 0;
     if (!it || !it->art)
         return;
     snprintf(key, sizeof(key), "art:%s@%dx%d", it->art, art_w, art_h);
@@ -1754,8 +1809,9 @@ static void det_layout(void)
     if (!it)
         return;
     det_wd = vis_width();
-    if (!art_w)
-        art_h = 562;
+    det_art_box();                  /* plotted scaled to it until it's fetched at that size */
+    if (S.det_art && (art_w != art_fw || art_h != art_fh))
+        art_due = now_cs() + 50;    /* once the window's been left alone for a moment */
     y = -HEADER_H - art_h - 28;
     latin1(it->title, S.det_title, sizeof(S.det_title));
     draw_fit(D_TITLE, S.det_title, det_wd - 80);
@@ -1911,7 +1967,7 @@ static void det_show(int i)
     if (!det_is(it)) {
         if (det_fetch(it, 1) != 0)
             return;
-    } else if (!S.det_art || art_w != (det_wd & ~((1 << S.xeig) - 1))) {
+    } else if (det_art_box(), !S.det_art || art_w != art_fw || art_h != art_fh) {
         hourglass(1);
         det_fetch_art();
         hourglass(0);
@@ -2591,8 +2647,6 @@ static void builtin_leave(void)
     set_where();
     if (S.browser_open) {
         window_state(S.browser_w, st);
-        if (S.pl.prev_st[0])        /* the size it was before the video */
-            memcpy(st, S.pl.prev_st, sizeof(st));
         open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, S.page == PG_GRID ? S.grid_sy : 0);
         force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
     }
@@ -2604,6 +2658,7 @@ static void builtin_leave(void)
 /* Stops playing: the server is told, a converted stream stopped */
 static void builtin_stop(int leave)
 {
+    int was_mini = player_mini();
     if (!S.pl.on)
         return;
     if (player_ready() && !player_ended())
@@ -2613,6 +2668,8 @@ static void builtin_stop(int leave)
     S.pl.sid[0] = 0;
     player_close();
     builtin_subs_forget();
+    if (was_mini)
+        choices_save();             /* where the mini player was left */
     S.pl.on = 0;
     S.pl.upnext_cs = 0;
     if (S.pl.det.n)
@@ -2627,7 +2684,8 @@ static void builtin_stop(int leave)
 static void builtin_play(const plex_item *it, int how)
 {
     plex_list d;
-    int st[9], prev = S.page == PG_PLAYER ? S.pl.prev_page : S.page, was_player = S.page == PG_PLAYER;
+    int st[9], prev = S.page == PG_PLAYER ? S.pl.prev_page : S.page;
+    int was_mini = player_mini();   /* the next episode stays in the mini player */
     double t;
     hourglass(1);
     if (plex_details(&S.px, it, &d) != 0) {
@@ -2652,26 +2710,21 @@ static void builtin_play(const plex_item *it, int how)
     S.posters_wanted = 0;
     set_extent();
     set_where();
-    if (!was_player)
-        S.pl.prev_st[0] = 0;
-    if (st[3] - st[1] < 1280 && S.scr_w >= 1400 && !was_player) {
-        /* a narrow window (two columns of posters): wider for the video,
-           16:9 and the bar, the size it was kept for later */
-        int w = S.scr_w * 3 / 4 < 1600 ? S.scr_w * 3 / 4 : 1600, h = w * 9 / 16 + 168;
-        memcpy(S.pl.prev_st, st, sizeof(st));
-        if (h > S.scr_h - 160)
-            h = S.scr_h - 160;
-        st[1] = st[1] + w > S.scr_w ? S.scr_w - w : st[1];
-        st[2] = st[4] - h < 64 ? 64 : st[4] - h;
-        st[3] = st[1] + w;
-        st[4] = st[2] + h;
+    /* the window keeps its size: the picture fits in it */
+    if (!was_mini) {
+        open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
+        set_caret(S.browser_w, -1, NULL);
     }
-    open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
-    set_caret(S.browser_w, -1, NULL);
     t = how != PLAY_START && d.v[0].view_offset_ms > 0 ? d.v[0].view_offset_ms / 1000.0 : 0;
     S.pl.sid[0] = 0;                /* a new playback */
-    if (builtin_open_at(t, 1) != 0)
+    if (builtin_open_at(t, 1) != 0) {
         builtin_stop(1);
+        if (was_mini)
+            browser_open();
+        return;
+    }
+    if (was_mini)
+        player_set_mini(1);
 }
 
 /* The card at the end of an episode: the next one, in so many seconds */
@@ -3375,6 +3428,8 @@ static void player_menu_build(void)
     menu_add(&m_play, "Picture", 0, 0, (int)(intptr_t)&m_pic.m, 1);
     menu_add(&m_play, "Stats", player_stats(), 0, -1, 0);
     menu_add(&m_play, "Full screen", player_fullscreen(), 0, -1, 0);
+    menu_add(&m_play, "Mini player", player_mini(), 0, -1, 0);
+    menu_add(&m_play, "Keep on top", player_ontop(), 0, -1, 1);
     menu_add(&m_play, "Hardware overlay", player_overlay(), 0, -1, 1);
     menu_add(&m_play, "Stop", 0, 0, -1, 0);
     menu_end(&m_play);
@@ -3763,6 +3818,14 @@ static int menu_select(const int *sel)
         case MP_FULL:
             player_set_fullscreen(!player_fullscreen());
             break;
+        case MP_MINI:
+            player_set_mini(!player_mini());
+            choices_save();
+            break;
+        case MP_ONTOP:
+            player_set_ontop(!player_ontop());
+            choices_save();
+            break;
         case MP_OVERLAY:
             player_set_overlay(!player_overlay());
             S.overlay = player_overlay();
@@ -4009,6 +4072,10 @@ static void key(int *b)
 static void open_request(int *b)
 {
     _kernel_swi_regs r;
+    if (player_owns(b[0]) && player_mini()) {
+        player_mini_open_request(b);        /* saved when it goes back, or at the end */
+        return;
+    }
     if (b[0] == S.browser_w && S.page == PG_PLAYER) {
         /* the player page doesn't scroll: the picture and the bar fill what's
            in view (the scroll bars are the other pages') */
@@ -4031,8 +4098,12 @@ static void open_request(int *b)
                 force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
             }
         }
-        if (S.page == PG_DETAILS && w != det_wd)
-            det_repaint();          /* the text wrapped to the new width */
+        if (S.page == PG_DETAILS) {
+            int ow = art_w, oh = art_h;
+            det_art_box();
+            if (w != det_wd || art_w != ow || art_h != oh)
+                det_repaint();      /* the text wrapped, the backdrop scaled to the new size */
+        }
     }
 }
 
@@ -4168,6 +4239,11 @@ static void nulls(void)
     }
     if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
         return;
+    if (art_due && S.page == PG_DETAILS && S.browser_open && now_cs() - art_due >= 0) {
+        det_fetch_art();            /* the backdrop at the window's new size */
+        det_repaint();
+        return;
+    }
     if (S.posters_wanted && poster_step())
         return;
     if (S.in_browser && S.browser_open) {   /* the poster under the pointer */
@@ -4271,6 +4347,9 @@ int plexro_main(int argc, char **argv)
         } else if (S.search_due && searching()) {
             reason = Wimp_PollIdle;         /* the search, a moment after the last key */
             r.r[2] = S.search_due;
+        } else if (art_due && S.page == PG_DETAILS && S.browser_open) {
+            reason = Wimp_PollIdle;         /* the backdrop at the new size, once resizing stops */
+            r.r[2] = art_due;
         } else if (S.posters_wanted || (S.cast_wanted && S.page == PG_DETAILS && S.browser_open)) {
             /* null events at once */
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
