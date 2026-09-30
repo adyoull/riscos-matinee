@@ -60,9 +60,9 @@ mutate "Resume doesn't turn direct play off" src/ui.c \
 mutate "posters drawn on the screen (output not switched)" src/ui.c \
   'r.r[2] = (intptr_t)(area + 4);\n    r.r[3] = 0;' 'r.r[2] = 0;\n    r.r[3] = 0;'
 mutate "subtitles chosen, yet played directly" src/caps.c \
-  'if (allow_direct && plex_sub_selected(it) >= 0) {' 'if (0) {'
+  'if (allow_direct && plex_sub_selected(it) >= 0 &&' 'if (0 &&'
 mutate "the subtitle track chosen isn't sent" src/ui.c \
-  'k ? it->subs[k - 1].id : 0' '0'
+  '(&S.px, it, k ? it->subs[k - 1].id : 0)' '(&S.px, it, 0)'
 mutate "Back from the details forgets where the grid was" src/ui.c \
   'open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, S.grid_sy);' 'open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);'
 mutate "Right doesn't go to the next video's details" src/ui.c \
@@ -135,6 +135,23 @@ mutate "the panel not scaled for the overlay" src/player.c \
   'reelcore_set_yuv_scale(P.v, (double)ov.fw / rw);' '(void)rw;'
 mutate "Sign out without asking" src/ui.c \
   'if (ask("Sign out?' 'if (1 || ask("Sign out?'
+
+mutate "the stats say Direct Play for a transcoded stream" src/player.c \
+  'P.convert ? "Transcoded" : "Direct Play"' '"Direct Play"'
+
+mutate "the built-in player's subtitles burnt in anyway" src/ui.c \
+  'k.own_subs = 1;' 'k.own_subs = 0;'
+mutate "a subtitle file beside the video not fetched" src/ui.c \
+  'if (t < 0 && sub_fetch(sb, path, sizeof(path)) == 0) {' 'if (0) {'
+mutate "subtitle files left in the scrap directory" src/ui.c \
+  'remove(S.pl.ext[i].path);' '(void)0;'
+mutate "external picture subtitles drawn by the player" src/caps.c \
+  'sb->external ? sub_file : sub_in_file' 'sub_in_file'
+
+mutate "the player's subtitle choice isn't sent" src/ui.c \
+  'id = k ? it->subs[k - 1].id : 0;' 'id = 0;'
+mutate "a new subtitle track in a converted stream keeps the old conversion" src/ui.c \
+  'player_note(k ? "Changing the subtitles..." : "Subtitles off...");\n    if (builtin_open_at(player_position(), 1) != 0)' 'if (0)'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

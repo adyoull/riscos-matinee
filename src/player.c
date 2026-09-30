@@ -61,7 +61,7 @@ static struct {
     /* what's playing */
     char url[4096], headers[1600], agent[128], title[160];
     double base, start, duration;
-    int convert, based;             /* based: base checked against the stream's own times */
+    int convert, based, subs;             /* based: base checked against the stream's own times */
     double sync0;                   /* position - clock at the first picture (see panel_update) */
     int opened_cs;
     /* the screen */
@@ -249,9 +249,20 @@ static void layout_boxes(void)
     P.btn[PB_FULL] = (box_t){ r - 2 * BTN_R, cy - BTN_R, r, cy + BTN_R };
     r -= 2 * BTN_R + 16;
     P.btn[PB_STATS] = (box_t){ r - 112, cy - 28, r, cy + 28 };
-    r -= 112 + 32;
+    r -= 112 + 16;
+    P.btn[PB_SUBS] = (box_t){ 0, 0, 0, 0 };
+    if (P.subs) {
+        P.btn[PB_SUBS] = (box_t){ r - 176, cy - 28, r, cy + 28 };
+        r -= 176 + 16;
+    }
+    r -= 16;
     mid1 = r;
-    /* a narrow window: the skip buttons go (the arrow keys do it), then Stats (S) */
+    /* a narrow window: Subtitles goes (the menu has it), then the skip
+       buttons (the arrow keys do it), then Stats (S) */
+    if (mid1 - mid0 < 160 && P.btn[PB_SUBS].x1 > P.btn[PB_SUBS].x0) {
+        mid1 = P.btn[PB_STATS].x0 - 32;
+        P.btn[PB_SUBS] = (box_t){ 0, 0, 0, 0 };
+    }
     if (mid1 - mid0 < 160) {
         mid0 = P.btn[PB_REW].x0;
         P.btn[PB_REW] = P.btn[PB_FWD] = (box_t){ 0, 0, 0, 0 };
@@ -755,6 +766,8 @@ static void draw_bar(int ox, int oy)
     }
     if (P.btn[PB_STATS].x1 > P.btn[PB_STATS].x0)
         pill(&P.btn[PB_STATS], ox, oy, "Stats", P.stats, C_HEADER);
+    if (P.btn[PB_SUBS].x1 > P.btn[PB_SUBS].x0)
+        pill(&P.btn[PB_SUBS], ox, oy, "Subtitles", 0, C_HEADER);
     b = &P.btn[PB_FULL];                            /* four corners */
     round_button(b, ox, oy, C_CARD, C_HEADER);
     {
@@ -1015,7 +1028,7 @@ static void panel_update(int sample)
 
     media_value("File", "Container", a, sizeof(a));
     snprintf(G.val[i], sizeof(G.val[i]), "%.60s / %s%s%.30s", P.title,
-             P.convert ? "converted by the server" : "direct play", a[0] ? ", " : "", a[0] ? panel_short(a, 0) : "");
+             P.convert ? "Transcoded" : "Direct Play", a[0] ? ", " : "", a[0] ? panel_short(a, 0) : "");
     G.pp.label[i] = "Video / Source"; G.pp.value[i] = G.val[i]; i++;
 
     snprintf(G.val[i], sizeof(G.val[i]), "%dx%d / %u dropped of %u", (P.pic.x1 - P.pic.x0) >> P.xeig,
@@ -1217,6 +1230,7 @@ int player_open(const player_src *s, int win)
     P.start = s->start > 0 ? s->start : 0;
     P.duration = s->duration > 0 ? s->duration : 0;
     P.convert = s->convert;
+    P.subs = s->subs;
     P.based = 0;
     P.ready = P.ended = P.failed = 0;
     P.error[0] = 0;
@@ -1228,7 +1242,7 @@ int player_open(const player_src *s, int win)
     src.headers = P.headers[0] ? P.headers : NULL;
     src.user_agent = P.agent[0] ? P.agent : NULL;
     src.title = P.title;
-    lg("open %s (%s; starts at %.1f s, from %.1f s)", P.title, P.convert ? "converted" : "direct play",
+    lg("open %s (%s; starts at %.1f s, from %.1f s)", P.title, P.convert ? "transcoded" : "direct play",
        P.base, P.start);
     P.v = reelcore_open_source(&src, REELCORE_ASYNC);
     layout_boxes();
@@ -1588,6 +1602,8 @@ int player_click(const int *b)
             player_seek(player_position() + 10);
         else if (in_box(&P.btn[PB_STATS], x, y))
             player_set_stats(!P.stats);
+        else if (in_box(&P.btn[PB_SUBS], x, y))
+            return PE_SUBS;
         else if (in_box(&P.btn[PB_FULL], x, y))
             player_set_fullscreen(!P.fullscreen);
         else if (x >= P.btn[PB_TRACK].x0 - 8 && x < P.btn[PB_TRACK].x1 + 8 && y >= P.btn[PB_TRACK].y0 - 12 &&
@@ -1663,6 +1679,29 @@ void player_set_track(int i)
         lg("sound track %d", i);
         reelcore_set_audio_track(P.v, i);
     }
+}
+
+int player_sub_tracks(void) { return P.v && P.ready ? reelcore_subtitle_tracks(P.v) : 0; }
+int player_sub_track(void) { return P.v && P.ready ? reelcore_subtitle_track(P.v) : -1; }
+
+int player_set_sub(int i)
+{
+    if (!P.v || !P.ready)
+        return -1;
+    lg("subtitles %d", i);
+    if (i == reelcore_subtitle_track(P.v))
+        return 0;
+    return reelcore_set_subtitle_track(P.v, i) < 0 ? -1 : 0;
+}
+
+int player_add_sub_file(const char *path)
+{
+    int t;
+    if (!P.v || !P.ready)
+        return -1;
+    t = reelcore_add_subtitle_file(P.v, path);
+    lg("subtitle file %s: %d", path, t);
+    return t;
 }
 
 double player_volume(void) { return P.vol; }

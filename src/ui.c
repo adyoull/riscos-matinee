@@ -229,7 +229,7 @@ static struct {
     int nbtn;
 
     /* menus */
-    int menu_kind;                  /* 1 icon bar, 2 item, 3 subtitles */
+    int menu_kind;                  /* 1 icon bar, 2 item, 3 subtitles, 4 player, 5 player's subtitles */
     int menu_x, menu_y;
 
     /* the built-in player: what it's playing, and for Plex */
@@ -246,6 +246,9 @@ static struct {
         int upnext_cs;              /* the next episode starts then (0: no card) */
         plex_list next;             /* the next episode */
         int menu_audio;             /* the Sound track submenu is the server's tracks */
+        /* subtitle files beside the video, fetched and given to the player */
+        struct { long id; int track; char path[300]; } ext[8];
+        int n_ext;
     } pl;
     int overlay, pic_mode;          /* Choices for the built-in player */
     int cache_mb;                   /* Choices: the image cache's size */
@@ -1805,6 +1808,7 @@ static void det_layout(void)
     }
     /* how it will play */
     caps_for(S.quality, &k);
+    k.own_subs = S.player == PLAYER_BUILTIN;
     caps_play(&S.px, it, &k, S.direct, 1, &p);
     latin1(p.why, S.det_how, sizeof(S.det_how));
     S.det_how_n = draw_wrap(D_BODY, S.det_how, det_wd - 80, S.det_how_l, 2);
@@ -2475,6 +2479,9 @@ static void play_item(const plex_item *it, int how)
    episode offered at the end of one. */
 
 static void player_menu_open(void);
+static void psubs_menu_open(void);
+static void builtin_subs_apply(void);
+static void builtin_subs_forget(void);
 
 #define TIMELINE_CS 1000
 #define PING_CS     3000            /* paused: the server's converting kept alive */
@@ -2530,12 +2537,14 @@ static int builtin_open_at(double t, int new_session)
     caps_t k;
     player_src src;
     char title[200], headers[1400];
+    int e;
     if (new_session || !*S.pl.sid) {
         if (*S.pl.sid && !S.pl.p.direct)
             plex_transcode_stop(&S.px, S.pl.sid);
         caps_session_id(&S.px, S.pl.sid, sizeof(S.pl.sid));
     }
     caps_for(S.quality, &k);
+    k.own_subs = 1;                 /* reelcore draws them, playing the file itself */
     if (caps_play_at(&S.px, it, &k, S.direct, 0, S.pl.sid, &S.pl.p) != 0) {
         set_status("%s", S.pl.p.why);
         return -1;
@@ -2557,9 +2566,12 @@ static int builtin_open_at(double t, int new_session)
     src.base = 0;
     src.start = t;
     src.duration = it->duration_ms / 1000.0;
+    src.subs = it->nsubs;
     snprintf(S.play_why, sizeof(S.play_why), "%s", S.pl.p.why);
     set_status("%s", S.pl.p.why);
-    if (player_open(&src, S.browser_w) != 0) {
+    e = player_open(&src, S.browser_w);
+    builtin_subs_forget();          /* the last reelcore's files: this one is given its own */
+    if (e != 0) {
         report("Can't play %s: %s", title, player_error());
         return -1;
     }
@@ -2600,6 +2612,7 @@ static void builtin_stop(int leave)
         plex_transcode_stop(&S.px, S.pl.sid);
     S.pl.sid[0] = 0;
     player_close();
+    builtin_subs_forget();
     S.pl.on = 0;
     S.pl.upnext_cs = 0;
     if (S.pl.det.n)
@@ -2715,6 +2728,7 @@ static void builtin_event(int e)
 {
     switch (e) {
     case PE_READY:
+        builtin_subs_apply();
         builtin_timeline("playing");
         break;
     case PE_PAUSED:
@@ -2742,6 +2756,9 @@ static void builtin_event(int e)
         break;
     case PE_MENU:
         player_menu_open();
+        break;
+    case PE_SUBS:
+        psubs_menu_open();
         break;
     }
 }
@@ -3131,7 +3148,7 @@ typedef struct {
 typedef struct { wmenu_t m; char text[16][80]; int n; } menu_t;
 
 static menu_t m_bar, m_servers, m_player, m_quality, m_size, m_item, m_subs;
-static menu_t m_play, m_audio, m_vol, m_pic;
+static menu_t m_play, m_audio, m_vol, m_pic, m_psubs;
 
 static void menu_begin(menu_t *m, const char *title)
 {
@@ -3286,6 +3303,37 @@ static void item_menu_build(void)
     menu_end(&m_item);
 }
 
+/* The playing video's subtitles: None, then its tracks (the server's
+   list: the names are Plex's) */
+static void psubs_menu_build(void)
+{
+    const plex_item *it = S.pl.det.n ? &S.pl.det.v[0] : NULL;
+    char t[160];
+    menu_begin(&m_psubs, "Subtitles");
+    menu_add(&m_psubs, "None", !it || plex_sub_selected(it) < 0, 0, -1, it && it->nsubs);
+    for (int i = 0; it && i < it->nsubs && i < 15; i++) {
+        const plex_sub *sb = &it->subs[i];
+        snprintf(t, sizeof(t), "%s%s", sb->title, sb->forced && !strstr(sb->title, "orced") ? " (forced)" : "");
+        menu_add(&m_psubs, t, sb->selected, 0, -1, 0);
+    }
+    menu_end(&m_psubs);
+}
+
+/* Subtitles on the bar: the menu on its own, by the pointer */
+static void psubs_menu_open(void)
+{
+    int p[5];
+    _kernel_swi_regs r;
+    r.r[1] = (intptr_t)p;
+    if (swi(Wimp_GetPointerInfo, &r))
+        p[0] = S.scr_w / 2, p[1] = S.scr_h / 2;
+    psubs_menu_build();
+    S.menu_kind = 5;
+    S.menu_x = p[0];
+    S.menu_y = p[1];
+    open_menu(&m_psubs, p[0] - 64, p[1] + 44 * (m_psubs.n + 1));
+}
+
 /* Menu over the built-in player */
 static void player_menu_build(void)
 {
@@ -3309,6 +3357,7 @@ static void player_menu_build(void)
     if (!n)
         menu_add(&m_audio, "(none)", 0, 1, -1, 0);
     menu_end(&m_audio);
+    psubs_menu_build();
     menu_begin(&m_vol, "Volume");
     for (int i = 0; i < 5; i++) {
         snprintf(t, sizeof(t), "%d%%", 100 - i * 25);
@@ -3321,6 +3370,7 @@ static void player_menu_build(void)
     menu_end(&m_pic);
     menu_begin(&m_play, "Player");
     menu_add(&m_play, "Sound track", 0, n < 2, n >= 2 ? (int)(intptr_t)&m_audio.m : -1, 0);
+    menu_add(&m_play, "Subtitles", 0, !it || !it->nsubs, it && it->nsubs ? (int)(intptr_t)&m_psubs.m : -1, 0);
     menu_add(&m_play, "Volume", 0, 0, (int)(intptr_t)&m_vol.m, 0);
     menu_add(&m_play, "Picture", 0, 0, (int)(intptr_t)&m_pic.m, 1);
     menu_add(&m_play, "Stats", player_stats(), 0, -1, 0);
@@ -3366,6 +3416,124 @@ static void choose_audio(int k)
     for (int i = 0; i < it->nauds; i++)
         it->auds[i].selected = i == k;
     player_note("Changing the sound track...");
+    if (builtin_open_at(player_position(), 1) != 0)
+        builtin_stop(1);
+}
+
+/* A subtitle file beside the video (Plex's /library/streams/<id>): fetched
+   into the scrap directory for the player. 0 = done, path set. */
+static int sub_fetch(const plex_sub *sb, char *path, size_t size)
+{
+    const char *scrap = getenv("Wimp$ScrapDir");
+    char dir[256], url[1024], hd[1400], h2[1400];
+    net_buf b;
+    FILE *f;
+    int ok;
+    if (!scrap || !*scrap || !sb->key)
+        return -1;
+    snprintf(dir, sizeof(dir), "%s" SEP APP, scrap);
+    make_dir(dir);
+    snprintf(path, size, "%s" SEP "Sub%ld", dir, sb->id);
+    snprintf(url, sizeof(url), "%s%s", S.px.base, sb->key);
+    plex_headers(&S.px, S.px.token, hd, sizeof(hd));
+    media_headers(hd, h2, sizeof(h2));
+    hourglass(1);
+    ok = net_fetch(url, h2, NULL, &b, 15000, S.px.err, sizeof(S.px.err)) == 0;
+    hourglass(0);
+    if (!ok)
+        return -1;
+    ok = (f = fopen(path, "wb")) != NULL;
+    if (ok) {
+        ok = fwrite(b.data, 1, b.len, f) == b.len;
+        ok &= fclose(f) == 0;
+    }
+    net_buf_free(&b);
+    if (!ok)
+        snprintf(S.px.err, sizeof(S.px.err), "can't write %s", path);
+    return ok ? 0 : -1;
+}
+
+/* The files given to the player, gone with it */
+static void builtin_subs_forget(void)
+{
+    for (int i = 0; i < S.pl.n_ext; i++)
+        remove(S.pl.ext[i].path);
+    S.pl.n_ext = 0;
+}
+
+/* Playing the file itself: the player shows the subtitles chosen on the
+   server (or none), as Plex's apps do. A track in the file is reelcore's
+   track of the same place among the file's tracks (Plex lists them in the
+   file's order, then the files beside it); a file beside it is fetched
+   and added (once). */
+static void builtin_subs_apply(void)
+{
+    const plex_item *it = S.pl.det.n ? &S.pl.det.v[0] : NULL;
+    const plex_sub *sb;
+    int sel, j = 0, t = -1;
+    char path[300];
+    if (!it || !S.pl.p.direct || !player_ready())
+        return;
+    sel = plex_sub_selected(it);
+    if (sel < 0) {
+        player_set_sub(-1);
+        return;
+    }
+    sb = &it->subs[sel];
+    if (!sb->external) {
+        for (int i = 0; i < sel; i++)
+            j += !it->subs[i].external;
+        if (j < player_sub_tracks())
+            t = j;
+    } else {
+        for (int i = 0; i < S.pl.n_ext; i++)
+            if (S.pl.ext[i].id == sb->id)
+                t = S.pl.ext[i].track;
+        if (t < 0 && sub_fetch(sb, path, sizeof(path)) == 0) {
+            t = player_add_sub_file(path);
+            if (t >= 0 && S.pl.n_ext < 8) {
+                S.pl.ext[S.pl.n_ext].id = sb->id;
+                S.pl.ext[S.pl.n_ext].track = t;
+                snprintf(S.pl.ext[S.pl.n_ext].path, sizeof(S.pl.ext[0].path), "%s", path);
+                S.pl.n_ext++;
+            } else {
+                remove(path);
+            }
+        }
+    }
+    if (t < 0 || player_set_sub(t) != 0)
+        player_note("Can't show those subtitles");
+}
+
+/* Subtitles menu choice k (the player's): 0 None, else track k-1. Kept on
+   the server; the file itself: the player shows them; a converted stream
+   (or subtitles the player can't read): started again from here, the
+   server burning them in */
+static void choose_psub(int k)
+{
+    plex_item *it = S.pl.det.n ? &S.pl.det.v[0] : NULL;
+    char name[120], t[160];
+    long id;
+    if (!it || k < 0 || k > it->nsubs || k - 1 == plex_sub_selected(it))
+        return;
+    id = k ? it->subs[k - 1].id : 0;
+    hourglass(1);
+    if (plex_set_subtitle(&S.px, it, id) != 0) {
+        hourglass(0);
+        report("Can't choose the subtitles: %s", S.px.err);
+        return;
+    }
+    hourglass(0);
+    for (int i = 0; i < it->nsubs; i++)
+        it->subs[i].selected = i == k - 1;
+    latin1(k ? it->subs[k - 1].title : "", name, sizeof(name));
+    if (S.pl.p.direct && (!k || caps_sub_own(&it->subs[k - 1]))) {
+        builtin_subs_apply();
+        snprintf(t, sizeof(t), k ? "Subtitles: %s" : "Subtitles off", name);
+        player_note(t);
+        return;
+    }
+    player_note(k ? "Changing the subtitles..." : "Subtitles off...");
     if (builtin_open_at(player_position(), 1) != 0)
         builtin_stop(1);
 }
@@ -3433,7 +3601,9 @@ static void choose_sub(int k)
     }
     hourglass(0);
     det_refresh();
-    if (k)
+    if (k && S.player == PLAYER_BUILTIN && caps_sub_own(&it->subs[k - 1]))
+        set_status("Subtitles: %s.", name);
+    else if (k)
         set_status("Subtitles: %s. The server burns them into the picture.", name);
     else
         set_status("Subtitles off.");
@@ -3563,10 +3733,15 @@ static int menu_select(const int *sel)
         }
     } else if (kind == 3) {
         choose_sub(sel[0]);
+    } else if (kind == 5 && S.pl.on) {
+        choose_psub(sel[0]);
     } else if (kind == 4 && S.pl.on) {
         switch (sel[0]) {
         case MP_AUDIO:
             choose_audio(sel[1]);
+            break;
+        case MP_SUBS:
+            choose_psub(sel[1]);
             break;
         case MP_VOLUME:
             if (sel[1] >= 0 && sel[1] < 5) {
@@ -3609,6 +3784,10 @@ static int menu_select(const int *sel)
             player_menu_build();
             S.menu_kind = 4;
             open_menu(&m_play, S.menu_x - 64, S.menu_y);
+        } else if (kind == 5 && S.pl.on) {
+            psubs_menu_build();
+            S.menu_kind = 5;
+            open_menu(&m_psubs, S.menu_x - 64, S.menu_y + 44 * (m_psubs.n + 1));
         }
     }
     return 0;

@@ -54,6 +54,17 @@ static const char *const audio[] = { "aac", "mp3", "mp2", "ac3", "eac3", "flac",
 /* cheap enough to play as they are at DVD sizes */
 static const char *const sd_video[] = { "mpeg2video", "mpeg1video", "mpeg4", "msmpeg4v3", "h263", NULL };
 
+/* reelcore's subtitle decoders (FFmpeg's), by Plex's codec names */
+static const char *const sub_in_file[] = { "srt", "subrip", "ass", "ssa", "mov_text", "tx3g", "webvtt", "vtt",
+                                           "pgs", "hdmv_pgs_subtitle", "vobsub", "dvd_subtitle", "dvb_subtitle",
+                                           "dvbsub", NULL };
+static const char *const sub_file[] = { "srt", "subrip", "ass", "ssa", "webvtt", "vtt", NULL };
+
+int caps_sub_own(const plex_sub *sb)
+{
+    return in_list(sb->codec, sb->external ? sub_file : sub_in_file);
+}
+
 int caps_direct_ok(const caps_t *k, const plex_item *it, char *why, size_t size)
 {
     const char *vc = it->vcodec ? it->vcodec : "?";
@@ -130,10 +141,12 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
        stream too (FFmpeg's HLS reader passes its headers on) */
     plex_headers(c, c->token, out->headers, sizeof(out->headers));
 
-    /* Reel can't yet be told which subtitles to show (or given a file of
-       them), so a video with subtitles chosen is converted and the server
-       burns them into the picture */
-    if (allow_direct && plex_sub_selected(it) >= 0) {
+    /* Reel and ReelEGL can't be told which subtitles to show (or given a
+       file of them), so for them a video with subtitles chosen is converted
+       and the server burns them into the picture; the built-in player draws
+       them itself (reelcore), unless they're of a kind it can't read */
+    if (allow_direct && plex_sub_selected(it) >= 0 &&
+        !(k->own_subs && caps_sub_own(&it->subs[plex_sub_selected(it)]))) {
         allow_direct = 0;
         snprintf(why, sizeof(why), "subtitles burnt in: %s", it->subs[plex_sub_selected(it)].title);
     } else if (!allow_direct)
@@ -145,7 +158,11 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
         else
             caps_session_id(c, out->session, sizeof(out->session));  /* for the timeline, and the dashboard */
         snprintf(out->url, sizeof(out->url), "%s%s", c->base, it->part_key);
-        snprintf(out->why, sizeof(out->why), "Direct play: %s", why);
+        if (plex_sub_selected(it) >= 0)
+            snprintf(out->why, sizeof(out->why), "Direct Play: %s; subtitles: %s", why,
+                     it->subs[plex_sub_selected(it)].title);
+        else
+            snprintf(out->why, sizeof(out->why), "Direct Play: %s", why);
         /* Reel's own "carry on from where you stopped" goes by this */
         snprintf(out->key, sizeof(out->key), "plex:%s/%s", c->server_id, it->rating_key);
         return 0;
@@ -177,7 +194,7 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
                  c->base, path_esc, k->max_w, k->max_h, k->max_kbps,
                  c->local ? "lan" : "wan", out->offset_s, sid, sid,
                  prod_esc, c->platform, id_esc, extra_esc, tok_esc);
-        snprintf(out->why, sizeof(out->why), "Converted by the server (%s)", why);
+        snprintf(out->why, sizeof(out->why), "Transcoded (%s)", why);
     }
     return 0;
 }

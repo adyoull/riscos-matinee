@@ -1041,7 +1041,7 @@ static int script(int *b, int mask)
             CHECK(ui_test_button(D_PLAY) && ui_test_button(D_RESUME) && !strcmp(ui_test_button(D_RESUME), "Resume from 42:10") &&
                   ui_test_button(D_START) && ui_test_button(D_SAVE) && !strcmp(ui_test_button(D_WATCHED), "Mark watched") &&
                   ui_test_button(D_SUBS) && !strcmp(ui_test_button(D_SUBS), "Subtitles: None"), "the buttons");
-            CHECK(strstr(ui_test_det(2), "Converted by the server") && strstr(ui_test_det(2), "bigger"),
+            CHECK(strstr(ui_test_det(2), "Transcoded (") && strstr(ui_test_det(2), "bigger"),
                   "how it will play: %s", ui_test_det(2));
             CHECK(log_count("/library/metadata/101", NULL, NULL) >= 1 &&
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000") == 1 &&
@@ -1120,7 +1120,7 @@ static int script(int *b, int mask)
             CHECK(ntyped && typed_type[(ntyped - 1) & 7] == 0xBF4, "typed as video/mp4");
             snprintf(want, sizeof(want), "%s/PlexRO/Play0", scrap);
             CHECK(!file_exists(want), "the file deleted once the player has started");
-            CHECK(strstr(ui_test_status(), "Converted") && strstr(ui_test_status(), "bigger"), "status: %s",
+            CHECK(strstr(ui_test_status(), "Transcoded (") && strstr(ui_test_status(), "bigger"), "status: %s",
                   ui_test_status());
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);             /* the icon bar menu */
@@ -1134,7 +1134,7 @@ static int script(int *b, int mask)
             return ev_menu(b, MB_QUALITY, 0);                   /* 1080p */
         case 18:
             CHECK(strstr(read_file(choices), "quality 0\n") != NULL, "quality kept");
-            CHECK(strstr(ui_test_det(2), "Direct play"), "the details say so: %s", ui_test_det(2));
+            CHECK(strstr(ui_test_det(2), "Direct Play:"), "the details say so: %s", ui_test_det(2));
             tasks[0].handle = 0x777; tasks[0].name = "ReelEGL\r";
             tasks[1].handle = 0x778; tasks[1].name = "Reel\r";
             tasks[2].handle = task; tasks[2].name = "PlexRO\r";
@@ -1158,7 +1158,7 @@ static int script(int *b, int mask)
         case 20:
             snprintf(want, sizeof(want), "%s/PlexRO/Play1", scrap);
             CHECK(!file_exists(want), "deleted on DataLoadAck");
-            CHECK(strstr(ui_test_status(), "in ReelEGL") && strstr(ui_test_status(), "Direct play"),
+            CHECK(strstr(ui_test_status(), "in ReelEGL") && strstr(ui_test_status(), "Direct Play"),
                   "status: %s", ui_test_status());
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
@@ -1654,7 +1654,8 @@ static int script(int *b, int mask)
         }
         case 909:
             CHECK(ovl_redraws > 0 && strstr(plotted_text, "Big Buck Bunny") && strstr(plotted_text, "-10 s") &&
-                  strstr(plotted_text, "Stats"), "the redraw: the overlay's part, and the bar: %s", plotted_text);
+                  strstr(plotted_text, "Stats") && strstr(plotted_text, "Subtitles|"),
+                  "the redraw: the overlay's part, and the bar: %s", plotted_text);
             count0 = log_count("/:/timeline", "state", "paused");
             pc++;
             return ev_key(b, w_browser, -1, ' ');
@@ -1694,6 +1695,8 @@ static int script(int *b, int mask)
                 if (!strcmp(player_test_panel(i, 0), "Connection") && strstr(player_test_panel(i, 1), "http, reading ahead"))
                     found = 1;
             CHECK(fake_rc.panel_rows >= 8 && found, "S: the stats panel, with the connection (%d rows)", fake_rc.panel_rows);
+            CHECK(!strcmp(player_test_panel(0, 0), "Video / Source") && strstr(player_test_panel(0, 1), " / Direct Play"),
+                  "Source: Direct Play (%s)", player_test_panel(0, 1));
             p0 = player_position();
             pc++;
             return ev_key(b, w_browser, -1, 0x18D);                 /* Right: 10 s on */
@@ -1767,6 +1770,71 @@ static int script(int *b, int mask)
         case 9210:
             CHECK(win(w_browser)->sy == 0 && win(w_browser)->sx == 0, "the player page doesn't scroll (%d)",
                   win(w_browser)->sy);
+            pc = 9211;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        /* ---- subtitles, playing the file itself: reelcore draws them */
+        case 9211:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MP_SUBS), "Subtitles") && !menu_shaded(menu_open, MP_SUBS) &&
+                  menu_sub(menu_open, MP_SUBS) > 0x10000, "the player's menu: Subtitles");
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_menu(b, MP_SUBS, 1);                          /* English (SRT), in the file */
+        case 9212:
+            CHECK(log_count("/library/parts/11101", "subtitleStreamID", "1001") == 1, "chosen on the server");
+            CHECK(fake_rc.sub_track == 0 && fake_rc.opens == open0, "the file's first subtitle track, shown by the player");
+            CHECK(strstr(player_test_time(), "Subtitles: English (SRT)"), "the bar says: %s", player_test_time());
+            pc++;
+            return player_button(b, w_browser, PB_SUBS);
+        case 9213:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, 0), "None") && (menu_flags(menu_open, 1) & 1) &&
+                  !strcmp(menu_text(menu_open, 2), "English (SRT External)"), "Subtitles on the bar: the menu");
+            pc++;
+            return ev_menu(b, 2, -1);                               /* the file beside it */
+        case 9214:
+            CHECK(fake_rc.sub_files == 1 && strstr(fake_rc.sub_text, "A big buck") && fake_rc.sub_track == 2 &&
+                  fake_rc.opens == open0, "the file beside it fetched and given to the player (%s)", fake_rc.sub_file);
+            pc++;
+            return player_button(b, w_browser, PB_SUBS);
+        case 9215:
+            pc++;
+            return ev_menu(b, 3, -1);                               /* French Forced (PGS): pictures */
+        case 9216:
+            CHECK(fake_rc.sub_track == 1 && fake_rc.opens == open0, "picture subtitles: the file's second track");
+            pc++;
+            return player_button(b, w_browser, PB_SUBS);
+        case 9217:
+            pc++;
+            return ev_menu(b, 2, -1);                               /* the file beside it again */
+        case 9218:
+            CHECK(fake_rc.sub_files == 1 && fake_rc.sub_track == 2, "not fetched twice");
+            pc = 92181;
+            return ev_key(b, w_browser, -1, 8);                     /* Back, and Play again: */
+        case 92181:
+            CHECK(ui_test_page() == PG_DETAILS && !ui_test_player(), "back to the details");
+            open0 = fake_rc.opens;
+            n_null = 0;
+            pc++;
+            return ev_button(b, w_browser, D_PLAY, 0x400);
+        case 92182:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            snprintf(want, sizeof(want), "%s/library/parts/11/101/file.mp4", base);
+            CHECK(fake_rc.opens == open0 + 1 && !strcmp(fake_rc.url, want) && fake_rc.sub_track == 2 &&
+                  fake_rc.sub_files == 2, "subtitles chosen: still the file itself, the player showing them (%s)",
+                  fake_rc.url);
+            open0 = fake_rc.opens;
+            pc = 9219;
+            return player_button(b, w_browser, PB_SUBS);
+        case 9219:
+            pc = 9220;
+            return ev_menu(b, 0, -1);                               /* None */
+        case 9220:
+            CHECK(fake_rc.sub_track == -1 && fake_rc.opens == open0 &&
+                  log_count("/library/parts/11101", "subtitleStreamID", "0") >= 1, "None: off, on the server too");
+            CHECK(strstr(player_test_time(), "Subtitles off"), "the bar says: %s", player_test_time());
             pc = 922;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
@@ -1881,6 +1949,7 @@ static int script(int *b, int mask)
                 ok |= (!strcmp(player_test_panel(i, 0), "Network Activity")) | (!strcmp(player_test_panel(i, 0), "Date")) << 1 |
                       (!strcmp(player_test_panel(i, 0), "Codecs")) << 2;
             CHECK(ok == 7, "ReelEGL's rows: Network Activity, Codecs, Date");
+            CHECK(strstr(player_test_panel(0, 1), " / Transcoded"), "Source: Transcoded (%s)", player_test_panel(0, 1));
             CHECK(strstr(player_test_time(), "0:13"), "the time: %s", player_test_time());
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
@@ -1921,6 +1990,50 @@ static int script(int *b, int mask)
         case 9362:
             CHECK(log_count("/video/:/transcode/universal/ping", NULL, NULL) == count0 + 1,
                   "the server told the conversion is still wanted");
+            pc = 9363;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        /* ---- subtitles, converted: the server burns them in, from here */
+        case 9363:
+            open0 = fake_rc.opens;
+            snprintf(sid0, sizeof(sid0), "%s", strstr(fake_rc.url, "&session=") + 9);
+            *strchr(sid0, '&') = 0;
+            n_null = 0;
+            pc++;
+            return ev_menu(b, MP_SUBS, 1);
+        case 9364:
+            if (fake_rc.opens == open0 && n_null++ < 10)
+                return NULL_EVENT;
+            CHECK(fake_rc.opens == open0 + 1 && log_count("/video/:/transcode/universal/stop", "session", sid0) == 1 &&
+                  !strstr(fake_rc.url, sid0) && fake_rc.sub_track == -1,
+                  "converted: a new conversion with them burnt in, not drawn by the player");
+            n_null = 0;
+            pc++;
+            continue;
+        case 9365:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            open0 = fake_rc.opens;
+            n_null = 0;
+            pc++;
+            return player_button(b, w_browser, PB_SUBS);
+        case 9366:
+            pc++;
+            return ev_menu(b, 0, -1);                               /* None again */
+        case 9367:
+            if (fake_rc.opens == open0 && n_null++ < 10)
+                return NULL_EVENT;
+            CHECK(fake_rc.opens == open0 + 1, "None: converted again, without");
+            n_null = 0;
+            pc++;
+            continue;
+        case 9368:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
             pc = 937;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
@@ -1932,6 +2045,7 @@ static int script(int *b, int mask)
         case 938:
             CHECK(ui_test_page() == PG_DETAILS && !ui_test_player() &&
                   log_count("/video/:/transcode/universal/stop", NULL, NULL) == count0 + 1, "Stop: the conversion stopped too");
+            CHECK(fake_rc.sub_file[0] && !file_exists(fake_rc.sub_file), "the subtitle file fetched is gone");
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 939:

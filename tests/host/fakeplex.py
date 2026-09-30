@@ -250,6 +250,8 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"MediaContainer": {"size": len(hubs), "Hub": [h for h in hubs if h["Metadata"]]}})
         if p == "/library/metadata/20/allLeaves":
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": episodes()}})
+        if p == "/library/streams/1002":         # the SRT file beside Big Buck Bunny
+            return self.send(200, raw=b"1\r\n00:00:01,000 --> 00:00:04,000\r\nA big buck.\r\n")
         if p in ("/:/timeline", "/video/:/transcode/universal/stop", "/video/:/transcode/universal/ping"):
             return self.send(200, raw=b"")
         if p == "/library/metadata/21/children":

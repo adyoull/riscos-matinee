@@ -33,7 +33,8 @@ enum {
     PE_READY,           /* open, and playing */
     PE_CARD_1,          /* the card's buttons (player_card) */
     PE_CARD_2,
-    PE_MENU             /* Menu over the picture: the caller opens its menu */
+    PE_MENU,            /* Menu over the picture: the caller opens its menu */
+    PE_SUBS             /* Subtitles on the bar: the caller opens its subtitles menu */
 };
 
 /* How the picture fills its area */
@@ -48,7 +49,8 @@ typedef struct {
                                    started part way); seconds */
     double start;               /* seek here once open (in the video; seconds) */
     double duration;            /* the video's length (seconds), or 0: the stream's */
-    int convert;                /* converted by the server: seeks go back to the caller */
+    int convert;                /* converted by the server */
+    int subs;                   /* subtitle tracks to choose from: the bar has Subtitles */
 } player_src;
 
 /* The task, the choices (hardware overlay on, picture mode, volume 0..1) */
@@ -101,6 +103,13 @@ int player_track(void);
 void player_track_name(int i, char *buf, int size);
 void player_set_track(int i);
 
+/* Subtitles drawn by reelcore (direct play): the file's tracks, then
+   files added; -1 none */
+int player_sub_tracks(void);
+int player_sub_track(void);
+int player_set_sub(int i);                  /* 0 = done */
+int player_add_sub_file(const char *path);  /* the new track, or < 0 */
+
 double player_volume(void);             /* 0..1 */
 void player_set_volume(double v);
 
@@ -130,6 +139,6 @@ int player_test_idle(void);
 #endif
 
 /* The bar's buttons (player_test_button_xy) */
-enum { PB_BACK = 1, PB_PLAY, PB_REW, PB_FWD, PB_TRACK, PB_STATS, PB_FULL, PB_CARD1, PB_CARD2, PB_COUNT };
+enum { PB_BACK = 1, PB_PLAY, PB_REW, PB_FWD, PB_TRACK, PB_STATS, PB_FULL, PB_SUBS, PB_CARD1, PB_CARD2, PB_COUNT };
 
 #endif

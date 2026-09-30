@@ -369,6 +369,19 @@ int main(int argc, char **argv)
         if (d.n == 1) {
             CHECK(caps_play(&c, &d.v[0], &k1080, 1, 0, &p) == 0 && !p.direct && strstr(p.url, "subtitles=burn") &&
                   strstr(p.why, "subtitles burnt in: English (SRT External)"), "chosen: converted, burnt in: %s", p.why);
+            {
+                caps_t own = k1080;
+                own.own_subs = 1;
+                CHECK(caps_play(&c, &d.v[0], &own, 1, 0, &p) == 0 && p.direct &&
+                      strstr(p.why, "Direct Play: ") && strstr(p.why, "; subtitles: English (SRT External)"),
+                      "the built-in player draws them: played directly: %s", p.why);
+                free(d.v[0].subs[1].codec);
+                d.v[0].subs[1].codec = strdup("vobsub");     /* a file of pictures beside it: can't */
+                CHECK(caps_play(&c, &d.v[0], &own, 1, 0, &p) == 0 && !p.direct, "external VobSub: burnt in");
+                d.v[0].subs[1].external = 0;                 /* VobSub in the file: can */
+                CHECK(caps_play(&c, &d.v[0], &own, 1, 0, &p) == 0 && p.direct, "VobSub in the file: played directly");
+                d.v[0].subs[1].external = 1;
+            }
             CHECK(plex_set_subtitle(&c, &d.v[0], 0) == 0, "none again");
             plex_list_free(&d);
         }

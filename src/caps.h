@@ -28,6 +28,8 @@ typedef struct {
     int h264_level;         /* 41 = 4.1 */
     int max_channels;       /* sound channels in a converted stream */
     int max_fps_1080;       /* above 720 lines */
+    int own_subs;           /* the player draws subtitles itself (the built-in
+                               player): a track chosen needn't be burnt in */
 } caps_t;
 
 typedef struct {
@@ -45,6 +47,10 @@ const char *caps_quality_name(int quality);
 
 /* 1 if it can be played as it is; why says what it is, or why not */
 int caps_direct_ok(const caps_t *k, const plex_item *it, char *why, size_t size);
+
+/* 1 if the built-in player can show that subtitle track itself: one in
+   the file (text or pictures), or a text file of its own beside it */
+int caps_sub_own(const plex_sub *sb);
 
 /* The X-Plex-Client-Profile-Extra value (not URL-escaped) */
 void caps_profile_extra(const caps_t *k, char *out, size_t size);

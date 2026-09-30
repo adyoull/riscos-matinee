@@ -23,6 +23,7 @@ struct ReelCore {
     double pos, dur;
     int last_cs, last_frame;
     int track, tracks;
+    int sub, subs;              /* the subtitle track shown; tracks (the file's, then files) */
     double vol;
     long long bytes;
 };
@@ -46,6 +47,9 @@ ReelCore *reelcore_open_source(const ReelCoreSource *src, int flags)
     v->fail = strstr(src->url, "fail") != NULL;
     v->dur = fake_len(src->url);
     v->tracks = strstr(src->url, ".m3u8") ? 1 : 2;
+    v->subs = strstr(src->url, ".m3u8") ? 0 : 2;       /* Big Buck Bunny's file: SRT and PGS */
+    v->sub = -1;
+    fake_rc.sub_track = -1;
     v->vol = 1;
     v->last_frame = -1;
     return v;
@@ -256,3 +260,30 @@ int reelcore_set_panel(ReelCore *v, const ReelCorePanel *p)
 void reelcore_set_yuv_scale(ReelCore *v, double k) { (void)v; fake_rc.yuv_scale = k; }
 
 void reelcore_panel_size(const ReelCore *v, int *w, int *h) { (void)v; *w = fake_rc.panel_rows ? 400 : 0; *h = fake_rc.panel_rows * 20; }
+
+int reelcore_subtitle_tracks(const ReelCore *v) { return v->subs; }
+int reelcore_subtitle_track(const ReelCore *v) { return v->sub; }
+int reelcore_set_subtitle_track(ReelCore *v, int i)
+{
+    if (i < -1 || i >= v->subs)
+        return -22;
+    v->sub = i;
+    fake_rc.sub_track = i;
+    fake_rc.sub_sets++;
+    return 0;
+}
+int reelcore_add_subtitle_file(ReelCore *v, const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    size_t n;
+    if (!f)
+        return -2;
+    n = fread(fake_rc.sub_text, 1, sizeof(fake_rc.sub_text) - 1, f);
+    fake_rc.sub_text[n] = 0;
+    fclose(f);
+    snprintf(fake_rc.sub_file, sizeof(fake_rc.sub_file), "%s", path);
+    fake_rc.sub_files++;
+    v->sub = v->subs++;
+    fake_rc.sub_track = v->sub;
+    return v->sub;
+}

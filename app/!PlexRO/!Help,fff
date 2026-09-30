@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test8
+!PlexRO - a Plex client for RISC OS                  0.1.0-test9
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -96,15 +96,20 @@ play (the photos arrive a moment after the page).
 
 Subtitles
 ---------
-Choose them on the Subtitles button on the details page, or Subtitles
-on a poster's menu: None, or one of the video's tracks (in the file, or a
-file of their own beside it on the server). The choice is kept on the
-server, so the Plex apps on your other devices show the same.
+Choose them on the Subtitles button on the details page, Subtitles on a
+poster's menu, or while it plays: Subtitles on the bar under the picture,
+or on the menu over the picture. None turns them off; or one of the
+video's tracks (in the file, or a file of their own beside it on the
+server). The choice is kept on the server, so the Plex apps on your
+other devices show the same.
 
-For now Reel can't be told which subtitles to show, so a video with
-subtitles chosen is converted by the server, which burns them into the
-picture (any kind: text, DVD or Blu-ray). The status line and the details
-page say so. Choose None to play it directly again.
+The built-in player draws them itself, playing the file directly: text
+(SubRip, ASS, WebVTT, MP4 text) and pictures (DVD, Blu-ray, DVB) in the
+file, and text files beside it. Changing them while it plays is at once.
+Otherwise the server burns them into the picture: with ReelEGL or Reel
+(which can't be told which to show), for a video the server converts
+anyway, and for picture subtitles in a file of their own. Changing them
+then starts the server's conversion again from where you are.
 
 Playing
 -------
@@ -115,7 +120,7 @@ Built-in: the video plays in PlexRO's window, which grows to fit it if
 it's narrow. Play carries on from where you stopped (as Resume); From
 the start (or Play from start) begins again. Under the picture: the title and the time, Back, Play or
 Pause, back and on 10 seconds, the position bar (click to go there),
-Stats and Full screen.
+Subtitles (when it has some), Stats and Full screen.
 
   Space          pause, play
   Left, Right    back, on 10 seconds
@@ -139,7 +144,7 @@ window or full screen: the connection's speed, how much has come in and
 how much is read ahead (with graphs), the codecs, the timing, and what's
 left out to keep up (Keeping Up), as in ReelEGL.
 
-Menu over the picture: Sound track, Volume, Picture (Fit, Fill (crop) or
+Menu over the picture: Sound track, Subtitles, Volume, Picture (Fit, Fill (crop) or
 Stretch), Stats, Full screen, Hardware overlay, Stop.
 
 Hardware overlay (on by default): the picture goes to the display
@@ -170,10 +175,11 @@ PlexRO starts it. The Filer must have seen the player's application
 PlexRO can't find it.
 
 The status line says how it will play:
-  "Direct play: ..."         the file itself: nothing is converted
-  "Converted by the server"  the server converts it, and says why (for
-                             example HEVC video, 10-bit video, or a bit
-                             rate above the quality's limit)
+  "Direct Play: ..."   the file itself: nothing is changed by the server
+  "Transcoded (...)"   the server converts it, and says why (for example
+                       HEVC video, 10-bit video, or a bit rate above the
+                       quality's limit)
+The stats (S) say the same on their first line.
 
 Quality on the icon's menu sets the limits, for direct play and for
 what the server converts to: 1080p (10 Mbit/s), 720p (4 Mbit/s, the
