@@ -6,25 +6,22 @@ go to Reel directly. Everything else is converted by the server into a stream Re
 handle (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS
 can play.
 
-**Status: phase 1 prototype, unfinished.**
+**Status: phase 1, a test build (0.1.0-test1), not yet tried on RISC OS.** It has been
+tested on Linux: the core against a fake Plex server, and the Wimp front end against a
+scripted fake Wimp under qemu.
 
-What exists now is the core, and it has been tested on Linux only:
+- Sign-in with a plex.tv/link code, or a server's address and token typed by hand.
+- Servers, and a poster browser: Continue watching, films, TV shows, seasons and
+  episodes.
+- The direct-play or transcode decision, and the hand-off to ReelEGL or Reel.
+- Resume, Play from start, Mark watched or unwatched.
+- Save original file: the file itself, up to 4GB−1.
 
-- sign-in
-- server discovery
-- browsing
-- the direct-play or transcode decision
-- the hand-off to Reel
+"PlexRO" is a working name. Plex is a trademark of Plex, Inc.; this project isn't made
+by Plex or connected with it.
 
-What doesn't exist yet:
-
-- the Wimp front end
-- a RISC OS build
-- the `!PlexRO` application directory
-- "Save original file" (large-file download)
-
-
-Licence: GPL v2 or later (the own files). `third_party/cjson` is MIT (see its LICENSE).
+Licence: GPL v2 or later (the own files; see COPYING). `third_party/cjson` is MIT (see
+its LICENSE), and `third_party/pthreadticker` is revised BSD.
 
 ## Layout
 
@@ -34,18 +31,29 @@ Licence: GPL v2 or later (the own files). `third_party/cjson` is MIT (see its LI
 | `src/plex.[ch]` | The Plex API: PIN sign-in, servers, lists, posters, scrobble, file URL |
 | `src/caps.[ch]` | What Reel can play; the direct-play decision and the transcode request |
 | `src/handoff.[ch]` | yt-dlp-style JSON that Reel 0.1.17+ plays unmodified |
+| `src/ui.[ch]` | The Wimp front end: icon bar, sign-in, browser, menus, hand-off, saving, Choices |
+| `src/version.h`, `src/proginfo.h` | The version; the Info window (from riscos-ffmpeg) |
+| `app/!PlexRO` | `!Boot`, `!Run`, `!Help` |
+| `build/` | `build.sh` (compile, link, AIF, checks), `package.sh` (the RISC OS zip), `env.sh` |
+| `tools/` | `mksprites.py` (the icon), `mkrozip.py`, `check-stack-probes.py`, `check-unixlib.sh` |
 | `third_party/cjson` | cJSON 1.7.18 (MIT) |
+| `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.01, which `!Run` loads |
 | `tests/host/fakeplex.py` | A stand-in for plex.tv and a Plex Media Server |
 | `tests/host/core_test.c` | 86 checks against it, with Reel's own `sources.c` reading the hand-off |
-| `tests/host/run.sh` | Builds and runs the host test |
-| `docs/` | Feasibility, design, toolchain notes, session state |
+| `tests/host/ui_test.c` | The front end against a scripted fake Wimp, under qemu-arm (133 checks) |
+| `tests/host/net_sock.c` | `net.h` over plain sockets, for ui_test |
+| `tests/host/run.sh`, `mutate.sh` | Build and run the tests; break the code on purpose and check they notice |
+| `docs/` | Feasibility, design, and the toolchain and build |
 
-## Host test
+## Building and testing
+
+See `docs/TOOLCHAIN.md`. In short:
 
 ```
-sudo apt install gcc pkg-config libavformat-dev python3
-git clone https://github.com/adyoull/riscos-ffmpeg.git ../riscos-ffmpeg
+GCCSDK_ENV=~/gccsdk/env ELF2AIF=path/to/elf2aif build/build.sh && build/package.sh
 REEL_SRC=../riscos-ffmpeg tests/host/run.sh
+REEL_SRC=../riscos-ffmpeg tests/host/mutate.sh
 ```
 
-Expected output: `core_test: 86 checks, 0 failed`.
+Expected: `core_test: 86 checks, 0 failed`, `ui_test: 133 checks, 0 failed`, and
+`12 mutations, 0 survived`.
