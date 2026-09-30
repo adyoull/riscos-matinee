@@ -3474,6 +3474,12 @@ static void key(int *b)
 static void open_request(int *b)
 {
     _kernel_swi_regs r;
+    if (b[0] == S.browser_w && S.page == PG_PLAYER) {
+        /* the player page doesn't scroll: the picture and the bar fill what's
+           in view (the scroll bars are the other pages') */
+        b[5] = 0;
+        b[6] = 0;
+    }
     r.r[1] = (intptr_t)b;
     swi(Wimp_OpenWindow, &r);
     if (b[0] == S.browser_w && S.page == PG_PLAYER) {

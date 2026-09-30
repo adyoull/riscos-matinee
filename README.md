@@ -7,8 +7,8 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test5).** test1 to test3 worked on a Raspberry Pi;
-test5 adds the built-in player, not yet tried on one.
+**Status: phase 2, a test build (0.1.0-test6).** test1 to test3 worked on a Raspberry Pi;
+test5 added the built-in player; test6 stops its page scrolling.
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
@@ -54,7 +54,7 @@ its LICENSE), and `third_party/pthreadticker` is revised BSD.
 | `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.01, which `!Run` loads |
 | `tests/host/fakeplex.py` | A stand-in for plex.tv and a Plex Media Server |
 | `tests/host/core_test.c` | 98 checks against it, with Reel's own `sources.c` reading the hand-off |
-| `tests/host/ui_test.c` | The front end against a scripted fake Wimp and a fake VideoOverlay, under qemu-arm (255 checks); it also draws the windows into pictures |
+| `tests/host/ui_test.c` | The front end against a scripted fake Wimp and a fake VideoOverlay, under qemu-arm (256 checks); it also draws the windows into pictures |
 | `tests/host/fake_reelcore.[ch]` | A stand-in for reelcore, for ui_test: a video that plays by the fake clock |
 | `tests/host/net_sock.c` | `net.h` over plain sockets, for ui_test |
 | `tests/host/run.sh`, `mutate.sh` | Build and run the tests; break the code on purpose and check they notice |
@@ -70,7 +70,7 @@ REEL_SRC=../riscos-ffmpeg tests/host/run.sh
 REEL_SRC=../riscos-ffmpeg tests/host/mutate.sh
 ```
 
-Expected: `core_test: 98 checks, 0 failed`, `ui_test: 255 checks, 0 failed`, and
-`32 mutations, 0 survived`. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
+Expected: `core_test: 98 checks, 0 failed`, `ui_test: 256 checks, 0 failed`, and
+`33 mutations, 0 survived`. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
 `player.ppm` and `upnext.ppm` in its output directory: the window's pages as its fake
 Wimp drew them (with a stand-in font, made-up posters and a made-up picture).

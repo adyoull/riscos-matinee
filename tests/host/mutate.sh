@@ -100,6 +100,8 @@ mutate "Resume ignored in direct play" src/player.c \
   'if (P.start > 0 && !P.convert)\n        reelcore_seek(P.v, P.start - P.base);' ''
 mutate "Stretch not given to the overlay" src/player.c \
   'if (P.pic_mode != PIC_STRETCH) {' 'if (1) {'
+mutate "the player page scrolls" src/ui.c \
+  '        b[5] = 0;\n        b[6] = 0;\n' ''
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

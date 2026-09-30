@@ -7,7 +7,7 @@
 #ifndef PLEXRO_VERSION_H
 #define PLEXRO_VERSION_H
 
-#define PLEXRO_VERSION  "0.1.0-test5"
+#define PLEXRO_VERSION  "0.1.0-test6"
 #define PLEXRO_DATE     "30-Sep-2026"
 #define APP_AUTHOR      "Andrew Youll"
 

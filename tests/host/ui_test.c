@@ -1666,11 +1666,14 @@ static int script(int *b, int mask)
             CHECK(fake_rc.track == 1, "the file's second sound track");
             memset(b, 0, 32);                                       /* taller: not 16:9 any more */
             b[0] = w_browser; b[1] = x->vis[0]; b[2] = x->vis[1] - 300; b[3] = x->vis[2]; b[4] = x->vis[3];
+            b[6] = -300;                                            /* and scrolled (the scroll bar dragged) */
             b[7] = -1;
             pc = 9210;
             return 2;                                               /* Open_Window_Request */
         }
         case 9210:
+            CHECK(win(w_browser)->sy == 0 && win(w_browser)->sx == 0, "the player page doesn't scroll (%d)",
+                  win(w_browser)->sy);
             pc = 922;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
