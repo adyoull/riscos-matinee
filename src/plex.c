@@ -51,12 +51,25 @@ void plex_headers(const plex_ctx *c, const char *token, char *out, size_t size)
 }
 
 /* GET/POST and parse the JSON answer; NULL on error (c->err says why) */
+/* The headers for the API's JSON: compressed, if the server will (Plex
+   gzips them; FFmpeg's http unzips): a library of 2000 films is several
+   MB of JSON, a tenth of that compressed. Not for pictures or video (a
+   range of a compressed file means nothing). */
+static void api_headers(plex_ctx *c, const char *token, char *out, size_t size)
+{
+    size_t n;
+    plex_headers(c, token, out, size);
+    n = strlen(out);
+    if (n + 32 < size)
+        snprintf(out + n, size - n, "Accept-Encoding: gzip\r\n");
+}
+
 static cJSON *get_json(plex_ctx *c, const char *url, const char *token, const char *post, int timeout, int *status)
 {
     char headers[1024];
     net_buf b;
     cJSON *j;
-    plex_headers(c, token, headers, sizeof(headers));
+    api_headers(c, token, headers, sizeof(headers));
     if (net_fetch(url, headers, post, &b, timeout, c->err, sizeof(c->err)) != 0) {
         if (status)
             *status = b.status;
@@ -728,7 +741,7 @@ static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
     memset(out, 0, sizeof(*out));
     snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=0&X-Plex-Container-Size=%d",
              c->base, path, strchr(path, '?') ? "&" : "?", size);
-    plex_headers(c, c->token, headers, sizeof(headers));
+    api_headers(c, c->token, headers, sizeof(headers));
     if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
     if (plex_list_parse(b.data, path, out) != 0) {

@@ -159,6 +159,7 @@ static void force_redraw(int w, int x0, int y0, int x1, int y1);
 
 typedef struct poster {
     struct poster *next;
+    unsigned hash;                  /* thumb's (cache_find compares these first) */
     char thumb[256];
     int *area;                      /* a sprite area with one sprite, "p" (rounded: masked corners) */
     size_t bytes;
@@ -169,6 +170,7 @@ typedef struct {
     char line[2][80];               /* Latin-1, cut to fit the tile */
     char sum[2][160];               /* the show page: an episode's summary, two lines */
     poster_t *poster;
+    int fitted;                     /* the grid's lines are cut to fit when first drawn (fit_disp) */
 } disp_t;
 
 typedef struct {
@@ -860,10 +862,20 @@ static void cache_trim(void)
     }
 }
 
+static unsigned str_hash(const char *s)
+{
+    unsigned h = 2166136261u;
+    while (*s)
+        h = (h ^ (unsigned char)*s++) * 16777619u;
+    return h;
+}
+
+/* (A list of 2000 asks this for each item against a few hundred kept) */
 static poster_t *cache_find(const char *thumb)
 {
+    unsigned h = str_hash(thumb);
     for (poster_t *p = S.cache; p; p = p->next)
-        if (!strcmp(p->thumb, thumb))
+        if (p->hash == h && !strcmp(p->thumb, thumb))
             return p;
     return NULL;
 }
@@ -1042,6 +1054,7 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
     if (!p)
         return NULL;
     snprintf(p->thumb, sizeof(p->thumb), "%s", key);
+    p->hash = str_hash(p->thumb);
     if (picture_get(thumb, w, h, &jpeg, &len) != 0 ||
         !(p->area = sprite_make(w, h, round, &p->bytes)) ||
         jpeg_into(p->area, w, h, jpeg, len, art != 0) != 0) {
@@ -1204,14 +1217,25 @@ static void make_disp(void)
         }
         return;
     }
+    /* the grid: the lines are cut to fit as each tile is first drawn (a
+       library of 2000 needn't measure 4000 lines before it's shown) */
     for (int i = 0; i < S.list.n; i++) {
         const plex_item *it = &S.list.v[i];
         latin1(it->title, S.disp[i].line[0], sizeof(S.disp[i].line[0]));
         latin1(it->subtitle ? it->subtitle : "", S.disp[i].line[1], sizeof(S.disp[i].line[1]));
-        draw_fit(D_BOLD, S.disp[i].line[0], TILE_W);
-        draw_fit(D_BODY, S.disp[i].line[1], TILE_W);
         S.disp[i].poster = it->thumb ? cache_find(it->thumb) : NULL;
     }
+}
+
+/* A grid tile's two lines, cut to the tile's width (once) */
+static void fit_disp(int i)
+{
+    disp_t *d = &S.disp[i];
+    if (d->fitted || S.home.on || S.show.on)
+        return;
+    draw_fit(D_BOLD, d->line[0], TILE_W);
+    draw_fit(D_BODY, d->line[1], TILE_W);
+    d->fitted = 1;
 }
 
 /* ---- the browser: drawing ------------------------------------------------------ */
@@ -1460,6 +1484,7 @@ static void draw_tile(int i, int ox, int oy)
     const plex_item *it = &S.list.v[i];
     disp_t *d = &S.disp[i];
     int x0, y0, x1, y1, py0;
+    fit_disp(i);
     tile_box(i, &x0, &y0, &x1, &y1);
     py0 = y1 - POSTER_H;
     /* a light border round the selected one (grey: pointed at); else a shadow */
@@ -2765,6 +2790,20 @@ static int tile_at(int sx, int sy)
     window_state(S.browser_w, st);
     wx = sx - (st[1] - st[5]);
     wy = sy - (st[4] - st[6]);
+    if (!S.home.on && !S.show.on && S.cols > 0) {
+        /* the grid: the row and column under the point (10 times a second
+           while the pointer's over the window: no walk through a big list) */
+        int top = -HEADER_H - libbar_h() - GAP + GAP / 2, row, col, i, x0, y0, x1, y1;
+        if (wy > top || wx < GAP / 2)
+            return -1;
+        row = (top - wy) / (TILE_H + GAP);
+        col = (wx - GAP / 2) / (TILE_W + GAP);
+        i = row * S.cols + col;
+        if (col >= S.cols || i >= S.list.n)
+            return -1;
+        tile_box(i, &x0, &y0, &x1, &y1);
+        return wx >= x0 - GAP / 2 && wx < x1 + GAP / 2 && wy >= y0 - GAP / 2 && wy < y1 + GAP / 2 ? i : -1;
+    }
     for (int i = 0; i < S.list.n; i++) {
         int x0, y0, x1, y1;
         tile_box(i, &x0, &y0, &x1, &y1);
@@ -4951,6 +4990,8 @@ static void item_menu_build(void)
         det_fetch(it, 0);
     if (video && det_is(it))
         subs_menu_build();
+    if (it)
+        fit_disp(S.sel);
     menu_begin(&m_item, it ? S.disp[S.sel].line[0] : APP);
     menu_add(&m_item, folder ? "Open" : "Play", 0, !video && !folder, -1, 0);
     menu_add(&m_item, "Details...", 0, !video, -1, 0);
@@ -6465,7 +6506,13 @@ int ui_test_tile_xy(int i, int *x, int *y)
     return 0;
 }
 int ui_test_items(void) { return S.have_list ? S.list.n : -1; }
-const char *ui_test_item(int i, int line) { return S.disp && i >= 0 && i < S.list.n ? S.disp[i].line[line & 1] : ""; }
+const char *ui_test_item(int i, int line)
+{
+    if (!S.disp || i < 0 || i >= S.list.n)
+        return "";
+    fit_disp(i);
+    return S.disp[i].line[line & 1];
+}
 const char *ui_test_status(void) { return S.status; }
 const char *ui_test_path(void) { return S.where; }
 int ui_test_saving(void) { return S.save.active; }
@@ -6572,6 +6619,7 @@ const char *ui_test_home_row(int r, int *start, int *n, int *vis)
     *vis = S.home.lay[r].vis;
     return S.home.row[r].title;
 }
+int ui_test_az_letter(const char *title) { return az_letter(title); }
 int ui_test_lib(int *view, int *sort, int *unwatched)
 {
     *view = S.lib.view;

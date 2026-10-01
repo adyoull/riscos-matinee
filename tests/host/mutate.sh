@@ -187,7 +187,7 @@ mutate "age ratings keep their country" src/ui.c \
 
 # test13: the home page
 mutate "the top as the old list" src/ui.c \
-  'if (!*path)                     /* the top: the home page */\n        e = plex_home(&S.px, &l, rows, 8, &nrows);\n    else\n        e' 'e'
+  '    S.home.on = !*path;' '    S.home.on = 0;'
 mutate "a row shows all, not what fits" src/ui.c \
   'S.home.lay[r].vis = fit < S.home.row[r].n ? fit : S.home.row[r].n;' 'S.home.lay[r].vis = S.home.row[r].n;'
 mutate "the featured backdrop not fetched again after a resize" src/ui.c \
@@ -203,7 +203,7 @@ mutate "Remove from Continue watching not sent" src/ui.c \
 
 # test15: a library's bar, More like this
 mutate "A to Z ignores The" src/ui.c \
-  'if (!strncasecmp(t, "The ", 4)) t += 4;' ''
+  'if (!strncasecmp(t, "The ", 4)) t += 4;' 'if (!strncasecmp(t, "The ", 4)) t += 0;'
 mutate "Unwatched not asked for" src/ui.c \
   'unwatched ? (sort ? "&unwatched=1" : "unwatched=1") : ""' '""'
 mutate "More like this not fetched" src/ui.c \
@@ -224,6 +224,16 @@ mutate "the same star doesn't take the rating away" src/ui.c \
   'it->user_rating < r + 1 ? -1 : r);' 'it->user_rating < r + 1 ? r : r);'
 mutate "the server's token not fetched again after a switch" src/ui.c \
   '    if (use_server(k) != 0)\n        return;\n    if (S.libs.n' '    if (0)\n        return;\n    if (S.libs.n'
+
+# performance (after test19): the bar's parts, hit-testing, lazy fitting, gzip
+mutate "the whole bar redrawn as the time changes" src/player.c \
+  'update_box(top_line(right - (w > ow ? w : ow) - 8, right + 4));' 'update_box(P.bar);'
+mutate "the grid's hit-test always the first row" src/ui.c \
+  'row = (top - wy) / (TILE_H + GAP);' 'row = 0;'
+mutate "grid lines never cut to fit" src/ui.c \
+  '    draw_fit(D_BOLD, d->line[0], TILE_W);\n    draw_fit(D_BODY, d->line[1], TILE_W);\n    d->fitted = 1;' '    d->fitted = 1;'
+mutate "lists not asked for compressed" src/plex.c \
+  'snprintf(out + n, size - n, "Accept-Encoding: gzip\\r\\n");' '(void)0;'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

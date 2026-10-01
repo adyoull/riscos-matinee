@@ -84,6 +84,18 @@ static int request(const char *url, const char *headers, const char *method, con
         close(fd);
         return -1;
     }
+    /* no zlib here (the RISC OS build's FFmpeg unzips): the fake server
+       answers plainly when it isn't asked for gzip */
+    {
+        static char h2[4096];
+        const char *g = headers ? strstr(headers, "Accept-Encoding: gzip\r\n") : NULL;
+        if (g && strlen(headers) < sizeof(h2)) {
+            size_t k = (size_t)(g - headers);
+            memcpy(h2, headers, k);
+            strcpy(h2 + k, g + strlen("Accept-Encoding: gzip\r\n"));
+            headers = h2;
+        }
+    }
     rl = strlen(path) + (headers ? strlen(headers) : 0) + (post ? strlen(post) : 0) + 512;
     req = malloc(rl);
     if (!req) {

@@ -69,6 +69,7 @@ int ui_test_psize(void);
 int ui_test_badge(int i);                       /* item i's badge: 1 a tick, 2 a count, 0 none */
 int ui_test_show(int *season);
 int ui_test_tab(int *current);
+int ui_test_az_letter(const char *title);       /* the A-Z strip's letter for a title (1 A .. 26 Z, 0 #) */
 int ui_test_lib(int *view, int *sort, int *unwatched);   /* a library's bar shows; what it says */                  /* how many tabs (Home and the libraries); the current one */
 int ui_test_home(int *rows, int *pick);         /* the home page is shown: its rows, the one featured */
 const char *ui_test_home_row(int r, int *start, int *n, int *vis);   /* a row's title, items, shown */                  /* the show page is shown, and which series */

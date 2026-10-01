@@ -6,7 +6,7 @@ returns the record as JSON, POST /_reset clears it.
 
 The part file /library/parts/11/111/file.mp4 is 5 MB of a fixed pattern
 (Range is honoured, as Plex does)."""
-import json, sys, threading, hashlib
+import json, sys, threading, hashlib, gzip
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
@@ -146,8 +146,13 @@ class H(BaseHTTPRequestHandler):
 
     def send(self, code, obj=None, raw=None, ctype="application/json", extra=None):
         data = raw if raw is not None else (json.dumps(obj).encode() if obj is not None else b"")
+        gz = ctype == "application/json" and data and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        if gz:                      # as Plex does: JSON compressed when asked
+            data = gzip.compress(data)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(data)))
         for k, v in (extra or {}).items():
             self.send_header(k, v)

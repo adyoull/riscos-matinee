@@ -195,6 +195,12 @@ int main(int argc, char **argv)
     log = server_log();
     {
         const cJSON *r = last(log, "/library/sections/1/all");
+        CHECK(r && !strcmp(hdr(r, "Accept-Encoding"), "gzip"), "lists asked for compressed (the fake gzips them; FFmpeg unzips)");
+    }
+    cJSON_Delete(log);
+    log = server_log();
+    {
+        const cJSON *r = last(log, "/library/sections/1/all");
         CHECK(r && !strcmp(qv(r, "X-Plex-Container-Size"), "2000"), "paged request");
     }
     cJSON_Delete(log);

@@ -107,6 +107,7 @@ static struct {
     box_t card_btn[2];
     /* the buttons, laid out (work area) */
     box_t btn[PB_COUNT];
+    box_t clip;                     /* the rectangle being drawn (work area): what's outside it is skipped */
     /* timing */
     int idle_cs;
     int ov_pending;
@@ -326,6 +327,19 @@ static void layout_boxes(void)
 
 /* The bar is there (the window: always; full screen: while the pointer's been moving) */
 static int bar_visible(void) { return !P.fullscreen || P.bar_shown; }
+
+/* Does b (work area) meet the rectangle being drawn? (a SWI or several saved for each that doesn't) */
+static int vis(const box_t *b)
+{
+    return b->x1 > b->x0 && b->x0 < P.clip.x1 + 2 && b->x1 > P.clip.x0 - 2 && b->y0 < P.clip.y1 + 2 &&
+           b->y1 > P.clip.y0 - 2;
+}
+
+/* The bar's top line: the title on the left, the time on the right (or left of the skip button) */
+static box_t top_line(int x0, int x1)
+{
+    return (box_t){ x0, P.bar.y1 - 64, x1, P.bar.y1 };
+}
 
 /* ---- the picture sprite (as !Reel's) ---------------------------------------- */
 
@@ -675,6 +689,11 @@ static int ov_show_frame(void)
     ov.fw = fw; ov.fh = fh; ov.colour = colour; ov.mode = mode;
     if (ov.failed || fw < 2 || fh < 2)
         return 0;
+    /* waiting for the vsync after the last switch (null events come at once
+       meanwhile): ask nothing else until it's passed (looking for windows
+       over the picture is a Wimp call for each window in front) */
+    if (ov.id && ov.shown && ov.placed[0] == w && ov_vsyncs() == ov.vsync)
+        return 2;
     if (ov_covered(w)) {
         ov_hide();
         return 0;
@@ -834,27 +853,31 @@ static void draw_bar(int ox, int oy)
         return;
     }
     b = &P.btn[PB_BACK];
-    round_button(b, ox, oy, C_CARD, C_HEADER);
-    draw_glyph(G_BACK, ox + b->x0 + 20, oy + b->y0 + 16, ox + b->x1 - 20, oy + b->y1 - 16, C_TEXT, C_CARD);
+    if (vis(b)) {
+        round_button(b, ox, oy, C_CARD, C_HEADER);
+        draw_glyph(G_BACK, ox + b->x0 + 20, oy + b->y0 + 16, ox + b->x1 - 20, oy + b->y1 - 16, C_TEXT, C_CARD);
+    }
     b = &P.btn[PB_PLAY];
-    round_button(b, ox, oy, C_ACCENT, C_HEADER);
-    if (paused)
-        draw_glyph(G_PLAY, ox + b->x0 + 28, oy + b->y0 + 22, ox + b->x1 - 20, oy + b->y1 - 22, C_TEXT, C_ACCENT);
-    else {                                          /* two bars */
-        draw_rect(ox + b->x0 + 26, oy + b->y0 + 22, ox + b->x0 + 36, oy + b->y1 - 22, C_TEXT);
-        draw_rect(ox + b->x1 - 36, oy + b->y0 + 22, ox + b->x1 - 26, oy + b->y1 - 22, C_TEXT);
+    if (vis(b)) {
+        round_button(b, ox, oy, C_ACCENT, C_HEADER);
+        if (paused)
+            draw_glyph(G_PLAY, ox + b->x0 + 28, oy + b->y0 + 22, ox + b->x1 - 20, oy + b->y1 - 22, C_TEXT, C_ACCENT);
+        else {                                      /* two bars */
+            draw_rect(ox + b->x0 + 26, oy + b->y0 + 22, ox + b->x0 + 36, oy + b->y1 - 22, C_TEXT);
+            draw_rect(ox + b->x1 - 36, oy + b->y0 + 22, ox + b->x1 - 26, oy + b->y1 - 22, C_TEXT);
+        }
     }
-    if (P.btn[PB_REW].x1 > P.btn[PB_REW].x0) {
+    if (vis(&P.btn[PB_REW]))
         pill(&P.btn[PB_REW], ox, oy, "-10 s", 0, C_HEADER);
+    if (vis(&P.btn[PB_FWD]))
         pill(&P.btn[PB_FWD], ox, oy, "+10 s", 0, C_HEADER);
-    }
-    if (P.btn[PB_STATS].x1 > P.btn[PB_STATS].x0)
+    if (vis(&P.btn[PB_STATS]))
         pill(&P.btn[PB_STATS], ox, oy, "Stats", P.stats, C_HEADER);
-    if (P.btn[PB_SUBS].x1 > P.btn[PB_SUBS].x0)
+    if (vis(&P.btn[PB_SUBS]))
         pill(&P.btn[PB_SUBS], ox, oy, "Subtitles", 0, C_HEADER);
     b = &P.btn[PB_FULL];                            /* four corners */
-    round_button(b, ox, oy, C_CARD, C_HEADER);
-    {
+    if (vis(b)) {
+        round_button(b, ox, oy, C_CARD, C_HEADER);
         int x0 = ox + b->x0 + 18, y0 = oy + b->y0 + 18, x1 = ox + b->x1 - 18, y1 = oy + b->y1 - 18, t = 6, l = 10;
         draw_rect(x0, y0, x0 + l, y0 + t, C_TEXT); draw_rect(x0, y0, x0 + t, y0 + l, C_TEXT);
         draw_rect(x1 - l, y0, x1, y0 + t, C_TEXT); draw_rect(x1 - t, y0, x1, y0 + l, C_TEXT);
@@ -865,16 +888,26 @@ static void draw_bar(int ox, int oy)
     bar_text();
     {
         int tw = draw_width(D_BODY, P.time_text), y = P.bar.y1 - 44, right = P.vis_w - 24;
+        box_t tl;
         if (P.btn[PB_SKIP].x1 > P.btn[PB_SKIP].x0) {
-            pill(&P.btn[PB_SKIP], ox, oy, P.skip, 1, C_HEADER);
+            if (vis(&P.btn[PB_SKIP]))
+                pill(&P.btn[PB_SKIP], ox, oy, P.skip, 1, C_HEADER);
             right = P.btn[PB_SKIP].x0 - 24;
         }
-        snprintf(title, sizeof(title), "%s", P.title);
-        draw_fit(D_BOLD, title, right - 24 - tw - 32);
-        draw_text(D_BOLD, ox + 24, oy + y, title, C_TEXT, C_HEADER);
+        tl = top_line(0, right - tw - 16);
+        if (vis(&tl)) {                             /* (not when only the time is being redrawn) */
+            snprintf(title, sizeof(title), "%s", P.title);
+            draw_fit(D_BOLD, title, right - 24 - tw - 32);
+            draw_text(D_BOLD, ox + 24, oy + y, title, C_TEXT, C_HEADER);
+        }
         draw_text(D_BODY, ox + right - tw, oy + y, P.time_text, C_SUB, C_HEADER);
     }
-    draw_track(ox, oy);
+    {
+        box_t t = P.btn[PB_TRACK];                  /* and the knob, which can stand past its ends */
+        t.x0 -= 16; t.x1 += 16;
+        if (vis(&t))
+            draw_track(ox, oy);
+    }
 }
 
 static void draw_card(int ox, int oy)
@@ -899,6 +932,7 @@ static void draw_rect_of(int w, int *b, int update)
     int ox = b[1] - b[5], oy = b[4] - b[6];
     box_t c;
     draw_origin(ox, oy);
+    P.clip = (box_t){ b[7] - ox, b[8] - oy, b[9] - ox, b[10] - oy };
     c.x0 = ox + P.pic.x0; c.x1 = ox + P.pic.x1; c.y0 = oy + P.pic.y0; c.y1 = oy + P.pic.y1;
     if (c.x0 < b[7]) c.x0 = b[7];
     if (c.y0 < b[8]) c.y0 = b[8];
@@ -1822,10 +1856,27 @@ int player_null(void)
         P.last_bar_cs = t;
         if (bar_visible()) {
             char old[64];
+            int ow, fx = P.fill_x;
             snprintf(old, sizeof(old), "%s", P.time_text);
+            ow = draw_width(D_BODY, old);
             bar_text();
-            if (strcmp(old, P.time_text) || track_fill() != P.fill_x)
-                update_box(P.bar);
+            if (P.mini) {
+                if (track_fill() != fx)
+                    update_box(P.bar);
+            } else {
+                /* only what changed: the time, and the position bar (the
+                   rest of the bar is a dozen buttons, a SWI or ten each) */
+                if (strcmp(old, P.time_text)) {
+                    int right = P.btn[PB_SKIP].x1 > P.btn[PB_SKIP].x0 ? P.btn[PB_SKIP].x0 - 24 : P.vis_w - 24;
+                    int w = draw_width(D_BODY, P.time_text);
+                    update_box(top_line(right - (w > ow ? w : ow) - 8, right + 4));
+                }
+                if (track_fill() != fx) {
+                    box_t t = P.btn[PB_TRACK];
+                    t.x0 -= 16; t.x1 += 16;
+                    update_box(t);
+                }
+            }
         }
     }
     return PE_NONE;

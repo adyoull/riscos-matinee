@@ -295,9 +295,51 @@ static int file_exists(const char *p) { struct stat st; return stat(p, &st) == 0
 
 static int script(int *b, int mask);
 
+/* A profile of the SWIs called (PROFILE=1): which, and how often, between
+   profile_begin and profile_end */
+static struct { int swi; unsigned n; } prof[128];
+static int nprof, profiling;
+static void profile_count(int swi)
+{
+    if (!profiling)
+        return;
+    for (int i = 0; i < nprof; i++)
+        if (prof[i].swi == swi) {
+            prof[i].n++;
+            return;
+        }
+    if (nprof < 128) {
+        prof[nprof].swi = swi;
+        prof[nprof++].n = 1;
+    }
+}
+static void profile_begin(void) { nprof = 0; profiling = getenv("PROFILE") != NULL; }
+extern unsigned draw_test_made, draw_test_scans, draw_test_widths, draw_test_fits, draw_test_wraps;
+static unsigned made0, scans0, w0, f0, r0;
+static void profile_end(const char *what)
+{
+    unsigned total = 0;
+    if (!profiling)
+        return;
+    printf("  shapes made since last: %u, scans: %u (draw_width %u, fit %u, wrap %u)\n", draw_test_made - made0,
+           draw_test_scans - scans0, draw_test_widths - w0, draw_test_fits - f0, draw_test_wraps - r0);
+    w0 = draw_test_widths; f0 = draw_test_fits; r0 = draw_test_wraps;
+    made0 = draw_test_made;
+    scans0 = draw_test_scans;
+    profiling = 0;
+    for (int i = 0; i < nprof; i++)
+        total += prof[i].n;
+    printf("  profile %s: %u SWIs:", what, total);
+    for (int i = 0; i < nprof; i++)
+        if (prof[i].n * 50 >= total)
+            printf(" &%X x%u", prof[i].swi, prof[i].n);
+    printf("\n");
+}
+
 _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *out)
 {
     static _kernel_oserror err = { 1, "fake: not handled" };
+    profile_count(swi);
     switch (swi) {
     case 0x400C0:                                   /* Wimp_Initialise */
         SCHECK(!strcmp((const char *)(intptr_t)in->r[2], "Matinee"), "task name");
@@ -531,9 +573,17 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     case 0x40082: return NULL;                      /* Font_LoseFont */
     case 0x4074F: font_fg = rgb_of(in->r[2]); return NULL;      /* ColourTrans_SetFontColours */
-    case 0x400A1:                                   /* Font_ScanString: millipoints */
-        out->r[3] = (long)strlen((const char *)(intptr_t)in->r[1]) * (in->r[0] == 2 ? 32 : 16) * 400;
+    case 0x400A1: {                                 /* Font_ScanString: millipoints, to the limit in R3 */
+        const char *t = (const char *)(intptr_t)in->r[1];
+        long per = (in->r[0] == 2 ? 32 : 16) * 400, n = (in->r[2] & 0x80) ? in->r[7] : (long)strlen(t);
+        if (n > (long)strlen(t))
+            n = (long)strlen(t);
+        if (in->r[3] >= 0 && n * per > in->r[3])
+            n = in->r[3] / per;                     /* it stops before the character that goes past */
+        out->r[1] = (intptr_t)(t + n);
+        out->r[3] = n * per;
         return NULL;
+    }
     case 0x40086: {                                 /* Font_Paint */
         const char *t = (const char *)(intptr_t)in->r[1];
         SCHECK((in->r[2] & 0x110) == 0x110, "Font_Paint in OS units, with a handle");
@@ -580,7 +630,13 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
     case 0x400D2: case 0x400D3: return NULL;        /* caret */
     case 0x400F9:                                   /* Wimp_TextOp */
         if (in->r[0] == 0) { text_fg = rgb_of(in->r[1]); return NULL; }
-        if (in->r[0] == 1) { out->r[0] = (long)strlen((const char *)(intptr_t)in->r[1]) * 18; return NULL; }
+        if (in->r[0] == 1) {                        /* a width: R2 characters (0: all) */
+            long n = (long)strlen((const char *)(intptr_t)in->r[1]);
+            if (in->r[2] > 0 && in->r[2] < n)
+                n = in->r[2];
+            out->r[0] = n * 18;
+            return NULL;
+        }
         if ((in->r[0] & 0xFF) == 2) {
             const char *t = (const char *)(intptr_t)in->r[1];
             fb_text((int)in->r[4], (int)in->r[5], t, text_fg, 1);
@@ -888,6 +944,7 @@ static int ev_redraw(int *b, int w)
     memset(b, 0, 64);
     b[0] = w;
     plotted_text[0] = 0;
+    profile_begin();
     plot_sprites = 0;
     plotted_area = plotted_wide = NULL;
     shapes = 0;
@@ -897,6 +954,7 @@ static int ev_redraw(int *b, int w)
 
 static void save_picture(const char *name, int w)
 {
+    profile_end(name);
     char path[400];
     snprintf(path, sizeof(path), "%s/%s", outdir, name);
     fb_save(path, win(w)->vis);
@@ -1726,6 +1784,9 @@ static int script(int *b, int mask)
         case 6500: {
             int v = -1, so = -1, un = -1;
             CHECK(ui_test_lib(&v, &so, &un) && v == 0 && so == 0 && !un, "Films: its bar (Library, by title)");
+            CHECK(ui_test_az_letter("The Matrix") == 13 && ui_test_az_letter("An Owl") == 15 &&
+                  ui_test_az_letter("A Bug's Life") == 2 && ui_test_az_letter("Aardvark") == 1 &&
+                  ui_test_az_letter("2001") == 0, "A to Z: The, An and A left off, as Plex sorts; digits under #");
             pc++;
             return ev_redraw(b, w_browser);
         }
@@ -1858,6 +1919,18 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 77:
+            pc = 7701;
+            return ev_menu(b, MB_SIZE, 0);                      /* Small */
+        case 7701: {
+            int t = find_tile("Big Buck Bunny");
+            const char *l = t >= 0 ? ui_test_item(t, 0) : "";
+            CHECK(ui_test_page() != PG_GRID || ui_test_home(&t, &t) ||
+                  (strlen(l) > 3 && !strcmp(l + strlen(l) - 3, "...") && strlen(l) < 14),
+                  "Small posters: a title too long for the tile is cut (\"%s\")", l);
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 7702:
             pc = 899;
             return ev_menu(b, MB_SIZE, 1);
         case 899:
@@ -1954,10 +2027,18 @@ static int script(int *b, int mask)
             continue;
         case 908: {
             int bw, bh;
+            static int plots0;
+            if (n_null == 0) {
+                profile_begin();
+                plots0 = plots;
+            }
             if (n_null++ < 30) {
                 fake_cs += 4;
                 return NULL_EVENT;
             }
+            profile_end("playing 1.2 s (30 null events)");
+            CHECK(plots - plots0 < 12, "playing: the time and the position bar redrawn, not the bar's buttons (%d icons)",
+                  plots - plots0);
             pic_px(&bw, &bh);
             CHECK(ovl_created == 1 && ovl_sel_fourcc == 0x32315659 && ovl_banks == 3 && ovl_sel_flags == 0xE000,
                   "an overlay: YV12, 3 buffers, BT.709 video range (&%x)", ovl_sel_flags);

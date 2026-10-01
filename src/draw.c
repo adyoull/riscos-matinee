@@ -25,12 +25,18 @@
 #define Wimp_PlotIcon              0x400E2
 
 static int font[D_FONTS];           /* Font Manager handles; 0 = the desktop font */
+static int dots_w[D_FONTS];         /* the width of "..." in each (0: not measured yet) */
+/* The font colours last set (by font handle): the same again within one
+   rectangle of a redraw needn't be set again (draw_origin forgets them,
+   as other tasks set theirs between our redraws) */
+static int last_font = -1;
+static unsigned last_fg, last_bg;
 static int xeig = 1, yeig = 1, org_x, org_y;
 
 /* Smooth shapes: small 32bpp sprites, each pixel the shape's colour mixed
    with the background by how much of it the shape covers (4 x 4 samples).
    Made when first wanted, kept (the least used go first). */
-#define SHAPES 64
+#define SHAPES 256                  /* a page has ~40: corners in a few colours and sizes, the glyphs */
 static struct {
     int g, w, h;                    /* glyph, size in pixels */
     unsigned c, bg;
@@ -38,6 +44,9 @@ static struct {
     unsigned used;
 } shape[SHAPES];
 static unsigned shape_clock;
+#ifdef MATINEE_TEST
+unsigned draw_test_made, draw_test_scans, draw_test_widths, draw_test_fits, draw_test_wraps;
+#endif
 
 static _kernel_oserror *swi(int n, _kernel_swi_regs *r) { return _kernel_swi(n, r, r); }
 
@@ -61,12 +70,31 @@ void draw_init(int xe, int ye)
     font[D_TITLE] = find("Homerton.Bold", 20);
     font[D_HEAD] = find("Homerton.Bold", 16);
     font[D_HERO] = find("Homerton.Bold", 28);
+    memset(dots_w, 0, sizeof(dots_w));
+    last_font = -1;
 }
 
 void draw_origin(int ox, int oy)
 {
     org_x = ox;
     org_y = oy;
+    last_font = -1;
+}
+
+/* ColourTrans_SetFontColours, unless they're already those */
+static void font_colours(int handle, unsigned fg, unsigned bg, int over)
+{
+    _kernel_swi_regs r;
+    if (handle == last_font && fg == last_fg && bg == last_bg && !over)
+        return;
+    r.r[0] = handle;
+    r.r[1] = over ? 0 : (int)bg;
+    r.r[2] = (int)fg;
+    r.r[3] = 14;
+    swi(ColourTrans_SetFontColours, &r);
+    last_font = over ? -1 : handle;     /* blended: set again next time (the background is the screen's) */
+    last_fg = fg;
+    last_bg = bg;
 }
 
 void draw_done(void)
@@ -242,6 +270,9 @@ void draw_glyph(int g, int x0, int y0, int x1, int y1, unsigned c, unsigned bg)
             old = i;
     }
     if (k < 0) {                    /* a new one, over the least used */
+#ifdef MATINEE_TEST
+        draw_test_made++;
+#endif
         k = old;
         free(shape[k].area);
         shape[k].g = g; shape[k].w = w; shape[k].h = h; shape[k].c = c; shape[k].bg = bg;
@@ -298,11 +329,7 @@ void draw_text_over(int f, int x, int y, const char *s, unsigned fg)
 {
     _kernel_swi_regs r;
     if (f > 0 && font[f]) {
-        r.r[0] = font[f];
-        r.r[1] = 0;
-        r.r[2] = (int)fg;
-        r.r[3] = 14;
-        swi(ColourTrans_SetFontColours, &r);
+        font_colours(font[f], fg, 0, 1);
         r.r[0] = font[f];
         r.r[1] = (intptr_t)s;
         r.r[2] = 0x910;             /* OS units; the handle in R0; blended with the screen */
@@ -318,11 +345,7 @@ void draw_text(int f, int x, int y, const char *s, unsigned fg, unsigned bg)
 {
     _kernel_swi_regs r;
     if (f > 0 && font[f]) {
-        r.r[0] = font[f];
-        r.r[1] = (int)bg;
-        r.r[2] = (int)fg;
-        r.r[3] = 14;                /* anti-aliased */
-        swi(ColourTrans_SetFontColours, &r);
+        font_colours(font[f], fg, bg, 0);  /* anti-aliased, over bg */
         r.r[0] = font[f];
         r.r[1] = (intptr_t)s;
         r.r[2] = 0x110;             /* OS units; the handle in R0 */
@@ -331,6 +354,7 @@ void draw_text(int f, int x, int y, const char *s, unsigned fg, unsigned bg)
         swi(Font_Paint, &r);
         return;
     }
+    last_font = -1;                 /* the desktop font sets the font manager's colours too */
     r.r[0] = 0;                     /* the desktop font's colours */
     r.r[1] = (int)fg;
     r.r[2] = (int)bg;
@@ -344,22 +368,74 @@ void draw_text(int f, int x, int y, const char *s, unsigned fg, unsigned bg)
     swi(Wimp_TextOp, &r);
 }
 
-int draw_width(int f, const char *s)
+/* The width of the first n characters of s (n < 0: all of it), OS units */
+static int width_n(int f, const char *s, int n)
 {
     _kernel_swi_regs r;
+#ifdef MATINEE_TEST
+    draw_test_scans++;
+#endif
+    if (n < 0)
+        n = (int)strlen(s);
     if (f > 0 && font[f]) {
         r.r[0] = font[f];
         r.r[1] = (intptr_t)s;
-        r.r[2] = 0x100;
+        r.r[2] = 0x180;             /* the handle in R0; R7 is the length */
         r.r[3] = 0x7FFFFFFF;
         r.r[4] = 0x7FFFFFFF;
+        r.r[7] = n;
         if (!swi(Font_ScanString, &r))
             return r.r[3] / MPT_PER_OS;
     }
+    if (!n)
+        return 0;
     r.r[0] = 1;
     r.r[1] = (intptr_t)s;
-    r.r[2] = 0;
-    return swi(Wimp_TextOp, &r) ? (int)strlen(s) * 16 : r.r[0];
+    r.r[2] = n;
+    return swi(Wimp_TextOp, &r) ? n * 16 : r.r[0];
+}
+
+int draw_width(int f, const char *s)
+{
+#ifdef MATINEE_TEST
+    draw_test_widths++;
+#endif
+    return width_n(f, s, -1);
+}
+
+/* How many of s's first len characters fit in width (OS units). The font
+   manager says where a scan limited to the width stops, in one call; that
+   is checked (it and one more character), and a binary search is the
+   fallback, so it's a few calls rather than one a character. */
+static int fit_len(int f, const char *s, int len, int width)
+{
+    int lo = 0, hi = len, guess = -1;
+    _kernel_swi_regs r;
+    if (width <= 0)
+        return 0;
+    if (f > 0 && font[f]) {
+#ifdef MATINEE_TEST
+        draw_test_scans++;
+#endif
+        r.r[0] = font[f];
+        r.r[1] = (intptr_t)s;
+        r.r[2] = 0x180;
+        r.r[3] = width * MPT_PER_OS;
+        r.r[4] = 0x7FFFFFFF;
+        r.r[7] = len;
+        if (!swi(Font_ScanString, &r) && r.r[1] >= (intptr_t)s && r.r[1] <= (intptr_t)(s + len))
+            guess = (int)(r.r[1] - (intptr_t)s);
+    }
+    if (guess >= 0 && width_n(f, s, guess) <= width)
+        return guess;
+    while (lo < hi) {               /* the most that fit: lo fits, hi + 1 doesn't */
+        int mid = (lo + hi + 1) / 2;
+        if (width_n(f, s, mid) <= width)
+            lo = mid;
+        else
+            hi = mid - 1;
+    }
+    return lo;
 }
 
 int draw_height(int f)
@@ -369,47 +445,53 @@ int draw_height(int f)
 
 void draw_fit(int f, char *s, int width)
 {
-    size_t n = strlen(s);
-    char t[200];
-    if (draw_width(f, s) <= width)
+    int n = (int)strlen(s), k;
+#ifdef MATINEE_TEST
+    draw_test_fits++;
+#endif
+    if (width_n(f, s, n) <= width)
         return;
-    while (n > 0) {
-        s[--n] = 0;
-        while (n > 0 && s[n - 1] == ' ')
-            s[--n] = 0;
-        if (n + 4 > sizeof(t))
-            continue;
-        snprintf(t, sizeof(t), "%s...", s);
-        if (draw_width(f, t) <= width) {
-            strcpy(s, t);
-            return;
-        }
+    if (f >= 0 && f < D_FONTS && !dots_w[f])
+        dots_w[f] = width_n(f, "...", 3);
+    if (dots_w[f] > width) {
+        s[0] = 0;                   /* not even "..." fits */
+        return;
     }
+    k = fit_len(f, s, n, width - dots_w[f]);
+    while (k > 0 && s[k - 1] == ' ')
+        k--;
+    if (k + 4 > n + 1) {            /* (can't happen: "..." is wider than what it replaces) */
+        s[0] = 0;
+        return;
+    }
+    strcpy(s + k, "...");
 }
 
 int draw_wrap(int f, const char *s, int width, char lines[][160], int max)
 {
     int n = 0;
+#ifdef MATINEE_TEST
+    draw_test_wraps++;
+#endif
     while (*s && n < max) {
-        size_t best = 0, i = 0;
+        size_t best, len;
         char t[160];
         while (*s == ' ')
             s++;
-        /* the most whole words that fit */
-        for (;;) {
-            size_t j = i;
-            while (s[j] && s[j] != ' ')
-                j++;
-            if (j >= sizeof(t))
-                break;
-            memcpy(t, s, j);
-            t[j] = 0;
-            if (draw_width(f, t) > width)
-                break;
-            best = j;
-            if (!s[j])
-                break;
-            i = j + 1;
+        if (!*s)
+            break;
+        /* the most whole words that fit (at most a line's worth of characters) */
+        len = strlen(s);
+        if (len > sizeof(t) - 1)
+            len = sizeof(t) - 1;
+        best = (size_t)fit_len(f, s, (int)len, width);
+        if (best < strlen(s) && s[best] != ' ') {   /* back to the end of the last whole word */
+            size_t b = best;
+            while (b > 0 && s[b] != ' ')
+                b--;
+            while (b > 0 && s[b - 1] == ' ')
+                b--;
+            best = b;
         }
         if (!best) {                /* one word too long for a line: cut it */
             best = strcspn(s, " ");

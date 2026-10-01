@@ -134,6 +134,10 @@ ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h
 `details.ppm`, `player.ppm` and `upnext.ppm` in `OUT`. It links
 `tests/host/fake_reelcore.c` in place of reelcore.
 
+`PROFILE=1` makes ui_test print, for each picture it saves (and for 1.2 s of playing),
+the SWIs called and how often, the smooth shapes made and the text widths measured: a
+quick way to see what a change costs a redraw.
+
 `QEMU` is optional. riscos-ffmpeg's patched qemu (`tools-bin/qemu-arm-aligntrap`) also
 traps unaligned accesses in the program's own code, as RISC OS does. The plain
 `qemu-arm` runs the test without that.
