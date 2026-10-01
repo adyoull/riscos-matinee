@@ -949,10 +949,25 @@ static int script(int *b, int mask)
         case 3:
             CHECK(ui_test_page() == PG_GRID, "signed in: the grid");
             CHECK(win(w_browser)->open, "in the same window");
-            CHECK(ui_test_items() == 4, "the top list: %d items", ui_test_items());
+            {   /* the home page: its rows */
+                int rows = 0, pick = -1, st = 0, n = 0, vis = 0;
+                CHECK(ui_test_home(&rows, &pick) && rows == 4 && pick == 0, "the top: the home page, 4 rows (%d)", rows);
+                CHECK(ui_test_items() == 12, "the top list: %d items", ui_test_items());
+                CHECK(ui_test_home_row(0, &st, &n, &vis) && !strcmp(ui_test_home_row(0, &st, &n, &vis), "Continue watching") &&
+                      st == 0 && n == 1, "Continue watching first");
+                CHECK(!strcmp(ui_test_home_row(1, &st, &n, &vis), "Recently added in Films") && st == 1 && n == 6 && vis == 3,
+                      "then Recently added in Films: 6, 3 fit the window (%d)", vis);
+                CHECK(!strcmp(ui_test_home_row(2, &st, &n, &vis), "Recently added in TV Programmes") && n == 2,
+                      "then TV Programmes'");
+                CHECK(!strcmp(ui_test_home_row(3, &st, &n, &vis), "Libraries") && st == 9 && n == 3, "then the libraries");
+                CHECK(!strcmp(ui_test_item(7, 0), "Space Show") && !strncmp(ui_test_item(7, 1), "S1 E6 Ep", 8) &&
+                      !strcmp(ui_test_item(8, 0), "Space Show") && !strcmp(ui_test_item(8, 1), "Series 2"),
+                      "recently added episodes and series under their show's name: %s / %s, %s / %s", ui_test_item(7, 0),
+                      ui_test_item(7, 1), ui_test_item(8, 0), ui_test_item(8, 1));
+            }
             CHECK(!strcmp(ui_test_path(), "Attic"), "where: %s", ui_test_path());
-            CHECK(!strcmp(ui_test_item(1, 0), "Films") && !strcmp(ui_test_item(3, 0), "Music"), "tiles %s, %s",
-                  ui_test_item(1, 0), ui_test_item(3, 0));
+            CHECK(find_tile("Films") == 9 && find_tile("Music") == 11, "the libraries: %d, %d", find_tile("Films"),
+                  find_tile("Music"));
             snprintf(want, sizeof(want), "server_base %s\n", base);
             CHECK(strstr(read_file(choices), "account_token ACCT-TOKEN\n") && strstr(read_file(choices), want) &&
                   strstr(read_file(choices), "server_token SRV-TOKEN\n") &&
@@ -963,12 +978,16 @@ static int script(int *b, int mask)
             pc++;
             return ev_redraw(b, w_browser);
         case 4:
-            CHECK(strstr(plotted_text, "Attic|") && strstr(plotted_text, "4 items.|"), "the header: %s", plotted_text);
-            CHECK(strstr(plotted_text, "Continue wa...|") && strstr(plotted_text, "Films|") &&
-                  strstr(plotted_text, "TV Programmes|") && strstr(plotted_text, "Folder|"),
-                  "the tiles drawn: %s", plotted_text);
-            CHECK(shapes > 20 && glyphs > 20 && !plot_sprites, "drawn in shapes and smooth corners, no posters yet (%d, %d)",
-                  shapes, glyphs);
+            CHECK(strstr(plotted_text, "Attic|") && strstr(plotted_text, "12 items.|"), "the header: %s", plotted_text);
+            CHECK(strstr(plotted_text, "CONTINUE WATCHING|Space Show|S1 E3 Episode Three|2020|1h 30m|PG|") &&
+                  strstr(plotted_text, "|Resume|Details|81 min left|") && strstr(plotted_text, "|Continue watching|Space Show|"),
+                  "the featured part, and the first row: %s", plotted_text);
+            CHECK(shapes > 20 && glyphs > 20 && plot_sprites == 1,
+                  "drawn in shapes and smooth corners; the featured backdrop, no posters yet (%d, %d, %d)", shapes, glyphs,
+                  plot_sprites);
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/art/1700000000") == 1 &&
+                  log_count("/photo/:/transcode", "width", "1420") == 1, "the featured backdrop, the window's width (as it opened)");
+            fake_cs += 60;                                      /* and again once the window's been made smaller */
             {   /* a smooth shape has colours between its own and the background's */
                 const int *g = last_glyph + 4;
                 const unsigned *px = (const unsigned *)(g + 11);
@@ -992,10 +1011,19 @@ static int script(int *b, int mask)
             continue;
         case 6:
             CHECK(mask & 1, "no more null events once the posters are there");
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/art/1700000000") == 3 &&   /* (and its card's) */
+                  log_count("/photo/:/transcode", "width", "554") == 1, "the featured backdrop again, at the window's new width (%d, %d)",
+                  log_count("/photo/:/transcode", "url", "/library/metadata/213/art/1700000000"), log_count("/photo/:/transcode", "width", "554"));
+            CHECK(log_count("/photo/:/transcode", "width", "200") >= 1 && log_count("/photo/:/transcode", "height", "112") >= 1,
+                  "Continue watching: 16:9 pictures, 200 x 112 pixels");
             CHECK(log_count("/photo/:/transcode", "width", "116") >= 1 && log_count("/photo/:/transcode", "height", "174") >= 1,
                   "posters asked for at the tile's size in pixels");
-            pc++;
-            return ev_tile(b, 1, 4);                            /* double-click Films */
+            pc = 60100;
+            return ev_redraw(b, w_browser);
+        case 60100:
+            save_picture("home.ppm", w_browser);
+            pc = 7;
+            return ev_tile(b, find_tile("Films"), 4);          /* double-click Films */
         case 7:
             CHECK(ui_test_items() == 6 && !strcmp(ui_test_path(), "Attic > Films"), "Films: %d items, %s",
                   ui_test_items(), ui_test_path());
@@ -1500,10 +1528,10 @@ static int script(int *b, int mask)
             pc++;
             return ev_key(b, w_browser, -1, 8);                 /* Backspace */
         case 54:
-            CHECK(ui_test_items() == 4 && !strcmp(ui_test_path(), "Attic") && ui_test_sel() == 1,
+            CHECK(ui_test_items() == 12 && !strcmp(ui_test_path(), "Attic") && ui_test_sel() == find_tile("Films"),
                   "Back: the top again, Films selected (%d, %s)", ui_test_items(), ui_test_path());
             pc++;
-            return ev_tile(b, 2, 4);
+            return ev_tile(b, find_tile("TV Programmes"), 4);
         case 55:
             CHECK(ui_test_items() == 1 && !strcmp(ui_test_item(0, 1), "3 seasons") && ui_test_badge(0) == 2,
                   "a show, with the count of episodes not seen");
@@ -1598,13 +1626,16 @@ static int script(int *b, int mask)
             pc++;
             return ev_button(b, w_browser, B_REFRESH, 0x400);   /* Refresh */
         case 64:
-            CHECK(log_count("/library/sections", NULL, NULL) == prev_count + 1 && ui_test_items() == 4,
+            CHECK(log_count("/library/sections", NULL, NULL) == prev_count + 1 && ui_test_items() == 12,
                   "Refresh fetches the list again");
             pc++;
-            return ev_tile(b, 3, 4);                            /* Music */
+            return ev_tile(b, find_tile("Music"), 4);          /* Music */
         case 65:
-            CHECK(ui_test_items() == 4 && strstr(ui_test_status(), "can't be opened yet"), "music: %s",
+            CHECK(ui_test_items() == 12 && strstr(ui_test_status(), "can't be opened yet"), "music: %s",
                   ui_test_status());
+            pc = 6500;
+            return ev_tile(b, find_tile("Films"), 4);          /* the grid, for the next steps */
+        case 6500:
             pc = 650;
             continue;
         case 650:                                           /* the posters first */
@@ -1677,8 +1708,11 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 77:
-            pc = 900;                                           /* the built-in player next */
+            pc = 899;
             return ev_menu(b, MB_SIZE, 1);
+        case 899:
+            pc = 900;                                           /* the built-in player next, from the top */
+            return ev_key(b, w_browser, -1, 8);
 
         /* ---- the built-in player ------------------------------------------------ */
         case 900:
@@ -2460,7 +2494,7 @@ static int script(int *b, int mask)
             pc = 83;
             return ev_key(b, w_browser, -1, 13);                /* Return in the token: Use these */
         case 83:
-            CHECK(ui_test_page() == PG_GRID && win(w_browser)->open && ui_test_items() == 4, "by hand: the grid");
+            CHECK(ui_test_page() == PG_GRID && win(w_browser)->open && ui_test_items() == 12, "by hand: the home page");
             snprintf(want, sizeof(want), "server_base %s\n", base);
             CHECK(strstr(read_file(choices), want) && strstr(read_file(choices), "server_token SRV-TOKEN\n") &&
                   strstr(read_file(choices), "account_token \n"), "Choices:\n%s", read_file(choices));
@@ -2472,7 +2506,7 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);
         case 101:
-            CHECK(win(w_browser)->open && ui_test_items() == 4 && ui_test_page() == PG_GRID,
+            CHECK(win(w_browser)->open && ui_test_items() == 12 && ui_test_page() == PG_GRID,
                   "Select: straight to the browser, from Choices");
             drain_n = 0;
             pc = 1010;
@@ -2483,8 +2517,14 @@ static int script(int *b, int mask)
                 continue;
             return NULL_EVENT;
         case 1011:
-            CHECK(ui_test_posters(NULL) >= 1 && log_count("/photo/:/transcode", NULL, NULL) == prev_count,
-                  "the posters from the image cache: none fetched (%d)", log_count("/photo/:/transcode", NULL, NULL) - prev_count);
+            pc = 10110;
+            return ev_redraw(b, w_browser);
+        case 10110:
+            pc = 1011;              /* (then 1012, below) */
+            save_picture("home-wide.ppm", w_browser);
+            CHECK(ui_test_posters(NULL) >= 1 && log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000") == prev_count,
+                  "the posters from the image cache: not fetched again (%d)",
+                  log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000") - prev_count);
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 1012:
@@ -2575,7 +2615,7 @@ int main(int argc, char **argv)
         snprintf(cmd, sizeof(cmd), "test $(find %s/choices/Cache -type f | wc -l) -ge 10", outdir);
         CHECK(system(cmd) == 0, "the pictures kept on disc, in the image cache");
     }
-    prev_count = log_count("/photo/:/transcode", NULL, NULL);
+    prev_count = log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000");    /* a poster seen in the first run */
     nwins = 0; pc = 100; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
     CHECK(plexro_main(1, argv) == 0, "second run ends cleanly");

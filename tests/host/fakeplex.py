@@ -271,6 +271,14 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, raw=b"")
         if p == "/library/metadata/21/children":
             return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": episodes()}})
+        if p == "/library/sections/1/recentlyAdded":
+            return self.send(200, {"MediaContainer": {"title1": "Films", "Metadata": MOVIES}})
+        if p == "/library/sections/2/recentlyAdded":
+            e = episodes()[5]
+            return self.send(200, {"MediaContainer": {"title1": "TV Programmes", "Metadata": [e,
+                {"ratingKey": "22", "key": "/library/metadata/22/children", "type": "season", "title": "Series 2",
+                 "parentTitle": "Space Show", "parentRatingKey": "20", "index": 2, "leafCount": 6, "viewedLeafCount": 0,
+                 "thumb": "/library/metadata/22/thumb/1"}]}})
         if p == "/library/metadata/23/children":
             return self.send(200, {"MediaContainer": {"title2": "Specials", "Metadata": episodes(0)[:1]}})
         if p == "/library/metadata/22/children":

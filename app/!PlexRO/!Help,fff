@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test12
+!PlexRO - a Plex client for RISC OS                  0.1.0-test13
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -56,8 +56,22 @@ grey one.
 Poster size on the icon's menu: Small, Medium (the default) or Large,
 remembered.
 
-The top list is Continue watching, then your libraries. Films and TV
-libraries open; music and photo libraries aren't handled yet.
+The home page
+-------------
+The top is a home page. Across it, the first thing in Continue watching,
+featured: its backdrop fading into the page, its title, labels, two
+lines of its summary, Resume (or Play) with how far you got and how long
+is left, and Details; the dots on the right feature one of the next few
+instead. Under it, rows: Continue watching (pictures with a bar for how
+far you got), Recently added in each film and TV library (posters), and
+your libraries. A row shows as many as fit the window; click its title
+(with the arrow) for the whole list. A series in Recently added opens its
+show's page. Films and TV libraries open; music and photo libraries
+aren't handled yet.
+
+  Left, Right    along a row
+  Up, Down       the row above or below
+  Return         open or play what's selected; I its details
 
 Menu on a poster:
   Play (Open)         play it (open a folder)

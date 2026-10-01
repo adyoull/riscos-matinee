@@ -6,9 +6,10 @@
  *   colours: palette entries, &BBGGRR00 (RGB(r, g, b) makes one), set with
  *            ColourTrans, so they come out right in any screen mode
  *   shapes:  OS_Plot rectangle, circle and triangle fills
- *   text:    D_BODY the desktop font (Wimp_TextOp); D_BOLD and D_TITLE
- *            Homerton Bold at 12 and 20 point (Font_Paint), or the desktop
- *            font if the Font Manager can't find it
+ *   text:    D_BODY the desktop font (Wimp_TextOp); D_BOLD, D_HEAD,
+ *            D_TITLE and D_HERO Homerton Bold at 12, 16, 20 and 28 point
+ *            (Font_Paint), or the desktop font if the Font Manager can't
+ *            find it
  * Part of riscos-plex. GPL v2 or later.
  */
 #ifndef PLEXRO_DRAW_H
@@ -29,10 +30,10 @@
 #define C_HOVER   RGB(120, 128, 142)
 #define C_CHIP    RGB(40, 43, 51)       /* the details' chips (year, rating...) */
 
-enum { D_BODY, D_BOLD, D_TITLE, D_FONTS };
+enum { D_BODY, D_BOLD, D_TITLE, D_HEAD, D_HERO, D_FONTS };
 
 /* Glyphs, drawn smooth in a box */
-enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH, G_TICK };
+enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH, G_TICK, G_NEXT };
 
 void draw_init(int xeig, int yeig);     /* the fonts and the screen (again after a mode change) */
 void draw_done(void);                   /* lets the fonts and the shape sprites go */

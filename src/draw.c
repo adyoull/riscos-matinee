@@ -59,6 +59,8 @@ void draw_init(int xe, int ye)
     yeig = ye;
     font[D_BOLD] = find("Homerton.Bold", 12);
     font[D_TITLE] = find("Homerton.Bold", 20);
+    font[D_HEAD] = find("Homerton.Bold", 16);
+    font[D_HERO] = find("Homerton.Bold", 28);
 }
 
 void draw_origin(int ox, int oy)
@@ -153,6 +155,8 @@ static int inside(int g, double u, double v)
     case G_CORNER_TR: return u * u + (1 - v) * (1 - v) <= 1;
     case G_CORNER_BL: return (1 - u) * (1 - u) + v * v <= 1;
     case G_CORNER_BR: return u * u + v * v <= 1;
+    case G_NEXT:                    /* a chevron pointing right */
+        return seg_dist(u, v, 0.34, 0.14, 0.7, 0.5) <= 0.09 || seg_dist(u, v, 0.7, 0.5, 0.34, 0.86) <= 0.09;
     case G_TICK:                    /* a tick */
         return seg_dist(u, v, 0.22, 0.52, 0.42, 0.72) <= 0.08 || seg_dist(u, v, 0.42, 0.72, 0.8, 0.3) <= 0.08;
     case G_SEARCH:                  /* a magnifying glass: a ring, and a handle to the bottom right */
@@ -347,7 +351,7 @@ int draw_width(int f, const char *s)
 
 int draw_height(int f)
 {
-    return f == D_TITLE && font[f] ? 56 : f == D_BOLD && font[f] ? 36 : 36;
+    return f == D_HERO && font[f] ? 80 : f == D_TITLE && font[f] ? 56 : f == D_HEAD && font[f] ? 46 : 36;
 }
 
 void draw_fit(int f, char *s, int width)

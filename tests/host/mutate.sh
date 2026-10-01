@@ -185,6 +185,14 @@ mutate "All episodes taken for a series" src/ui.c \
 mutate "age ratings keep their country" src/ui.c \
   "latin1(strchr(it->content_rating, '/') ? strchr(it->content_rating, '/') + 1 : it->content_rating, g,\n               sizeof(g));             /* \"gb/18\": 18 */\n        show_chip" "latin1(it->content_rating, g, sizeof(g));\n        show_chip"
 
+# test13: the home page
+mutate "the top as the old list" src/ui.c \
+  'if (!*path)                     /* the top: the home page */\n        e = plex_home(&S.px, &l, rows, 8, &nrows);\n    else\n        e' 'e'
+mutate "a row shows all, not what fits" src/ui.c \
+  'S.home.lay[r].vis = fit < S.home.row[r].n ? fit : S.home.row[r].n;' 'S.home.lay[r].vis = S.home.row[r].n;'
+mutate "the featured backdrop not fetched again after a resize" src/ui.c \
+  'if (S.home.art && S.home.fw != w)\n            S.home.due = now_cs() + 50;' ''
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

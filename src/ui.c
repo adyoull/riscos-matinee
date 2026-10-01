@@ -255,6 +255,27 @@ static struct {
         int next;                   /* the episode Play plays (in S.list) */
     } show;
 
+    /* the home page: a featured item (from Continue watching) across the
+       top, then rows: Continue watching, Recently added in each library,
+       the libraries. S.list holds every row's items one after another. */
+    struct {
+        int on;
+        plex_row row[8];
+        int nrows;
+        struct { int title_y, top, cw, ch, vis, title_x1; } lay[8];
+        int w, h, hero_h;           /* the width laid out for; the page's height; the featured part's */
+        int pick, npick;            /* the featured item: which of Continue watching's first npick */
+        poster_t *art;
+        int art_w, fw, due;
+        char label[40], title[120], lines[2][160], left[40];
+        int nlines, title_y, sum_y;
+        struct { int x0, y0, x1; char t[48]; } chip[6];
+        int nchip;
+        struct { int id, x0, y0, x1, y1; char t[48]; } btn[2];
+        int nbtn, left_x;
+        struct { int x0, y0, x1, y1; } dot[5];
+    } home;
+
     /* menus */
     int menu_kind;                  /* 1 icon bar, 2 item, 3 subtitles, 4 player, 5 player's subtitles */
     int menu_x, menu_y;
@@ -764,6 +785,8 @@ static void cache_free_all(void)
     S.det_art = S.det_poster = NULL;
     S.show.art = S.show.poster = NULL;
     S.show.fw = 0;
+    S.home.art = NULL;
+    S.home.fw = 0;
     for (int i = 0; i < S.ncast; i++)
         S.cast[i].photo = NULL;
     S.cast_wanted = S.ncast > 0;
@@ -782,7 +805,7 @@ static void cache_trim(void)
             used = S.disp[i].poster == p;
         for (int i = 0; i < S.ncast && !used; i++)
             used = S.cast[i].photo == p;
-        if (!used && p != S.det_art && p != S.det_poster && p != S.show.art && p != S.show.poster) {
+        if (!used && p != S.det_art && p != S.det_poster && p != S.show.art && p != S.show.poster && p != S.home.art) {
             *pp = p->next;
             S.cache_bytes -= p->bytes;
             free(p->area);
@@ -1002,9 +1025,17 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
 #define EP_ROW  (EP_TH + 40)
 #define EP_GAP  16
 
+static void home_box(int i, int *x0, int *y0, int *x1, int *y1);
+static int home_row_of(int i, int *col);
+static const char *home_pic(int i, char *key, size_t size, int *art);
+
 static void tile_box(int i, int *x0, int *y0, int *x1, int *y1)
 {
     int col = i % S.cols, row = i / S.cols;
+    if (S.home.on) {
+        home_box(i, x0, y0, x1, y1);
+        return;
+    }
     if (S.show.on) {
         *x0 = 24;
         *x1 = S.show.w - 24;
@@ -1029,6 +1060,8 @@ static int list_height(void)
     int rows = S.have_list ? (S.list.n + S.cols - 1) / S.cols : 0;
     if (S.show.on)
         return S.show.head_h + S.list.n * (EP_ROW + EP_GAP) + GAP;
+    if (S.home.on)
+        return S.home.h;
     return HEADER_H + GAP + rows * (TILE_H + GAP);
 }
 
@@ -1111,6 +1144,20 @@ static void make_disp(void)
         return;
     if (S.show.on) {
         make_disp_episodes();
+        return;
+    }
+    if (S.home.on) {
+        for (int i = 0; i < S.list.n; i++) {
+            const plex_item *it = &S.list.v[i];
+            int c, r = home_row_of(i, &c), w = r >= 0 ? S.home.lay[r].cw - (S.home.row[r].kind == PR_LIBRARIES ? 64 : 0) : TILE_W;
+            char key[320];
+            int art;
+            latin1(it->title, S.disp[i].line[0], sizeof(S.disp[i].line[0]));
+            latin1(it->subtitle ? it->subtitle : "", S.disp[i].line[1], sizeof(S.disp[i].line[1]));
+            draw_fit(r >= 0 && S.home.row[r].kind == PR_LIBRARIES ? D_TITLE : D_BOLD, S.disp[i].line[0], w);
+            draw_fit(D_BODY, S.disp[i].line[1], w);
+            S.disp[i].poster = home_pic(i, key, sizeof(key), &art) ? cache_find(key) : NULL;
+        }
         return;
     }
     for (int i = 0; i < S.list.n; i++) {
@@ -1292,6 +1339,8 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1);
 static void signin_redraw(int ox, int oy, int vis_w);
 static void show_redraw(int ox, int oy, int cy0, int cy1);
 static void draw_episode(int i, int ox, int oy);
+static void home_redraw(int ox, int oy, int cy0, int cy1);
+static void draw_home_card(int i, int ox, int oy);
 
 static void redraw(int *b)
 {
@@ -1315,7 +1364,15 @@ static void redraw(int *b)
                 det_redraw(ox, oy, b[3] - b[1], cy0, cy1);
             else if (S.page == PG_SIGNIN)
                 signin_redraw(ox, oy, b[3] - b[1]);
-            else if (S.show.on && S.have_list && S.disp) {
+            else if (S.home.on && S.have_list && S.disp) {
+                home_redraw(ox, oy, cy0, cy1);
+                for (int i = 0; i < S.list.n; i++) {
+                    int x0, y0, x1, y1;
+                    tile_box(i, &x0, &y0, &x1, &y1);
+                    if (x0 >= 0 && y0 - 20 <= cy1 && y1 + 20 >= cy0)
+                        draw_home_card(i, ox, oy);
+                }
+            } else if (S.show.on && S.have_list && S.disp) {
                 show_redraw(ox, oy, cy0, cy1);
                 for (int i = 0; i < S.list.n; i++) {
                     int x0, y0, x1, y1;
@@ -1357,6 +1414,27 @@ static int poster_step(void)
     window_state(S.browser_w, st);
     vtop = st[6];
     vbot = st[6] - (st[4] - st[2]);
+    if (S.home.on) {                /* the cards' pictures, in view */
+        for (int i = 0; i < S.list.n; i++) {
+            int x0, y0, x1, y1, art;
+            char key[320];
+            const char *pic;
+            tile_box(i, &x0, &y0, &x1, &y1);
+            if (x0 < 0 || S.disp[i].poster || y0 > vtop || y1 < vbot - 400)
+                continue;
+            if (!(pic = home_pic(i, key, sizeof(key), &art)))
+                continue;
+            if (!(S.disp[i].poster = cache_find(key))) {
+                int c, r = home_row_of(i, &c);
+                S.disp[i].poster = poster_fetch(pic, key, S.home.lay[r].cw >> S.xeig, S.home.lay[r].ch >> S.yeig, art);
+                cache_trim();
+            }
+            redraw_tile(i);
+            return 1;
+        }
+        S.posters_wanted = 0;
+        return 0;
+    }
     if (S.show.on) {                /* the episodes' pictures, in view and a row more */
         for (int i = 0; i < S.list.n; i++) {
             const plex_item *it = &S.list.v[i];
@@ -1667,6 +1745,384 @@ static int show_hit(int sx, int sy)
     return 0;
 }
 
+
+/* ---- the home page ------------------------------------------------------------------
+
+   As Plex's apps (and Plezy) open: a featured item across the top (one of
+   Continue watching: its backdrop fading into the page, its title,
+   labels, summary, Resume and Details, and dots for the others), then
+   rows: Continue watching (16:9 pictures with how far you got),
+   Recently added in each film and TV library (posters), and the
+   libraries. A row shows as many as fit; its title opens the whole list.
+   The rows' items are S.list, one row after another (plex_home), so
+   selecting, opening, menus and Back are the grid's; the arrow keys move
+   along a row and between rows. */
+
+#define HOME_TITLE_H 84             /* a row's title */
+#define HOME_GAP     56             /* between rows */
+#define HOME_TEXT_H  96             /* the two lines under a card */
+#define LIB_W        400            /* a library's card */
+#define LIB_H        150
+#define HERO_PICKS   5
+
+static const plex_item *home_hero(void)
+{
+    if (!S.home.npick)
+        return NULL;
+    return &S.list.v[S.home.row[0].start + S.home.pick];
+}
+
+/* Which row item i is in, and its place in the row (-1: none) */
+static int home_row_of(int i, int *col)
+{
+    for (int r = 0; r < S.home.nrows; r++)
+        if (i >= S.home.row[r].start && i < S.home.row[r].start + S.home.row[r].n) {
+            *col = i - S.home.row[r].start;
+            return r;
+        }
+    *col = 0;
+    return -1;
+}
+
+static void home_lib_box(int i, int r, int c, int *x0, int *y0, int *x1, int *y1);
+static void select_tile(int i);
+
+static void home_box(int i, int *x0, int *y0, int *x1, int *y1)
+{
+    int c, r = home_row_of(i, &c);
+    if (r < 0 || c >= S.home.lay[r].vis) {          /* not shown: out of the way */
+        *x0 = *x1 = -1000;
+        *y0 = *y1 = 100000;
+        return;
+    }
+    if (S.home.row[r].kind == PR_LIBRARIES) {
+        home_lib_box(i, r, c, x0, y0, x1, y1);
+        return;
+    }
+    *x0 = 40 + c * (S.home.lay[r].cw + GAP);
+    *x1 = *x0 + S.home.lay[r].cw;
+    *y1 = S.home.lay[r].top;
+    *y0 = *y1 - S.home.lay[r].ch - (S.home.row[r].kind == PR_LIBRARIES ? 0 : HOME_TEXT_H);
+}
+
+/* A picture on the home page: its key and what's fetched (a row of
+   Continue watching shows backdrops, 16:9) */
+static const char *home_pic(int i, char *key, size_t size, int *art)
+{
+    const plex_item *it = &S.list.v[i];
+    int c, r = home_row_of(i, &c);
+    *art = 0;
+    if (r < 0)
+        return NULL;
+    if (S.home.row[r].kind == PR_CONTINUE) {
+        const char *t = it->art ? it->art : it->thumb;
+        if (!t)
+            return NULL;
+        snprintf(key, size, "home:%s@%dx%d", t, S.home.lay[r].cw, S.home.lay[r].ch);
+        *art = 3;
+        return t;
+    }
+    if (S.home.row[r].kind == PR_RECENT && it->thumb) {
+        snprintf(key, size, "%s", it->thumb);       /* as on the grid */
+        return it->thumb;
+    }
+    return NULL;
+}
+
+static void home_chip(const char *t, int *x, int y)
+{
+    int w = draw_width(D_BOLD, t) + 44;
+    if (S.home.nchip >= 6)
+        return;
+    S.home.chip[S.home.nchip].x0 = *x;
+    S.home.chip[S.home.nchip].x1 = *x + w;
+    S.home.chip[S.home.nchip].y0 = y - 56;
+    snprintf(S.home.chip[S.home.nchip].t, sizeof(S.home.chip[0].t), "%s", t);
+    S.home.nchip++;
+    *x += w + 16;
+}
+
+/* Where everything goes, for the window's size */
+static void home_layout(void)
+{
+    const plex_item *h;
+    int st[9], w = vis_width(), wh = 1100, y, x, top = -HEADER_H;
+    char t[400], g[200];
+    if (S.browser_open) {
+        window_state(S.browser_w, st);
+        wh = st[4] - st[2];
+    }
+    S.home.w = w;
+    S.home.npick = S.home.nrows && S.home.row[0].kind == PR_CONTINUE ?
+                   (S.home.row[0].n < HERO_PICKS ? S.home.row[0].n : HERO_PICKS) : 0;
+    if (S.home.pick >= S.home.npick)
+        S.home.pick = 0;
+    h = home_hero();
+    y = top;
+    S.home.hero_h = 0;
+    if (h) {                        /* the featured part */
+        int hh = wh * 50 / 100;
+        if (hh < 560) hh = 560;
+        if (hh > w * 9 / 16) hh = w * 9 / 16;
+        S.home.hero_h = hh & ~((1 << S.yeig) - 1);
+        S.home.art_w = w & ~((1 << S.xeig) - 1);
+        if (S.home.art && S.home.fw != w)
+            S.home.due = now_cs() + 50;
+        snprintf(S.home.label, sizeof(S.home.label), "CONTINUE WATCHING");
+        latin1(h->title, S.home.title, sizeof(S.home.title));
+        draw_fit(D_HERO, S.home.title, w * 55 / 100);
+        S.home.title_y = top - S.home.hero_h * 30 / 100;
+        S.home.nchip = 0;
+        x = 40;
+        if (h->type && !strcmp(h->type, "episode") && h->subtitle) {
+            latin1(h->subtitle, g, sizeof(g));
+            draw_fit(D_BOLD, g, 600);
+            home_chip(g, &x, S.home.title_y - 44);
+        }
+        if (h->year > 0) {
+            snprintf(t, sizeof(t), "%d", h->year);
+            home_chip(t, &x, S.home.title_y - 44);
+        }
+        if (h->duration_ms > 0) {
+            long m = (long)(h->duration_ms / 60000);
+            if (m >= 60)
+                snprintf(t, sizeof(t), "%ldh %02ldm", m / 60, m % 60);
+            else
+                snprintf(t, sizeof(t), "%ldm", m);
+            home_chip(t, &x, S.home.title_y - 44);
+        }
+        if (h->content_rating) {
+            latin1(strchr(h->content_rating, '/') ? strchr(h->content_rating, '/') + 1 : h->content_rating, g, sizeof(g));
+            home_chip(g, &x, S.home.title_y - 44);
+        }
+        {
+            static char sum[2400];
+            int sw = w * 48 / 100 - 40;
+            latin1(h->summary ? h->summary : "", sum, sizeof(sum));
+            S.home.nlines = draw_wrap(D_BODY, sum, sw < 700 ? 700 : sw, S.home.lines, 2);
+        }
+        S.home.sum_y = S.home.title_y - 44 - 56 - 48;
+        /* Resume (or Play), how long is left, Details */
+        {
+            int by = S.home.sum_y - S.home.nlines * 40 - 24, bw;
+            const char *pl = h->view_offset_ms > 0 ? "Resume" : "Play";
+            S.home.nbtn = 0;
+            x = 40;
+            bw = draw_width(D_BOLD, pl) + 64 + 36;
+            S.home.btn[0] = (typeof(S.home.btn[0])){ HB_PLAY, x, by - BTN, x + bw, by, "" };
+            snprintf(S.home.btn[0].t, sizeof(S.home.btn[0].t), "%s", pl);
+            x += bw + 24;
+            S.home.left[0] = 0;
+            if (h->view_offset_ms > 0 && h->duration_ms > h->view_offset_ms) {
+                snprintf(S.home.left, sizeof(S.home.left), "%ld min left",
+                         (long)((h->duration_ms - h->view_offset_ms) / 60000) + 1);
+                S.home.left_x = x;
+                x += draw_width(D_BODY, S.home.left) + 32;
+            }
+            bw = draw_width(D_BOLD, "Details") + 64;
+            S.home.btn[1] = (typeof(S.home.btn[1])){ HB_DETAILS, x, by - BTN, x + bw, by, "Details" };
+            S.home.nbtn = 2;
+        }
+        /* the dots: the others to feature */
+        for (int k = 0; k < S.home.npick; k++) {
+            int dx = w - 60 - (S.home.npick - k) * 44;
+            S.home.dot[k].x0 = dx;
+            S.home.dot[k].x1 = dx + (k == S.home.pick ? 52 : 20);
+            S.home.dot[k].y0 = top - S.home.hero_h + 40;
+            S.home.dot[k].y1 = S.home.dot[k].y0 + 20;
+        }
+        y = top - S.home.hero_h + 24;
+    } else {
+        y = top - 24;
+    }
+    /* the rows */
+    for (int r = 0; r < S.home.nrows; r++) {
+        int kind = S.home.row[r].kind, fit;
+        S.home.lay[r].title_y = y - 56;
+        S.home.lay[r].title_x1 = 40 + draw_width(D_HEAD, S.home.row[r].title) + (S.home.row[r].path[0] ? 56 : 0);
+        S.home.lay[r].top = y - HOME_TITLE_H;
+        if (kind == PR_CONTINUE) {
+            int cw = w * 20 / 100;
+            if (cw < 400) cw = 400;
+            if (cw > 640) cw = 640;
+            S.home.lay[r].cw = cw & ~((2 << S.xeig) - 1);
+            S.home.lay[r].ch = (S.home.lay[r].cw * 9 / 16) & ~((1 << S.yeig) - 1);
+        } else if (kind == PR_RECENT) {
+            S.home.lay[r].cw = TILE_W;
+            S.home.lay[r].ch = POSTER_H;
+        } else {
+            S.home.lay[r].cw = LIB_W;
+            S.home.lay[r].ch = LIB_H;
+        }
+        fit = (w - 80 + GAP) / (S.home.lay[r].cw + GAP);
+        if (kind == PR_LIBRARIES && fit < S.home.row[r].n) {    /* the libraries wrap */
+            int rows = (S.home.row[r].n + fit - 1) / fit;
+            S.home.lay[r].vis = S.home.row[r].n;
+            y = S.home.lay[r].top - rows * (LIB_H + GAP) - HOME_GAP;
+            continue;
+        }
+        S.home.lay[r].vis = fit < S.home.row[r].n ? fit : S.home.row[r].n;
+        y = S.home.lay[r].top - S.home.lay[r].ch - (kind == PR_LIBRARIES ? 0 : HOME_TEXT_H) - HOME_GAP;
+    }
+    S.home.h = -y + 40;
+}
+
+/* The libraries wrap onto more lines: their place */
+static void home_lib_box(int i, int r, int c, int *x0, int *y0, int *x1, int *y1)
+{
+    int fit = (S.home.w - 80 + GAP) / (LIB_W + GAP);
+    (void)i;
+    if (fit < 1)
+        fit = 1;
+    *x0 = 40 + (c % fit) * (LIB_W + GAP);
+    *x1 = *x0 + LIB_W;
+    *y1 = S.home.lay[r].top - (c / fit) * (LIB_H + GAP);
+    *y0 = *y1 - LIB_H;
+}
+
+static void home_fetch_art(void)
+{
+    const plex_item *h = home_hero();
+    char key[320];
+    S.home.art = NULL;
+    S.home.fw = S.home.w;
+    S.home.due = 0;
+    if (!h || !(h->art || h->thumb))
+        return;
+    snprintf(key, sizeof(key), "art:%s@%dx%d", h->art ? h->art : h->thumb, S.home.art_w, S.home.hero_h);
+    if (!(S.home.art = cache_find(key)))
+        S.home.art = poster_fetch(h->art ? h->art : h->thumb, key, S.home.art_w >> S.xeig, S.home.hero_h >> S.yeig, 1);
+    cache_trim();
+}
+
+static void home_redraw(int ox, int oy, int cy0, int cy1)
+{
+    const plex_item *h = home_hero();
+    int top = -HEADER_H;
+    if (h && cy1 > top - S.home.hero_h) {
+        if (S.home.art && S.home.art->area)
+            plot_sprite(S.home.art, 0, top - S.home.hero_h, S.home.art_w, top);
+        draw_text_over(D_BOLD, ox + 40, oy + S.home.title_y + 76, S.home.label, C_SUB);
+        draw_text_over(D_HERO, ox + 40, oy + S.home.title_y, S.home.title, C_TEXT);
+        for (int i = 0; i < S.home.nchip; i++) {
+            int y0 = oy + S.home.chip[i].y0;
+            draw_round(ox + S.home.chip[i].x0, y0, ox + S.home.chip[i].x1, y0 + 56, 28, C_CHIP, DRAW_NONE);
+            draw_text(D_BOLD, ox + S.home.chip[i].x0 + 22, y0 + 18, S.home.chip[i].t, C_TEXT, C_CHIP);
+        }
+        for (int l = 0; l < S.home.nlines; l++)
+            draw_text(D_BODY, ox + 40, oy + S.home.sum_y - l * 40, S.home.lines[l], C_TEXT, C_BG);
+        for (int i = 0; i < S.home.nbtn; i++) {
+            int x0 = ox + S.home.btn[i].x0, y0 = oy + S.home.btn[i].y0, x1 = ox + S.home.btn[i].x1, y1 = oy + S.home.btn[i].y1;
+            unsigned bg = S.home.btn[i].id == HB_PLAY ? C_ACCENT : C_CARD;
+            int tx = x0 + 32;
+            draw_round(x0, y0, x1, y1, BTN / 2, bg, DRAW_NONE);
+            if (S.home.btn[i].id == HB_PLAY) {
+                draw_glyph(G_PLAY, tx - 4, y0 + 16, tx + 28, y1 - 16, C_TEXT, bg);
+                tx += 36;
+                if (h->view_offset_ms > 0 && h->duration_ms > 0) {     /* how far, under the label */
+                    int part = (int)((int64_t)(x1 - x0 - 64) * h->view_offset_ms / h->duration_ms);
+                    draw_rect(x0 + 32, y0 + 10, x1 - 32, y0 + 16, RGB(30, 90, 160));
+                    draw_rect(x0 + 32, y0 + 10, x0 + 32 + part, y0 + 16, C_TEXT);
+                }
+            }
+            draw_text(D_BOLD, tx, y0 + 22, S.home.btn[i].t, C_TEXT, bg);
+        }
+        if (S.home.left[0])
+            draw_text(D_BODY, ox + S.home.left_x, oy + S.home.btn[0].y0 + 22, S.home.left, C_SUB, C_BG);
+        for (int k = 0; S.home.npick > 1 && k < S.home.npick; k++)
+            draw_round(ox + S.home.dot[k].x0, oy + S.home.dot[k].y0, ox + S.home.dot[k].x1, oy + S.home.dot[k].y1, 10,
+                       k == S.home.pick ? C_TEXT : C_CARD_HI, DRAW_NONE);
+    }
+    for (int r = 0; r < S.home.nrows; r++) {
+        if (S.home.lay[r].title_y + 60 < cy0 || S.home.lay[r].title_y - 20 > cy1)
+            continue;
+        draw_text(D_HEAD, ox + 40, oy + S.home.lay[r].title_y, S.home.row[r].title, C_TEXT, C_BG);
+        if (S.home.row[r].path[0])                  /* the whole list: a chevron after the title */
+            draw_glyph(G_NEXT, ox + S.home.lay[r].title_x1 - 36, oy + S.home.lay[r].title_y - 2,
+                       ox + S.home.lay[r].title_x1 - 8, oy + S.home.lay[r].title_y + 30, C_SUB, C_BG);
+    }
+}
+
+/* A card on the home page */
+static void draw_home_card(int i, int ox, int oy)
+{
+    const plex_item *it = &S.list.v[i];
+    disp_t *d = &S.disp[i];
+    int c, r = home_row_of(i, &c), x0, y0, x1, y1, py0;
+    tile_box(i, &x0, &y0, &x1, &y1);
+    if (r < 0 || x0 < 0)
+        return;
+    if (S.home.row[r].kind == PR_LIBRARIES) {
+        unsigned bg = i == S.sel ? C_CARD_HI : C_CARD;
+        if (i == S.sel || i == S.hover) {
+            unsigned c2 = i == S.sel ? C_TEXT : C_HOVER;
+            draw_round(ox + x0 - 10, oy + y0 - 10, ox + x1 + 10, oy + y1 + 10, 30, c2, C_BG);
+            draw_round(ox + x0 - 4, oy + y0 - 4, ox + x1 + 4, oy + y1 + 4, 26, C_BG, c2);
+        }
+        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, 24, bg, C_BG);
+        draw_text(D_TITLE, ox + x0 + 32, oy + y1 - 72, d->line[0], it->kind == PI_OTHER ? C_SUB : C_TEXT, bg);
+        draw_text(D_BODY, ox + x0 + 32, oy + y0 + 32, d->line[1], C_SUB, bg);
+        return;
+    }
+    py0 = y1 - S.home.lay[r].ch;
+    if (i == S.sel || i == S.hover) {
+        unsigned c2 = i == S.sel ? C_TEXT : C_HOVER;
+        draw_round(ox + x0 - 10, oy + py0 - 10, ox + x1 + 10, oy + y1 + 10, 22, c2, C_BG);
+        draw_round(ox + x0 - 4, oy + py0 - 4, ox + x1 + 4, oy + y1 + 4, 16, C_BG, c2);
+    } else
+        draw_round(ox + x0 + 6, oy + py0 - 10, ox + x1 + 6, oy + y1 - 6, 16, C_SHADOW, C_BG);
+    if (d->poster && d->poster->area)
+        plot_sprite(d->poster, x0, py0, x1, y1);
+    else
+        draw_round(ox + x0, oy + py0, ox + x1, oy + y1, 12, C_CARD, C_BG);
+    badges(it, ox + x0, oy + py0, ox + x1, oy + y1);
+    draw_text(D_BOLD, ox + x0, oy + py0 - 40, d->line[0], C_TEXT, C_BG);
+    draw_text(D_BODY, ox + x0, oy + py0 - 80, d->line[1], C_SUB, C_BG);
+}
+
+/* The featured part's buttons and dots, a row's title: HB_PLAY,
+   HB_DETAILS, HB_DOT + n, HB_ROW + n; or 0 */
+static int home_hit(int sx, int sy)
+{
+    int st[9], wx, wy;
+    window_state(S.browser_w, st);
+    wx = sx - (st[1] - st[5]);
+    wy = sy - (st[4] - st[6]);
+    for (int i = 0; home_hero() && i < S.home.nbtn; i++)
+        if (wx >= S.home.btn[i].x0 && wx < S.home.btn[i].x1 && wy >= S.home.btn[i].y0 && wy < S.home.btn[i].y1)
+            return S.home.btn[i].id;
+    for (int k = 0; S.home.npick > 1 && k < S.home.npick; k++)
+        if (wx >= S.home.dot[k].x0 - 8 && wx < S.home.dot[k].x1 + 8 && wy >= S.home.dot[k].y0 - 12 && wy < S.home.dot[k].y1 + 12)
+            return HB_DOT + k;
+    for (int r = 0; r < S.home.nrows; r++)
+        if (S.home.row[r].path[0] && wx >= 40 && wx < S.home.lay[r].title_x1 && wy >= S.home.lay[r].title_y - 20 &&
+            wy < S.home.lay[r].title_y + 60)
+            return HB_ROW + r;
+    return 0;
+}
+
+/* The arrow keys on the home page: along a row, or to the row above or below */
+static void home_key(int k)
+{
+    int c, r = home_row_of(S.sel, &c), nr;
+    if (S.sel < 0) {
+        select_tile(S.home.nrows ? S.home.row[0].start : -1);
+        return;
+    }
+    if (k == 0x18C || k == 0x18D) {
+        int nc = c + (k == 0x18D ? 1 : -1);
+        if (nc >= 0 && nc < S.home.lay[r].vis)
+            select_tile(S.home.row[r].start + nc);
+        return;
+    }
+    nr = r + (k == 0x18E ? 1 : -1);
+    if (nr < 0 || nr >= S.home.nrows)
+        return;
+    if (c >= S.home.lay[nr].vis)
+        c = S.home.lay[nr].vis - 1;
+    select_tile(S.home.row[nr].start + c);
+}
+
 /* ---- the browser: lists --------------------------------------------------------- */
 
 static void set_where(void)
@@ -1745,9 +2201,13 @@ static void browser_open(void)
 static int show_list(const char *path, const char *back_title, int push, int sel)
 {
     plex_list l;
-    int e;
+    plex_row rows[8];
+    int e, nrows = 0;
     hourglass(1);
-    e = plex_list_get(&S.px, path, &l);
+    if (!*path)                     /* the top: the home page */
+        e = plex_home(&S.px, &l, rows, 8, &nrows);
+    else
+        e = plex_list_get(&S.px, path, &l);
     hourglass(0);
     if (e != 0) {
         report("Can't get the list: %s", S.px.err);
@@ -1774,6 +2234,19 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     if (!strncmp(path, "search:", 7))       /* the field shows what was searched for */
         latin1(path + 7, S.query, sizeof(S.query));
     S.sel = sel >= 0 && sel < l.n ? sel : l.n ? 0 : -1;
+    /* the top: the home page */
+    S.home.on = !*path;
+    if (S.home.on) {
+        memcpy(S.home.row, rows, sizeof(rows));
+        S.home.nrows = nrows;
+        S.home.art = NULL;
+        S.home.pick = 0;
+        S.cols = 1;
+        home_layout();
+        hourglass(1);
+        home_fetch_art();
+        hourglass(0);
+    }
     /* one of the show's series: the show page */
     S.show.on = 0;
     for (int i = 0; S.show.have && i < S.show.seasons.n; i++)
@@ -1790,7 +2263,7 @@ static int show_list(const char *path, const char *back_title, int push, int sel
             show_fetch_art();
             hourglass(0);
         }
-    } else if (S.cols == 1 || S.cols != layout_cols(vis_width())) {
+    } else if (!S.home.on && (S.cols == 1 || S.cols != layout_cols(vis_width()))) {
         S.cols = layout_cols(vis_width());
     }
     make_disp();
@@ -1932,7 +2405,7 @@ static int tile_at(int sx, int sy)
     for (int i = 0; i < S.list.n; i++) {
         int x0, y0, x1, y1;
         tile_box(i, &x0, &y0, &x1, &y1);
-        if (y1 < wy - (S.show.on ? EP_ROW : TILE_H) - GAP)
+        if (!S.home.on && y1 < wy - (S.show.on ? EP_ROW : TILE_H) - GAP)
             break;
         if (wx >= x0 - GAP / 2 && wx < x1 + GAP / 2 && wy >= y0 - GAP / 2 && wy < y1 + GAP / 2)
             return i;
@@ -2027,8 +2500,8 @@ static int det_is(const plex_item *it)
 static int vis_width(void)
 {
     int st[9];
-    if (!S.browser_open)
-        return 4 * (TILE_W + GAP) + GAP;
+    if (!S.browser_open)            /* the width it opens at (browser_open) */
+        return (S.scr_w * WIN_PERCENT / 100 - SCROLL_W) & ~((1 << S.xeig) - 1);
     window_state(S.browser_w, st);
     return st[3] - st[1];
 }
@@ -4400,6 +4873,31 @@ static int menu_select(const int *sel)
     return 0;
 }
 
+/* The home page's featured part and rows' titles */
+static void home_action(int id)
+{
+    const plex_item *h = home_hero();
+    if (id == HB_PLAY && h) {
+        select_tile(S.home.row[0].start + S.home.pick);
+        play_item(h, PLAY_DEFAULT);
+    } else if (id == HB_DETAILS && h) {
+        select_tile(S.home.row[0].start + S.home.pick);
+        det_show(S.home.row[0].start + S.home.pick);
+    } else if (id >= HB_DOT && id < HB_DOT + S.home.npick && id - HB_DOT != S.home.pick) {
+        S.home.pick = id - HB_DOT;      /* another one featured */
+        home_layout();
+        hourglass(1);
+        home_fetch_art();
+        hourglass(0);
+        force_redraw(S.browser_w, 0, -HEADER_H - S.home.hero_h, S.scr_w, -HEADER_H);
+    } else if (id >= HB_ROW && id < HB_ROW + S.home.nrows && S.home.row[id - HB_ROW].path[0]) {
+        char path[200], back[64];
+        snprintf(path, sizeof(path), "%s", S.home.row[id - HB_ROW].path);
+        snprintf(back, sizeof(back), "%s", S.list.title);
+        show_list(path, back, 1, 0);
+    }
+}
+
 /* A show: its page, with the series that has episodes not seen yet (or
    the first) */
 static void show_open(const plex_item *it)
@@ -4496,6 +4994,17 @@ static void open_item(int i, int how)
     it = &S.list.v[i];
     if (it->kind == PI_FOLDER && it->type && !strcmp(it->type, "show") && it->key && it->rating_key) {
         show_open(it);
+    } else if (it->kind == PI_FOLDER && it->type && !strcmp(it->type, "season") && it->grandparent_key) {
+        plex_item show;                 /* a series (recently added): its show's page */
+        char key[160];
+        memset(&show, 0, sizeof(show));
+        snprintf(key, sizeof(key), "/library/metadata/%s/children", it->grandparent_key);
+        show.kind = PI_FOLDER;
+        show.type = (char *)"show";
+        show.rating_key = it->grandparent_key;
+        show.key = key;
+        show.title = it->grandparent_title ? it->grandparent_title : it->title;
+        show_open(&show);
     } else if (it->kind == PI_FOLDER) {
         char path[256], back[64];
         snprintf(path, sizeof(path), "%s", it->key ? it->key : "");
@@ -4613,6 +5122,13 @@ static void click(int *b)
                 det_action(id, b[0], b[1]);
             return;
         }
+        if (S.home.on && (buttons & 0x505)) {
+            int h2 = home_hit(b[0], b[1]);
+            if (h2) {
+                home_action(h2);
+                return;
+            }
+        }
         if (S.show.on && (buttons & 0x505)) {
             int h2 = show_hit(b[0], b[1]);
             if (h2 >= SH_TAB) {
@@ -4704,6 +5220,14 @@ static void key(int *b)
             if (s >= 0)
                 det_show(s);
             return;
+        case 0x18C: case 0x18D: case 0x18E: case 0x18F:
+            if (S.home.on) {
+                home_key(k);
+                return;
+            }
+            break;
+        }
+        switch (k) {
         case 0x18C: if (s > 0) select_tile(s - 1); return;                 /* left */
         case 0x18D: if (s + 1 < n) select_tile(s + 1); return;             /* right */
         case 0x18E: if (s + S.cols < n) select_tile(s + S.cols); return;   /* down */
@@ -4736,7 +5260,17 @@ static void open_request(int *b)
     if (b[0] == S.browser_w) {
         int w = b[3] - b[1], cols = layout_cols(w);
         S.posters_wanted = 1;       /* scrolled or resized: more may be in view */
-        if (S.show.on) {            /* the show page: laid out again for a new width */
+        if (S.home.on) {            /* the home page: laid out again for a new size */
+            int oh = S.home.hero_h;
+            if (w != S.home.w || (home_layout(), S.home.hero_h != oh)) {
+                home_layout();
+                make_disp();
+                if (S.page == PG_GRID) {
+                    set_extent();
+                    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+                }
+            }
+        } else if (S.show.on) {     /* the show page: laid out again for a new width */
             if (w != S.show.w) {
                 show_layout();
                 make_disp();
@@ -4893,6 +5427,11 @@ static void nulls(void)
     }
     if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
         return;
+    if (S.home.due && S.home.on && S.page == PG_GRID && S.browser_open && now_cs() - S.home.due >= 0) {
+        home_fetch_art();           /* the featured backdrop at the window's new size */
+        force_redraw(S.browser_w, 0, -HEADER_H - S.home.hero_h, S.scr_w, -HEADER_H);
+        return;
+    }
     if (S.show.due && S.show.on && S.page == PG_GRID && S.browser_open && now_cs() - S.show.due >= 0) {
         show_fetch_art();           /* the backdrop and the poster at the window's new size */
         force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
@@ -5006,6 +5545,9 @@ int plexro_main(int argc, char **argv)
         } else if (S.search_due && searching()) {
             reason = Wimp_PollIdle;         /* the search, a moment after the last key */
             r.r[2] = S.search_due;
+        } else if (S.home.due && S.home.on && S.page == PG_GRID && S.browser_open) {
+            reason = Wimp_PollIdle;
+            r.r[2] = S.home.due;
         } else if (S.show.due && S.show.on && S.page == PG_GRID && S.browser_open) {
             reason = Wimp_PollIdle;         /* the show's pictures at the new size, once resizing stops */
             r.r[2] = S.show.due;
@@ -5127,6 +5669,21 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
                 found = 1;
             }
     }
+    for (int i = 0; w == S.browser_w && S.page == PG_GRID && S.home.on && i < S.home.nbtn; i++)
+        if (S.home.btn[i].id == id) {
+            x0 = S.home.btn[i].x0; y0 = S.home.btn[i].y0; x1 = S.home.btn[i].x1; y1 = S.home.btn[i].y1;
+            found = 1;
+        }
+    for (int k = 0; w == S.browser_w && S.page == PG_GRID && S.home.on && k < S.home.npick; k++)
+        if (HB_DOT + k == id) {
+            x0 = S.home.dot[k].x0; y0 = S.home.dot[k].y0; x1 = S.home.dot[k].x1; y1 = S.home.dot[k].y1;
+            found = 1;
+        }
+    for (int r = 0; w == S.browser_w && S.page == PG_GRID && S.home.on && r < S.home.nrows; r++)
+        if (HB_ROW + r == id) {
+            x0 = 40; y0 = S.home.lay[r].title_y; x1 = S.home.lay[r].title_x1; y1 = S.home.lay[r].title_y + 40;
+            found = 1;
+        }
     for (int i = 0; w == S.browser_w && S.page == PG_GRID && S.show.on && i < S.show.nbtn; i++)
         if (S.show.btn[i].id == id) {
             x0 = S.show.btn[i].x0; y0 = S.show.btn[i].y0; x1 = S.show.btn[i].x1; y1 = S.show.btn[i].y1;
@@ -5149,6 +5706,16 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
     return 0;
 }
 int ui_test_badge(int i) { return i >= 0 && i < S.list.n ? badge_kind(&S.list.v[i]) : -1; }
+int ui_test_home(int *rows, int *pick) { *rows = S.home.nrows; *pick = S.home.pick; return S.home.on && S.page == PG_GRID; }
+const char *ui_test_home_row(int r, int *start, int *n, int *vis)
+{
+    if (r < 0 || r >= S.home.nrows)
+        return NULL;
+    *start = S.home.row[r].start;
+    *n = S.home.row[r].n;
+    *vis = S.home.lay[r].vis;
+    return S.home.row[r].title;
+}
 int ui_test_show(int *season) { *season = S.show.season; return S.show.on && S.page == PG_GRID; }
 const char *ui_test_show_text(int what)
 {

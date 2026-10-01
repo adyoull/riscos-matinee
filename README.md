@@ -7,7 +7,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test12).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test13).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -16,7 +16,8 @@ or Transcoded; test10 opens the window at 75% of the screen, centred, adds Reel'
 and scales the details backdrop with the window; test11 is a new look, after Plex clients such
 as Plezy (badges on the posters, a details page with the backdrop fading into it and the poster
 beside the title, a show's page with its series as tabs and its episodes as a list); test12 fixes
-the show's page on a real server (Plex lists "All episodes" before the seasons).
+the show's page on a real server (Plex lists "All episodes" before the seasons); test13 adds the
+home page (a featured item, then rows: Continue watching, Recently added, the libraries).
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 

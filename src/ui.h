@@ -16,6 +16,9 @@ enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK };
 enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS, B_SEARCH };
 /* the show page's buttons, and its series' tabs (SH_TAB + n) */
 enum { SH_PLAY = 120, SH_WATCHED, SH_TAB = 200 };
+/* the home page's featured part (Resume or Play, Details, its dots: HB_DOT + n)
+   and its rows' titles (HB_ROW + n: the whole list) */
+enum { HB_PLAY = 130, HB_DETAILS, HB_DOT = 210, HB_ROW = 220 };
 
 /* The save box's icons */
 enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
@@ -58,7 +61,9 @@ const char *ui_test_query(void);               /* the search field's text ("": n
 const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how it plays, 3 summary */
 int ui_test_psize(void);
 int ui_test_badge(int i);                       /* item i's badge: 1 a tick, 2 a count, 0 none */
-int ui_test_show(int *season);                  /* the show page is shown, and which series */
+int ui_test_show(int *season);
+int ui_test_home(int *rows, int *pick);         /* the home page is shown: its rows, the one featured */
+const char *ui_test_home_row(int r, int *start, int *n, int *vis);   /* a row's title, items, shown */                  /* the show page is shown, and which series */
 const char *ui_test_show_text(int what);        /* 0 the title, 1 the episodes' count, 2 the buttons */
 #endif
 

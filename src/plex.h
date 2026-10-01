@@ -155,6 +155,21 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token);
    or a key from an item. 0 = ok. */
 int plex_list_get(plex_ctx *c, const char *path, plex_list *out);
 void plex_list_free(plex_list *l);
+/* Moves src's items to the end of dst (src left empty). 0 = ok. */
+int plex_list_append(plex_list *dst, plex_list *src);
+
+/* The home page: Continue watching (on deck), what's been added lately to
+   each film and TV library, then the libraries, as one list (out), and
+   where each row starts in it. 0 = ok. */
+enum { PR_CONTINUE, PR_RECENT, PR_LIBRARIES };
+#define HOME_ROW 20                 /* items fetched for a row */
+typedef struct {
+    int kind, start, n;
+    char title[96];
+    char path[200];                 /* the whole list ("See all"), or "" */
+} plex_row;
+int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows);
+
 /* Keeps only the items of that type (a show's children: its seasons, not
    "All episodes") */
 void plex_list_keep(plex_list *l, const char *type);

@@ -538,8 +538,16 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
             it->unwatched = 0;
     } else if (!strcmp(it->type, "season")) {
         int n = (int)jnum(m, "leafCount", 0);
-        if (n)
+        if (on_deck && jstr(m, "parentTitle")) {    /* recently added: "Show", "Season 2" */
+            snprintf(sub, sizeof(sub), "%s", it->title);
+            free(it->title);
+            it->title = dup_s(jstr(m, "parentTitle"));
+        } else if (n)
             snprintf(sub, sizeof(sub), "%d episode%s", n, n == 1 ? "" : "s");
+        if (!it->grandparent_key)                   /* its show (to open the show's page) */
+            it->grandparent_key = dup_s(jstr(m, "parentRatingKey"));
+        if (!it->grandparent_title)
+            it->grandparent_title = dup_s(jstr(m, "parentTitle"));
         it->watched = n > 0 && jnum(m, "viewedLeafCount", 0) >= n;
         it->unwatched = n - (int)jnum(m, "viewedLeafCount", 0);
         if (it->unwatched < 0)
@@ -556,7 +564,8 @@ int plex_list_parse(const char *json, const char *path, plex_list *out)
     cJSON *j = cJSON_Parse(json), *mc, *e;
     int cap = 0;
     int sections = !strcmp(path, "/library/sections");
-    int on_deck = !strncmp(path, "/library/onDeck", 15);
+    /* on deck and recently added: an episode (or a series) under its show's name */
+    int on_deck = !strncmp(path, "/library/onDeck", 15) || strstr(path, "/recentlyAdded") != NULL;
     memset(out, 0, sizeof(*out));
     if (!j)
         return -1;
@@ -605,11 +614,10 @@ int plex_list_parse(const char *json, const char *path, plex_list *out)
     return 0;
 }
 
+static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out);
+
 int plex_list_get(plex_ctx *c, const char *path, plex_list *out)
 {
-    char url[1024];
-    char headers[1024];
-    net_buf b;
     memset(out, 0, sizeof(*out));
     if (!*c->base) {
         set_err(c, "no server chosen%s", NULL);
@@ -641,8 +649,18 @@ int plex_list_get(plex_ctx *c, const char *path, plex_list *out)
         snprintf(out->title, sizeof(out->title), "%s", c->server_name);
         return 0;
     }
+    return list_fetch(c, path, PAGE_SIZE, out);
+}
+
+/* One list from the server: at most size items */
+static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
+{
+    char url[1024];
+    char headers[1024];
+    net_buf b;
+    memset(out, 0, sizeof(*out));
     snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=0&X-Plex-Container-Size=%d",
-             c->base, path, strchr(path, '?') ? "&" : "?", PAGE_SIZE);
+             c->base, path, strchr(path, '?') ? "&" : "?", size);
     plex_headers(c, c->token, headers, sizeof(headers));
     if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
@@ -676,6 +694,80 @@ static void item_free(plex_item *it)
         free(it->auds[i].title); free(it->auds[i].codec); free(it->auds[i].language); free(it->auds[i].key);
     }
     free(it->auds);
+}
+
+int plex_list_append(plex_list *dst, plex_list *src)
+{
+    plex_item *v = realloc(dst->v, (size_t)(dst->n + src->n + 1) * sizeof(plex_item));
+    if (!v) {
+        plex_list_free(src);
+        return -1;
+    }
+    memcpy(v + dst->n, src->v, (size_t)src->n * sizeof(plex_item));
+    dst->v = v;
+    dst->n += src->n;
+    dst->total = dst->n;
+    free(src->v);                   /* the items moved to dst */
+    memset(src, 0, sizeof(*src));
+    return 0;
+}
+
+int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows)
+{
+    plex_list secs, l;
+    int nr = 0;
+    memset(out, 0, sizeof(*out));
+    *nrows = 0;
+    if (!*c->base) {
+        set_err(c, "no server chosen%s", NULL);
+        return -1;
+    }
+    if (plex_list_get(c, "/library/sections", &secs) != 0)
+        return -1;
+    /* Continue watching */
+    if (list_fetch(c, "/library/onDeck", HOME_ROW, &l) == 0) {
+        if (l.n && nr < max) {
+            rows[nr].kind = PR_CONTINUE;
+            rows[nr].start = out->n;
+            rows[nr].n = l.n;
+            snprintf(rows[nr].title, sizeof(rows[nr].title), "Continue watching");
+            snprintf(rows[nr].path, sizeof(rows[nr].path), "/library/onDeck");
+            nr++;
+        }
+        plex_list_append(out, &l);
+    }
+    /* recently added, in each film and TV library */
+    for (int i = 0; i < secs.n && nr < max - 1; i++) {
+        const plex_item *s2 = &secs.v[i];
+        char path[200];
+        const char *k = s2->key ? strstr(s2->key, "/library/sections/") : NULL;
+        int id;
+        if (s2->kind != PI_FOLDER || !k || sscanf(k, "/library/sections/%d", &id) != 1)
+            continue;
+        snprintf(path, sizeof(path), "/library/sections/%d/recentlyAdded", id);
+        if (list_fetch(c, path, HOME_ROW, &l) != 0)
+            continue;
+        if (l.n) {
+            rows[nr].kind = PR_RECENT;
+            rows[nr].start = out->n;
+            rows[nr].n = l.n;
+            snprintf(rows[nr].title, sizeof(rows[nr].title), "Recently added in %s", s2->title);
+            snprintf(rows[nr].path, sizeof(rows[nr].path), "%s", path);
+            nr++;
+        }
+        plex_list_append(out, &l);
+    }
+    /* the libraries */
+    rows[nr].kind = PR_LIBRARIES;
+    rows[nr].start = out->n;
+    rows[nr].n = secs.n;
+    snprintf(rows[nr].title, sizeof(rows[nr].title), "Libraries");
+    rows[nr].path[0] = 0;
+    nr++;
+    plex_list_append(out, &secs);
+    snprintf(out->title, sizeof(out->title), "%s", c->server_name);
+    *nrows = nr;
+    return 0;
 }
 
 void plex_list_keep(plex_list *l, const char *type)
