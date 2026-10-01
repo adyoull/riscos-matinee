@@ -362,6 +362,23 @@ int main(int argc, char **argv)
                   it->subs[2].forced && !strcmp(it->subs[2].codec, "pgs"), "the tracks");
             CHECK(plex_sub_selected(it) == -1, "none chosen");
             CHECK(caps_play(&c, it, &k1080, 1, 0, &p) == 0 && p.direct, "no subtitles: direct play");
+            {
+                plex_item ep;
+                plex_list e;
+                memset(&ep, 0, sizeof(ep));
+                ep.rating_key = "211";
+                CHECK(plex_details(&c, &ep, &e) == 0 && e.n == 1, "an episode's details: %s", c.err);
+                if (e.n == 1) {
+                    const plex_item *x = &e.v[0];
+                    CHECK(x->nmarkers == 2 && x->markers[0].type == PM_INTRO && x->markers[0].start_ms == 2000 &&
+                          x->markers[0].end_ms == 8000 && !x->markers[0].final && x->markers[1].type == PM_CREDITS &&
+                          x->markers[1].final && x->nchapters == 0,
+                          "its intro and credits (includeMarkers=1; the commercial left out)");
+                    CHECK(plex_marker_at(x, 1999) == -1 && plex_marker_at(x, 2000) == 0 && plex_marker_at(x, 9500) == -1 &&
+                          plex_marker_at(x, 19999) == 1 && plex_marker_at(x, 20000) == -1, "the marker at a time");
+                    plex_list_free(&e);
+                }
+            }
             CHECK(plex_set_subtitle(&c, it, 1002) == 0, "choose subtitles: %s", c.err);
             plex_list_free(&d);
         }

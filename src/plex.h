@@ -72,6 +72,21 @@ typedef struct {
 } plex_sub;
 typedef plex_sub plex_audio;
 
+/* A part of a video Plex has found (its markers): the opening titles or
+   the end credits, in ms. final: credits that run to the end. */
+enum { PM_INTRO, PM_CREDITS };
+typedef struct {
+    int type;               /* PM_* */
+    int64_t start_ms, end_ms;
+    int final;
+} plex_marker;
+
+/* A chapter (the file's own, as Plex lists them) */
+typedef struct {
+    char *title;            /* "Chapter 3", or the file's name for it */
+    int64_t start_ms, end_ms;
+} plex_chapter;
+
 /* Someone in the cast (Plex's Role): the actor, the part, and a photo (a
    URL the server fetches for us through /photo/:/transcode), or NULL */
 typedef struct {
@@ -120,6 +135,11 @@ typedef struct {
     int nsubs;
     plex_audio *auds;       /* sound tracks (plex_details() only, too) */
     int nauds;
+    /* intro and credits, and chapters (plex_details() only) */
+    plex_marker *markers;
+    int nmarkers;
+    plex_chapter *chapters;
+    int nchapters;
 } plex_item;
 
 typedef struct {
@@ -185,9 +205,14 @@ int plex_list_parse(const char *json, const char *path, plex_list *out);
 /* A poster: the server's JPEG, w x h pixels at most. 0 = ok (caller frees). */
 int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len);
 
-/* One video's full details (summary, art, and its subtitle tracks), as a
-   list of one item. 0 = ok. */
+/* One video's full details (summary, art, its subtitle tracks, its intro
+   and credits markers and its chapters), as a list of one item. 0 = ok. */
 int plex_details(plex_ctx *c, const plex_item *it, plex_list *out);
+
+/* The marker at t ms (intro or credits), or -1 */
+int plex_marker_at(const plex_item *it, int64_t t_ms);
+/* The chapter at t ms, or -1 */
+int plex_chapter_at(const plex_item *it, int64_t t_ms);
 
 /* The subtitle track chosen, or -1 for none */
 int plex_sub_selected(const plex_item *it);

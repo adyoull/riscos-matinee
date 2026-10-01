@@ -317,6 +317,7 @@ static struct {
         /* subtitle files beside the video, fetched and given to the player */
         struct { long id; int track; char path[300]; } ext[8];
         int n_ext;
+        int chap_first;             /* the Chapters submenu's first item's chapter */
     } pl;
     int overlay, pic_mode;          /* Choices for the built-in player */
     int cache_mb;                   /* Choices: the image cache's size */
@@ -4069,6 +4070,14 @@ static int builtin_open_at(double t, int new_session)
     src.start = t;
     src.duration = it->duration_ms / 1000.0;
     src.subs = it->nsubs;
+    {
+        static double ch[100];
+        int n = 0;
+        for (int i = 0; i < it->nchapters && n < 100; i++)
+            ch[n++] = it->chapters[i].start_ms / 1000.0;
+        src.chapters = ch;
+        src.nchapters = n;
+    }
     snprintf(S.play_why, sizeof(S.play_why), "%s", S.pl.p.why);
     set_status("%s", S.pl.p.why);
     e = player_open(&src, S.browser_w);
@@ -4210,6 +4219,9 @@ static void upnext_play(void)
 static void builtin_ended(void)
 {
     const plex_item *it = &S.pl.det.v[0];
+    if (S.pl.upnext_cs)             /* already offered (Skip credits), then the end */
+        return;
+    player_skip(NULL);
     builtin_timeline("stopped");
     plex_mark(&S.px, it, 1);
     if (S.pl.next.n)
@@ -4220,6 +4232,56 @@ static void builtin_ended(void)
         return;
     }
     builtin_stop(1);
+}
+
+/* Plex's markers: Skip intro or Skip credits while one is playing (not in
+   its last second, so a skip to its end doesn't show it again) */
+static void builtin_skip_update(void)
+{
+    const plex_item *it = &S.pl.det.v[0];
+    int64_t t = (int64_t)(player_position() * 1000);
+    int m = plex_marker_at(it, t);
+    if (m >= 0 && t >= it->markers[m].end_ms - 1000)
+        m = -1;
+    player_skip(m < 0 ? NULL : it->markers[m].type == PM_INTRO ? "Skip intro" : "Skip credits");
+}
+
+/* Skip: to the intro's end; past credits that run to the end, the end
+   (watched, and Up next for an episode) */
+static void builtin_skip(void)
+{
+    const plex_item *it = &S.pl.det.v[0];
+    const plex_marker *k;
+    int m = plex_marker_at(it, (int64_t)(player_position() * 1000));
+    if (m < 0)
+        return;
+    k = &it->markers[m];
+    player_skip(NULL);
+    if (k->type == PM_CREDITS && (k->final || (it->duration_ms > 0 && k->end_ms >= it->duration_ms - 5000))) {
+        builtin_ended();
+        return;
+    }
+    player_seek(k->end_ms / 1000.0);
+}
+
+/* Page Up and Page Down: the chapter before (or this one's start, if it's
+   more than 3 s in) and the next */
+static void builtin_chapter_step(int d)
+{
+    const plex_item *it = &S.pl.det.v[0];
+    double t = player_position();
+    int c = plex_chapter_at(it, (int64_t)(t * 1000));
+    if (!it->nchapters)
+        return;
+    if (d > 0)
+        c = c + 1;
+    else if (c >= 0 && t - it->chapters[c].start_ms / 1000.0 < 3)
+        c = c - 1;
+    if (c < 0)
+        c = 0;
+    if (c >= it->nchapters)
+        return;
+    player_seek(it->chapters[c].start_ms / 1000.0);
 }
 
 /* What the player said */
@@ -4259,6 +4321,9 @@ static void builtin_event(int e)
     case PE_SUBS:
         psubs_menu_open();
         break;
+    case PE_SKIP:
+        builtin_skip();
+        break;
     }
 }
 
@@ -4283,6 +4348,8 @@ static void builtin_nulls(void)
         }
         return;
     }
+    if (player_ready() && !player_ended())
+        builtin_skip_update();
     if (player_ready() && !player_paused() && !player_ended() && now_cs() - S.pl.tl_cs >= 0)
         builtin_timeline("playing");
     /* paused in a converted stream: the server stops converting for a
@@ -4647,7 +4714,7 @@ typedef struct {
 typedef struct { wmenu_t m; char text[16][80]; int n; } menu_t;
 
 static menu_t m_bar, m_servers, m_player, m_quality, m_size, m_item, m_subs;
-static menu_t m_play, m_audio, m_vol, m_pic, m_psubs;
+static menu_t m_play, m_audio, m_vol, m_pic, m_psubs, m_chap;
 
 static void menu_begin(menu_t *m, const char *title)
 {
@@ -4895,6 +4962,31 @@ static void player_menu_build(void)
         menu_add(&m_audio, "(none)", 0, 1, -1, 0);
     menu_end(&m_audio);
     psubs_menu_build();
+    /* chapters: 16 at most, around the one playing */
+    menu_begin(&m_chap, "Chapters");
+    {
+        int nc = it ? it->nchapters : 0, cur = it ? plex_chapter_at(it, (int64_t)(player_position() * 1000)) : -1;
+        int first = cur - 7;
+        if (first > nc - 16)
+            first = nc - 16;
+        if (first < 0)
+            first = 0;
+        S.pl.chap_first = first;
+        for (int i = first; i < nc && i < first + 16; i++) {
+            char tm[16], u[200];
+            int s2 = (int)(it->chapters[i].start_ms / 1000);
+            if (s2 >= 3600)
+                snprintf(tm, sizeof(tm), "%d:%02d:%02d", s2 / 3600, s2 / 60 % 60, s2 % 60);
+            else
+                snprintf(tm, sizeof(tm), "%d:%02d", s2 / 60, s2 % 60);
+            snprintf(u, sizeof(u), "%s  %s", tm, it->chapters[i].title);
+            latin1(u, t, 60);
+            menu_add(&m_chap, t, i == cur, 0, -1, 0);
+        }
+        if (!nc)
+            menu_add(&m_chap, "(none)", 0, 1, -1, 0);
+    }
+    menu_end(&m_chap);
     menu_begin(&m_vol, "Volume");
     for (int i = 0; i < 5; i++) {
         snprintf(t, sizeof(t), "%d%%", 100 - i * 25);
@@ -4908,6 +5000,7 @@ static void player_menu_build(void)
     menu_begin(&m_play, "Player");
     menu_add(&m_play, "Sound track", 0, n < 2, n >= 2 ? (int)(intptr_t)&m_audio.m : -1, 0);
     menu_add(&m_play, "Subtitles", 0, !it || !it->nsubs, it && it->nsubs ? (int)(intptr_t)&m_psubs.m : -1, 0);
+    menu_add(&m_play, "Chapters", 0, !it || !it->nchapters, it && it->nchapters ? (int)(intptr_t)&m_chap.m : -1, 0);
     menu_add(&m_play, "Volume", 0, 0, (int)(intptr_t)&m_vol.m, 0);
     menu_add(&m_play, "Picture", 0, 0, (int)(intptr_t)&m_pic.m, 1);
     menu_add(&m_play, "Stats", player_stats(), 0, -1, 0);
@@ -5303,6 +5396,10 @@ static int menu_select(const int *sel)
         case MP_SUBS:
             choose_psub(sel[1]);
             break;
+        case MP_CHAPTERS:
+            if (sel[1] >= 0 && S.pl.det.n && S.pl.chap_first + sel[1] < S.pl.det.v[0].nchapters)
+                player_seek(S.pl.det.v[0].chapters[S.pl.chap_first + sel[1]].start_ms / 1000.0);
+            break;
         case MP_VOLUME:
             if (sel[1] >= 0 && sel[1] < 5) {
                 player_set_volume((100 - sel[1] * 25) / 100.0);
@@ -5690,6 +5787,11 @@ static void key(int *b)
     _kernel_swi_regs r;
     if (w == S.save_w && k == 13) {
         save_ok();
+        return;
+    }
+    if ((player_owns(w) || (w == S.browser_w && S.page == PG_PLAYER)) && S.pl.on && S.pl.det.n &&
+        (k == 0x19E || k == 0x19F) && player_ready()) {
+        builtin_chapter_step(k == 0x19E ? 1 : -1);      /* Page Down: the next chapter */
         return;
     }
     if (player_owns(w) || (w == S.browser_w && S.page == PG_PLAYER)) {

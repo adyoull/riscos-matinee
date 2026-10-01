@@ -34,7 +34,8 @@ enum {
     PE_CARD_1,          /* the card's buttons (player_card) */
     PE_CARD_2,
     PE_MENU,            /* Menu over the picture: the caller opens its menu */
-    PE_SUBS             /* Subtitles on the bar: the caller opens its subtitles menu */
+    PE_SUBS,            /* Subtitles on the bar: the caller opens its subtitles menu */
+    PE_SKIP             /* the skip button (player_skip), or Return while it shows */
 };
 
 /* How the picture fills its area */
@@ -51,6 +52,8 @@ typedef struct {
     double duration;            /* the video's length (seconds), or 0: the stream's */
     int convert;                /* converted by the server */
     int subs;                   /* subtitle tracks to choose from: the bar has Subtitles */
+    const double *chapters;     /* where chapters start (seconds, in the video): marks on the position bar */
+    int nchapters;
 } player_src;
 
 /* The task, the choices (hardware overlay on, picture mode, volume 0..1) */
@@ -142,6 +145,12 @@ void player_set_pic_mode(int m);
 /* A card over the picture (up next): a heading, a line, a line under it
    (the countdown) and two buttons; heading NULL takes it away */
 void player_card(const char *heading, const char *line, const char *line2, const char *b1, const char *b2);
+/* A button at the right of the bar's top line ("Skip intro"), or NULL to
+   take it away; it reports PE_SKIP. Full screen, the bar stays while it's
+   there. */
+void player_skip(const char *label);
+const char *player_skip_label(void);
+
 /* A short note in the bar instead of the time, for a few seconds */
 void player_note(const char *text);
 
@@ -155,6 +164,6 @@ int player_test_idle(void);
 #endif
 
 /* The bar's buttons (player_test_button_xy) */
-enum { PB_BACK = 1, PB_PLAY, PB_REW, PB_FWD, PB_TRACK, PB_STATS, PB_FULL, PB_SUBS, PB_NORMAL, PB_GRIP, PB_CARD1, PB_CARD2, PB_COUNT };
+enum { PB_BACK = 1, PB_PLAY, PB_REW, PB_FWD, PB_TRACK, PB_STATS, PB_FULL, PB_SUBS, PB_NORMAL, PB_GRIP, PB_CARD1, PB_CARD2, PB_SKIP, PB_COUNT };
 
 #endif

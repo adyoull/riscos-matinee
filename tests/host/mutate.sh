@@ -209,6 +209,14 @@ mutate "Unwatched not asked for" src/ui.c \
 mutate "More like this not fetched" src/ui.c \
   'snprintf(path, sizeof(path), "/library/metadata/%s/%s", S.det.v[0].rating_key, k ? "extras" : "similar");' 'snprintf(path, sizeof(path), "/nowhere");'
 
+# test16: skip intro and credits, chapters
+mutate "a marker's end counts as in it" src/plex.c \
+  'if (t >= it->markers[i].start_ms && t < it->markers[i].end_ms)' 'if (t >= it->markers[i].start_ms && t <= it->markers[i].end_ms)'
+mutate "Skip credits only skips them" src/ui.c \
+  'if (k->type == PM_CREDITS && (k->final' 'if (0 && (k->final'
+mutate "Page Up always goes to this chapter's start" src/ui.c \
+  'else if (c >= 0 && t - it->chapters[c].start_ms / 1000.0 < 3)' 'else if (0)'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

@@ -854,7 +854,7 @@ static int player_button(int *b, int w, int id)
 
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
-static int n_null, open0, count0, draws0, wfull, wmini, items0;
+static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0;
 static char sid0[40];
 static double p0;
 
@@ -2095,6 +2095,32 @@ static int script(int *b, int mask)
             CHECK(fake_rc.sub_track == -1 && fake_rc.opens == open0 &&
                   log_count("/library/parts/11101", "subtitleStreamID", "0") >= 1, "None: off, on the server too");
             CHECK(strstr(player_test_time(), "Subtitles off"), "the bar says: %s", player_test_time());
+            pc = 9221;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        /* ---- chapters (Plex's, from includeChapters=1) */
+        case 9221: {
+            const int *cm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MP_CHAPTERS) : NULL;
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MP_CHAPTERS), "Chapters") &&
+                  !menu_shaded(menu_open, MP_CHAPTERS) && cm, "the player's menu: Chapters");
+            CHECK(cm && !strcmp(menu_text(cm, 0), "0:00  Opening") && !strcmp(menu_text(cm, 1), "0:05  The meadow") &&
+                  !strcmp(menu_text(cm, 2), "0:10  Chapter 3") &&
+                  (menu_flags(cm, player_position() < 5 ? 0 : player_position() < 10 ? 1 : player_position() < 15 ? 2 : 3) & 1),
+                  "the chapters, the one playing ticked (%s; at %.1f s)", cm ? menu_text(cm, 1) : "", player_position());
+            seeks0 = fake_rc.seeks;
+            pc++;
+            return ev_menu(b, MP_CHAPTERS, 2);
+        }
+        case 9222:
+            CHECK(fake_rc.seeks == seeks0 + 1 && fake_rc.seek_to == 10, "chapter 3: to 0:10 (%.1f)", fake_rc.seek_to);
+            pc++;
+            return ev_key(b, w_browser, -1, 0x19E);                 /* Page Down */
+        case 9223:
+            CHECK(fake_rc.seek_to == 15, "Page Down: the next chapter (%.1f)", fake_rc.seek_to);
+            pc++;
+            return ev_key(b, w_browser, -1, 0x19F);                 /* Page Up, just after its start */
+        case 9224:
+            CHECK(fake_rc.seek_to == 10, "Page Up: the chapter before (%.1f)", fake_rc.seek_to);
             n_null = 0;
             pc = 9230;
             return ev_key(b, w_browser, -1, 'M');
@@ -2402,7 +2428,29 @@ static int script(int *b, int mask)
             snprintf(want, sizeof(want), "%s/library/parts/11/215/file.mp4", base);
             CHECK(!strcmp(fake_rc.url, want), "episode 5: %s", fake_rc.url);
             n_null = 0;
+            pc = 9471;
+            continue;
+        /* ---- Skip intro (Plex's markers, from includeMarkers=1) */
+        case 9471:
+            if (!*player_skip_label() && n_null++ < 20) {
+                fake_cs += 50;
+                return NULL_EVENT;
+            }
+            CHECK(!strcmp(player_skip_label(), "Skip intro") && player_position() >= 2 && player_position() < 8,
+                  "the intro: Skip intro (at %.1f s)", player_position());
             pc++;
+            return ev_redraw(b, w_browser);
+        case 9472:
+            CHECK(strstr(plotted_text, "Skip intro") != NULL, "on the bar: %s", plotted_text);
+            save_picture("skip.ppm", w_browser);
+            seeks0 = fake_rc.seeks;
+            pc++;
+            return ev_key(b, w_browser, -1, 13);                    /* Return */
+        case 9473:
+            CHECK(fake_rc.seeks == seeks0 + 1 && fake_rc.seek_to == 8 && !*player_skip_label(),
+                  "Return: to the intro's end (%.1f)", fake_rc.seek_to);
+            n_null = 0;
+            pc = 948;
             continue;
         case 948:
             if (!ui_test_upnext() && n_null++ < 80) {
@@ -2430,13 +2478,27 @@ static int script(int *b, int mask)
             pc++;
             continue;
         case 951:
+            if (strcmp(player_skip_label(), "Skip credits") && ui_test_player() && n_null++ < 80) {
+                fake_cs += 50;
+                return NULL_EVENT;
+            }
+            CHECK(!strcmp(player_skip_label(), "Skip credits") && player_position() >= 14, "the credits: Skip credits (%.1f s)",
+                  player_position());
+            pc = 9511;
+            return player_button(b, w_browser, PB_SKIP);
+        case 9511:
+            CHECK(!ui_test_player() && ui_test_page() == PG_DETAILS && log_count("/:/scrobble", "key", "216") == 1,
+                  "Skip credits that run to the end: watched; the last episode, so back to the details");
+            pc = 9512;
+            continue;
+        case 9512:
             if (ui_test_player() && n_null++ < 80) {
                 fake_cs += 50;
                 return NULL_EVENT;
             }
             CHECK(!ui_test_player() && ui_test_page() == PG_DETAILS && log_count("/:/scrobble", "key", "216") == 1,
                   "the last episode: watched, and back to the details");
-            pc++;
+            pc = 952;
             return ev_key(b, w_browser, -1, 0x1B);
         case 952:
             CHECK(ui_test_page() == PG_GRID, "the grid");

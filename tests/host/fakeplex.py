@@ -331,6 +331,18 @@ class H(BaseHTTPRequestHandler):
                 if m["ratingKey"] == rk:
                     m = json.loads(json.dumps(m))
                     m["Media"][0]["Part"][0]["Stream"] = streams(m)
+                    if q.get("includeMarkers") == ["1"] and m["type"] == "episode":
+                        m["Marker"] = [{"id": 1, "type": "intro", "startTimeOffset": 2000, "endTimeOffset": 8000},
+                                       {"id": 2, "type": "commercial", "startTimeOffset": 9000, "endTimeOffset": 10000},
+                                       {"id": 3, "type": "credits", "startTimeOffset": 14000, "endTimeOffset": 20000,
+                                        "final": True}]
+                    if q.get("includeChapters") == ["1"] and rk == "101":
+                        m["Chapter"] = [{"id": 1, "tag": "Opening", "index": 1, "startTimeOffset": 0, "endTimeOffset": 5000},
+                                        {"id": 2, "tag": "The meadow", "index": 2, "startTimeOffset": 5000,
+                                         "endTimeOffset": 10000},
+                                        {"id": 3, "tag": "", "index": 3, "startTimeOffset": 10000, "endTimeOffset": 15000},
+                                        {"id": 4, "tag": "The end", "index": 4, "startTimeOffset": 15000,
+                                         "endTimeOffset": 5400000}]
                     return self.send(200, {"MediaContainer": {"size": 1, "Metadata": [m]}})
             return self.send(404, {})
         if p in ("/:/scrobble", "/:/unscrobble"):

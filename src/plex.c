@@ -438,6 +438,62 @@ static char *tags(const cJSON *m, const char *name, int max)
     return k ? dup_s(out) : NULL;
 }
 
+#define MARKERS_MAX  8
+#define CHAPTERS_MAX 99
+
+/* Intro and credits (Marker, with includeMarkers=1), and chapters
+   (Chapter, with includeChapters=1); others (commercials) left out */
+static void markers(plex_item *it, const cJSON *m)
+{
+    const cJSON *e, *a = cJSON_GetObjectItemCaseSensitive(m, "Marker");
+    int n = cJSON_GetArraySize(a);
+    if (n > 0 && (it->markers = calloc(n < MARKERS_MAX ? n : MARKERS_MAX, sizeof(plex_marker))) != NULL)
+        cJSON_ArrayForEach(e, a) {
+            const char *t = jstr(e, "type");
+            plex_marker *k;
+            if (it->nmarkers >= MARKERS_MAX || !t || (strcmp(t, "intro") && strcmp(t, "credits")))
+                continue;
+            if (jnum(e, "endTimeOffset", 0) <= jnum(e, "startTimeOffset", 0))
+                continue;
+            k = &it->markers[it->nmarkers++];
+            k->type = !strcmp(t, "intro") ? PM_INTRO : PM_CREDITS;
+            k->start_ms = (int64_t)jnum(e, "startTimeOffset", 0);
+            k->end_ms = (int64_t)jnum(e, "endTimeOffset", 0);
+            k->final = jbool(e, "final");
+        }
+    a = cJSON_GetObjectItemCaseSensitive(m, "Chapter");
+    n = cJSON_GetArraySize(a);
+    if (n > 0 && (it->chapters = calloc(n < CHAPTERS_MAX ? n : CHAPTERS_MAX, sizeof(plex_chapter))) != NULL)
+        cJSON_ArrayForEach(e, a) {
+            plex_chapter *ch;
+            char t[40];
+            if (it->nchapters >= CHAPTERS_MAX)
+                break;
+            ch = &it->chapters[it->nchapters++];
+            ch->start_ms = (int64_t)jnum(e, "startTimeOffset", 0);
+            ch->end_ms = (int64_t)jnum(e, "endTimeOffset", 0);
+            snprintf(t, sizeof(t), "Chapter %d", it->nchapters);
+            ch->title = dup_s(jstr(e, "tag") && *jstr(e, "tag") ? jstr(e, "tag") : t);
+        }
+}
+
+int plex_marker_at(const plex_item *it, int64_t t)
+{
+    for (int i = 0; i < it->nmarkers; i++)
+        if (t >= it->markers[i].start_ms && t < it->markers[i].end_ms)
+            return i;
+    return -1;
+}
+
+int plex_chapter_at(const plex_item *it, int64_t t)
+{
+    int k = -1;
+    for (int i = 0; i < it->nchapters; i++)
+        if (t >= it->chapters[i].start_ms)
+            k = i;
+    return k;
+}
+
 #define CAST_MAX 12
 
 /* The cast (Role), in Plex's order: the leads first */
@@ -500,6 +556,7 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->guid = dup_s(jstr(m, "guid"));
     it->audience_rating = jnum(m, "audienceRating", 0);
     cast(it, m);
+    markers(it, m);
     it->rating = jnum(m, "rating", 0) > 0 ? jnum(m, "rating", 0) : jnum(m, "audienceRating", 0);
     if (!type)
         it->kind = PI_OTHER;
@@ -703,6 +760,10 @@ static void item_free(plex_item *it)
         free(it->auds[i].title); free(it->auds[i].codec); free(it->auds[i].language); free(it->auds[i].key);
     }
     free(it->auds);
+    free(it->markers);
+    for (int i = 0; i < it->nchapters; i++)
+        free(it->chapters[i].title);
+    free(it->chapters);
 }
 
 int plex_list_append(plex_list *dst, plex_list *src)
@@ -803,7 +864,7 @@ int plex_details(plex_ctx *c, const plex_item *it, plex_list *out)
         set_err(c, "no details for that%s", NULL);
         return -1;
     }
-    snprintf(path, sizeof(path), "/library/metadata/%s", it->rating_key);
+    snprintf(path, sizeof(path), "/library/metadata/%s?includeMarkers=1&includeChapters=1", it->rating_key);
     if (plex_list_get(c, path, out) != 0)
         return -1;
     if (out->n < 1) {

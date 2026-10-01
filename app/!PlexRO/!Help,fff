@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test15
+!PlexRO - a Plex client for RISC OS                  0.1.0-test16
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -184,6 +184,9 @@ Subtitles (when it has some), Stats and Full screen.
                  the picture: the connection's speed, how much is read
                  ahead, the time decoding takes, and so on
   +, -           louder, quieter
+  Return         Skip intro or Skip credits, while it shows
+  Page Down, Page Up  the next chapter; this one's start (or the one
+                 before, near its start)
   Escape         out of full screen or the mini player; else back to
                  where you were
   Backspace      back
@@ -199,9 +202,17 @@ window or full screen: the connection's speed, how much has come in and
 how much is read ahead (with graphs), the codecs, the timing, and what's
 left out to keep up (Keeping Up), as in ReelEGL.
 
-Menu over the picture: Sound track, Subtitles, Volume, Picture (Fit, Fill (crop) or
-Stretch), Stats, Full screen, Mini player, Keep on top, Hardware overlay,
-Stop.
+Menu over the picture: Sound track, Subtitles, Chapters, Volume, Picture
+(Fit, Fill (crop) or Stretch), Stats, Full screen, Mini player, Keep on
+top, Hardware overlay, Stop.
+
+Skip intro and Skip credits: where the server has found a programme's
+opening titles or end credits (Plex Pass: the library's intro and
+credits detection), a button at the right of the bar's top line skips
+them (Return too; in full screen the bar stays while it's there). Credits
+that run to the end skip to the end: watched, and the next episode
+offered. Chapters: the file's (as the server lists them) are on the
+menu, by the time they start, and show as gaps in the position bar.
 
 The mini player (M, or Mini player on the menu), as in Reel: the window
 gives way to a small one with no title bar in the bottom right of the

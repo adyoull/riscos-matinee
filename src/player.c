@@ -100,6 +100,9 @@ static struct {
     int fill_x;
     /* a card over the picture */
     int card;
+    char skip[40];                  /* the skip button's label ("": none) */
+    double chap[100];               /* where chapters start (seconds) */
+    int nchap;
     char card_head[80], card_line[160], card_line2[120], card_b1[40], card_b2[40];
     box_t card_btn[2];
     /* the buttons, laid out (work area) */
@@ -305,6 +308,12 @@ static void layout_boxes(void)
     if (mid1 < mid0 + 64)
         mid1 = mid0 + 64;
     P.btn[PB_TRACK] = (box_t){ mid0, cy - 16, mid1, cy + 16 };
+    /* the skip button: the right of the title's line */
+    P.btn[PB_SKIP] = (box_t){ 0, 0, 0, 0 };
+    if (P.skip[0]) {
+        int w = draw_width(D_BOLD, P.skip) + 56;
+        P.btn[PB_SKIP] = (box_t){ P.vis_w - 24 - w, P.bar.y1 - 62, P.vis_w - 24, P.bar.y1 - 8 };
+    }
     /* the card: in the middle of the picture */
     {
         int cw = 1000, ch = 360, px = (P.pic.x0 + P.pic.x1) / 2, py = (P.pic.y0 + P.pic.y1) / 2;
@@ -786,6 +795,12 @@ static void draw_track(int ox, int oy)
     draw_round(ox + b->x0, oy + cy - 6, ox + b->x1, oy + cy + 6, 6, C_CARD, C_HEADER);
     if (fx > b->x0 + 6)
         draw_round(ox + b->x0, oy + cy - 6, ox + fx, oy + cy + 6, 6, C_ACCENT, C_CARD);
+    if (player_duration() > 0)                  /* where chapters start: gaps in the bar */
+        for (int i = 0; i < P.nchap; i++) {
+            int x = b->x0 + (int)((b->x1 - b->x0) * (P.chap[i] / player_duration()));
+            if (P.chap[i] > 0.5 && x > b->x0 + 8 && x < b->x1 - 8)
+                draw_rect(ox + x - 2, oy + cy - 6, ox + x + 2, oy + cy + 6, C_HEADER);
+        }
     draw_glyph(G_CIRCLE, ox + fx - 12, oy + cy - 12, ox + fx + 12, oy + cy + 12, C_TEXT, C_CARD);
 }
 
@@ -849,11 +864,15 @@ static void draw_bar(int ox, int oy)
     /* the title and the time along the top of the bar */
     bar_text();
     {
-        int tw = draw_width(D_BODY, P.time_text), y = P.bar.y1 - 44;
+        int tw = draw_width(D_BODY, P.time_text), y = P.bar.y1 - 44, right = P.vis_w - 24;
+        if (P.btn[PB_SKIP].x1 > P.btn[PB_SKIP].x0) {
+            pill(&P.btn[PB_SKIP], ox, oy, P.skip, 1, C_HEADER);
+            right = P.btn[PB_SKIP].x0 - 24;
+        }
         snprintf(title, sizeof(title), "%s", P.title);
-        draw_fit(D_BOLD, title, P.vis_w - 48 - tw - 32);
+        draw_fit(D_BOLD, title, right - 24 - tw - 32);
         draw_text(D_BOLD, ox + 24, oy + y, title, C_TEXT, C_HEADER);
-        draw_text(D_BODY, ox + P.vis_w - 24 - tw, oy + y, P.time_text, C_SUB, C_HEADER);
+        draw_text(D_BODY, ox + right - tw, oy + y, P.time_text, C_SUB, C_HEADER);
     }
     draw_track(ox, oy);
 }
@@ -1502,6 +1521,10 @@ int player_open(const player_src *s, int win)
     P.error[0] = 0;
     P.note[0] = 0;
     P.card = 0;
+    P.skip[0] = 0;
+    P.nchap = 0;
+    for (int i = 0; s->chapters && i < s->nchapters && P.nchap < (int)(sizeof(P.chap) / sizeof(P.chap[0])); i++)
+        P.chap[P.nchap++] = s->chapters[i];
     P.opened_cs = now_cs();
     memset(&src, 0, sizeof(src));
     src.url = P.url;
@@ -1708,7 +1731,7 @@ static void watch_pointer(void)
             ov.placed[0] = 0;       /* the overlay's clip changes */
             update_box(P.bar);
         }
-    } else if (P.bar_shown && now_cs() - P.bar_until >= 0 && !reelcore_paused(P.v) && !P.ended) {
+    } else if (P.bar_shown && now_cs() - P.bar_until >= 0 && !reelcore_paused(P.v) && !P.ended && !P.skip[0]) {
         P.bar_shown = 0;
         ov.placed[0] = 0;
         force_redraw(P.full, P.bar.x0, P.bar.y0, P.bar.x1, P.bar.y1);
@@ -1905,6 +1928,8 @@ int player_click(const int *b)
     if (bar_visible() && in_box(&P.bar, x, y)) {
         if (!(buttons & 0x500))
             return PE_NONE;
+        if (in_box(&P.btn[PB_SKIP], x, y))
+            return PE_SKIP;
         if (in_box(&P.btn[PB_BACK], x, y))
             return PE_BACK;
         if (in_box(&P.btn[PB_PLAY], x, y))
@@ -1964,7 +1989,7 @@ int player_key(int k)
         player_set_volume(P.vol - 0.1);
         return PE_NONE;
     case 13:
-        return P.card ? PE_CARD_1 : PE_NONE;
+        return P.card ? PE_CARD_1 : P.skip[0] ? PE_SKIP : PE_NONE;
     case 0x1B:
         if (P.fullscreen) {
             player_set_fullscreen(0);
@@ -2103,6 +2128,25 @@ void player_card(const char *heading, const char *line, const char *line2, const
     if (cur_win() && (was || P.card))
         force_redraw(cur_win(), P.pic.x0, P.pic.y0, P.pic.x1, P.pic.y1);
 }
+
+void player_skip(const char *label)
+{
+    if (!strcmp(P.skip, label ? label : ""))
+        return;
+    snprintf(P.skip, sizeof(P.skip), "%s", label ? label : "");
+    if (P.mini || !cur_win())
+        return;                     /* no room: Return does it */
+    layout_boxes();
+    if (P.fullscreen && P.skip[0] && !P.bar_shown) {
+        P.bar_shown = 1;
+        P.bar_until = now_cs() + SHOW_BAR;
+        ov.placed[0] = 0;           /* the overlay's clip changes */
+    }
+    if (bar_visible())
+        update_box(P.bar);
+}
+
+const char *player_skip_label(void) { return P.skip; }
 
 void player_note(const char *text)
 {
