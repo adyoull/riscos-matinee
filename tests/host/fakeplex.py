@@ -96,16 +96,27 @@ MOVIES = [
 ]
 
 
-def episodes():
+def episodes(season=1):
     eps = []
     for i in range(1, 7):
-        e = movie(210 + i, "Episode \u2018%d\u2019" % i, 2020, "h264", 1280, 720, 3000)
-        e.update({"type": "episode", "index": i, "parentIndex": 1, "year": None,
+        rk = {0: 230, 1: 210, 2: 220}[season] + i
+        e = movie(rk, "Episode \u2018%d\u2019" % i, 2020, "h264", 1280, 720, 3000,
+                  views=1 if (season == 1 and i <= 2) or season == 0 else 0)
+        e.update({"type": "episode", "index": i, "parentIndex": season, "year": None,
                   "grandparentTitle": "Space Show", "grandparentArt": "/library/metadata/20/art/1",
-                  "grandparentRatingKey": "20"})
+                  "grandparentThumb": "/library/metadata/20/thumb/1", "grandparentRatingKey": "20",
+                  "thumb": "/library/metadata/%d/thumb/1700000000" % rk, "duration": 2700000})
         del e["art"]
         eps.append(e)
     return eps
+
+
+SHOW = {"ratingKey": "20", "key": "/library/metadata/20/children", "type": "show", "title": "Space Show",
+        "year": 2020, "contentRating": "12", "rating": 8.2, "childCount": 3, "leafCount": 13, "viewedLeafCount": 3,
+        "summary": "Five strangers crew a salvage ship at the edge of the solar system, and find that the wreck "
+                   "they came for is still broadcasting.",
+        "thumb": "/library/metadata/20/thumb/1", "art": "/library/metadata/20/art/1",
+        "Genre": [{"tag": "Science Fiction"}, {"tag": "Drama"}]}
 
 
 class H(BaseHTTPRequestHandler):
@@ -229,13 +240,15 @@ class H(BaseHTTPRequestHandler):
                                                       "Metadata": MOVIES}})
         if p == "/library/sections/2/all":
             return self.send(200, {"MediaContainer": {"title1": "TV Programmes", "Metadata": [
-                {"ratingKey": "20", "key": "/library/metadata/20/children", "type": "show",
-                 "title": "Space Show", "childCount": 2, "leafCount": 12, "viewedLeafCount": 12,
-                 "thumb": "/library/metadata/20/thumb/1"}]}})
+                SHOW]}})
         if p == "/library/metadata/20/children":
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": [
+                {"ratingKey": "23", "key": "/library/metadata/23/children", "type": "season",
+                 "title": "Specials", "index": 0, "leafCount": 1, "viewedLeafCount": 1},
                 {"ratingKey": "21", "key": "/library/metadata/21/children", "type": "season",
-                 "title": "Series 1", "index": 1, "leafCount": 6, "viewedLeafCount": 2}]}})
+                 "title": "Series 1", "index": 1, "leafCount": 6, "viewedLeafCount": 2},
+                {"ratingKey": "22", "key": "/library/metadata/22/children", "type": "season",
+                 "title": "Series 2", "index": 2, "leafCount": 6, "viewedLeafCount": 0}]}})
         if p == "/hubs/search":
             words = (q.get("query") or [""])[0].lower()
             films = [m for m in MOVIES if words in m["title"].lower()]
@@ -256,6 +269,12 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, raw=b"")
         if p == "/library/metadata/21/children":
             return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": episodes()}})
+        if p == "/library/metadata/23/children":
+            return self.send(200, {"MediaContainer": {"title2": "Specials", "Metadata": episodes(0)[:1]}})
+        if p == "/library/metadata/22/children":
+            return self.send(200, {"MediaContainer": {"title2": "Series 2", "Metadata": episodes(2)}})
+        if p == "/library/metadata/20":
+            return self.send(200, {"MediaContainer": {"size": 1, "Metadata": [SHOW]}})
         if p == "/library/onDeck":
             e = movie(213, "Episode Three", 2020, "h264", 1280, 720, 3000, offset=600000)
             e.update({"type": "episode", "index": 3, "parentIndex": 1, "grandparentTitle": "Space Show",
@@ -265,7 +284,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, raw=jpeg((q.get("url") or [""])[0]), ctype="image/jpeg")
         if p.startswith("/library/metadata/") and p.count("/") == 3:
             rk = p.rsplit("/", 1)[1]
-            for m in MOVIES + episodes():
+            for m in MOVIES + episodes() + episodes(2):
                 if m["ratingKey"] == rk:
                     m = json.loads(json.dumps(m))
                     m["Media"][0]["Part"][0]["Stream"] = streams(m)

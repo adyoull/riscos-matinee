@@ -490,6 +490,7 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->parent_index = (int)jnum(m, "parentIndex", 0);
     it->grandparent_key = dup_s(jstr(m, "grandparentRatingKey"));
     it->grandparent_title = dup_s(jstr(m, "grandparentTitle"));
+    it->show_thumb = dup_s(jstr(m, "grandparentThumb") ? jstr(m, "grandparentThumb") : jstr(m, "parentThumb"));
     it->genres = tags(m, "Genre", 4);
     it->directors = tags(m, "Director", 3);
     it->writers = tags(m, "Writer", 3);
@@ -532,11 +533,17 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
         if (n)
             snprintf(sub, sizeof(sub), "%d season%s", n, n == 1 ? "" : "s");
         it->watched = jnum(m, "leafCount", 0) > 0 && jnum(m, "viewedLeafCount", 0) >= jnum(m, "leafCount", 0);
+        it->unwatched = (int)(jnum(m, "leafCount", 0) - jnum(m, "viewedLeafCount", 0));
+        if (it->unwatched < 0)
+            it->unwatched = 0;
     } else if (!strcmp(it->type, "season")) {
         int n = (int)jnum(m, "leafCount", 0);
         if (n)
             snprintf(sub, sizeof(sub), "%d episode%s", n, n == 1 ? "" : "s");
         it->watched = n > 0 && jnum(m, "viewedLeafCount", 0) >= n;
+        it->unwatched = n - (int)jnum(m, "viewedLeafCount", 0);
+        if (it->unwatched < 0)
+            it->unwatched = 0;
     }
     if (*sub)
         it->subtitle = dup_s(sub);
@@ -650,7 +657,7 @@ int plex_list_get(plex_ctx *c, const char *path, plex_list *out)
 
 static void item_free(plex_item *it)
 {
-    free(it->title); free(it->subtitle); free(it->key); free(it->rating_key); free(it->type);
+    free(it->title); free(it->subtitle); free(it->show_thumb); free(it->key); free(it->rating_key); free(it->type);
     free(it->thumb); free(it->container); free(it->vcodec); free(it->acodec); free(it->vprofile);
     free(it->part_key); free(it->part_file);
     free(it->summary); free(it->art); free(it->content_rating); free(it->tagline);

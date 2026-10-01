@@ -27,11 +27,12 @@
 #define C_SUB     RGB(150, 156, 168)
 #define C_ACCENT  RGB(70, 150, 235)     /* selection, progress, Play */
 #define C_HOVER   RGB(120, 128, 142)
+#define C_CHIP    RGB(40, 43, 51)       /* the details' chips (year, rating...) */
 
 enum { D_BODY, D_BOLD, D_TITLE, D_FONTS };
 
 /* Glyphs, drawn smooth in a box */
-enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH };
+enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH, G_TICK };
 
 void draw_init(int xeig, int yeig);     /* the fonts and the screen (again after a mode change) */
 void draw_done(void);                   /* lets the fonts and the shape sprites go */
@@ -43,6 +44,10 @@ void draw_origin(int ox, int oy);
 
 void draw_rect(int x0, int y0, int x1, int y1, unsigned c);
 void draw_tri(int x0, int y0, int x1, int y1, int x2, int y2, unsigned c);
+/* bg DRAW_NONE: no colour behind (a picture): the shape's edge is cut by
+   a mask instead of mixed with the background */
+#define DRAW_NONE 0xFFu
+
 /* A rounded rectangle, its corners smoothed against bg (the colour
    around it) */
 void draw_round(int x0, int y0, int x1, int y1, int r, unsigned c, unsigned bg);
@@ -52,6 +57,8 @@ void draw_glyph(int g, int x0, int y0, int x1, int y1, unsigned c, unsigned bg);
 /* Text at x, with its baseline at y; bg: the colour behind it (for the
    anti-aliasing) */
 void draw_text(int font, int x, int y, const char *s, unsigned fg, unsigned bg);
+/* The same over a picture: the outline fonts blended with what's there */
+void draw_text_over(int font, int x, int y, const char *s, unsigned fg);
 int draw_width(int font, const char *s);     /* OS units */
 int draw_height(int font);                   /* a line's height, OS units */
 /* Cuts s so it fits in width, ending "..." if it was cut */

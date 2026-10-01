@@ -271,14 +271,19 @@ int main(int argc, char **argv)
     /* ---- TV */
     CHECK(plex_list_get(&c, "/library/sections/2/all", &tv) == 0 && tv.n == 1, "tv: %s", c.err);
     if (tv.n == 1) {
-        CHECK(tv.v[0].kind == PI_FOLDER && !strcmp(tv.v[0].subtitle, "2 seasons") && tv.v[0].watched, "show");
-        CHECK(plex_list_get(&c, tv.v[0].key, &seasons) == 0 && seasons.n == 1 &&
+        CHECK(tv.v[0].kind == PI_FOLDER && !strcmp(tv.v[0].subtitle, "3 seasons") && !tv.v[0].watched &&
+              tv.v[0].unwatched == 10, "show: 10 of 12 episodes unwatched (%d)", tv.v[0].unwatched);
+        CHECK(plex_list_get(&c, tv.v[0].key, &seasons) == 0 && seasons.n == 3 &&
               !strcmp(seasons.title, "Space Show"), "seasons: %s", c.err);
-        if (seasons.n == 1) {
-            CHECK(!strcmp(seasons.v[0].subtitle, "6 episodes") && !seasons.v[0].watched, "season");
-            CHECK(plex_list_get(&c, seasons.v[0].key, &eps) == 0 && eps.n == 6, "episodes");
+        if (seasons.n == 3) {
+            CHECK(seasons.v[0].watched && !seasons.v[0].unwatched, "Specials: all seen");
+            CHECK(!strcmp(seasons.v[1].subtitle, "6 episodes") && !seasons.v[1].watched && seasons.v[1].unwatched == 4 &&
+                  seasons.v[2].unwatched == 6, "season");
+            CHECK(plex_list_get(&c, seasons.v[1].key, &eps) == 0 && eps.n == 6, "episodes");
             CHECK(eps.n == 6 && !strcmp(eps.v[2].subtitle, "S1 E3") && eps.v[2].kind == PI_VIDEO &&
                   !strcmp(eps.v[2].title, "Episode \xe2\x80\x98" "3\xe2\x80\x99"), "episode 3");
+            CHECK(eps.n == 6 && eps.v[0].watched && !eps.v[2].watched && eps.v[2].show_thumb &&
+                  !strcmp(eps.v[2].show_thumb, "/library/metadata/20/thumb/1"), "watched, and the show's poster");
             plex_list_free(&eps);
             plex_list_free(&seasons);
         }

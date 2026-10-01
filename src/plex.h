@@ -88,6 +88,7 @@ typedef struct {
     char *thumb;            /* poster path on the server, or NULL */
     int64_t duration_ms, view_offset_ms;
     int watched;            /* viewCount > 0 (or all episodes seen) */
+    int unwatched;          /* a show's or season's episodes not yet seen */
     /* the first Media / Part (what "play" plays) */
     char *container, *vcodec, *acodec, *vprofile;
     int width, height, bitrate_kbps, channels, bit_depth;
@@ -104,6 +105,7 @@ typedef struct {
     int index, parent_index;
     char *grandparent_key;  /* the show's ratingKey (for the next episode) */
     char *grandparent_title;
+    char *show_thumb;       /* an episode's show's poster (grandparentThumb), or NULL */
     /* the rest of the metadata (a video's details, plex_details()): names
        joined with ", ", or NULL */
     char *genres, *directors, *writers, *studio, *country;

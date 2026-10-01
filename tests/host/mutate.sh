@@ -76,7 +76,7 @@ mutate "the pointer's poster not found" src/ui.c \
 mutate "backdrop not faded" src/ui.c \
   '    } else if (art == 1) {\n        sprite_fade(p->area, w, h);\n    }' '    }'
 mutate "posters not rounded (no mask)" src/ui.c \
-  'art ? 0 : 12 >> S.xeig' '0'
+  'art == 1 ? 0 : 12 >> S.xeig' '0'
 mutate "the speed test's time limit ignored" src/ui.c \
   'if (now_cs() - S.speed.t0 >= SPEED_TIME || S.speed.done' 'if (S.speed.done'
 mutate "the speed in bytes, not bits" src/ui.c \
@@ -164,6 +164,20 @@ mutate "Normal doesn't open the window again" src/player.c \
   'open_at(P.win, P.main_st[1], P.main_st[2], P.main_st[3], P.main_st[4], -1);' '(void)0;'
 mutate "the backdrop fetched on every resize" src/ui.c \
   'art_due = now_cs() + 50;' 'art_due = now_cs();'
+
+# test11: the new look
+mutate "no watched tick" src/ui.c \
+  'if (it->watched && it->rating_key && it->kind != PI_OTHER)\n        return 1;' 'if (0)\n        return 1;'
+mutate "a show's unwatched count not shown" src/ui.c \
+  'if (it->kind == PI_FOLDER && it->unwatched > 0)\n        return 2;' 'if (0)\n        return 2;'
+mutate "a show opens as a grid of series" src/ui.c \
+  'if (it->kind == PI_FOLDER && it->type && !strcmp(it->type, "show") && it->key && it->rating_key) {' 'if (0) {'
+mutate "the show page opens on the first series, not the one to watch" src/ui.c \
+  'if (se.v[i].unwatched > 0) {\n            k = i;' 'if (0) {\n            k = i;'
+mutate "another series pushes history" src/ui.c \
+  'show_list(path, "", 0, 0);\n}\n\n/* Play and Mark watched' 'show_list(path, "", 1, 0);\n}\n\n/* Play and Mark watched'
+mutate "the details poster not fetched" src/ui.c \
+  'S.det_poster = poster_fetch(det_poster_thumb(it), key, det_pw >> S.xeig, det_ph >> S.yeig, 0);' '(void)0;'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

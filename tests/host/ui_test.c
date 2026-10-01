@@ -93,6 +93,7 @@ static int typed_type[8], ntyped;
 static int plots, plot_sprites, plot_texts;
 static char plotted_text[8192];
 static int *plotted_area;               /* the last poster sprite plotted */
+static int *plotted_wide;               /* the widest one (a backdrop) */
 static int *output_sprite;              /* where output goes (NULL: the screen) */
 static int jpeg_plots, jpeg_scale[4], jpeg_into_sprite = 1;
 static int drag_started;
@@ -545,6 +546,8 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
             if (*(const char *)(intptr_t)ic->data[0] == 'p') {  /* a poster or backdrop ("g": a shape) */
                 plot_sprites++;
                 plotted_area = area;
+                if (!plotted_wide || area[4 + 4] > plotted_wide[4 + 4])
+                    plotted_wide = area;
             } else {
                 glyphs++;
                 last_glyph = area;
@@ -874,7 +877,7 @@ static int ev_redraw(int *b, int w)
     b[0] = w;
     plotted_text[0] = 0;
     plot_sprites = 0;
-    plotted_area = NULL;
+    plotted_area = plotted_wide = NULL;
     shapes = 0;
     glyphs = 0;
     return 1;                                           /* Redraw_Window_Request */
@@ -1028,6 +1031,8 @@ static int script(int *b, int mask)
         }
         case 11:
             CHECK(ui_test_sel() == find_tile("Dvd Rip"), "a click selects");
+            CHECK(ui_test_badge(find_tile("Dvd Rip")) == 1 && ui_test_badge(find_tile("Big Buck Bunny")) == 0,
+                  "a tick on the film watched, none on one part watched");
             pc++;
             return ev_tile(b, find_tile("Dvd Rip"), 2);         /* Menu */
         case 12:
@@ -1080,13 +1085,19 @@ static int script(int *b, int mask)
             return ev_redraw(b, w_browser);
         }
         case 15: {
-            const int *spr = plotted_area ? plotted_area + 4 : NULL;
+            const int *spr = plotted_wide ? plotted_wide + 4 : NULL, *pos = plotted_area ? plotted_area + 4 : NULL;
             int w = spr ? spr[4] + 1 : 0, h = spr ? spr[5] + 1 : 0;
             unsigned bottom = spr ? ((const unsigned *)(spr + 11))[(h - 1) * w + w / 2] : 0;
             CHECK(spr && w == 554 && h == 302 && spr[9] == spr[8],
                   "the backdrop: the window's width, at most 55%% of its height, no mask (%d x %d)", w, h);
             CHECK(abs((int)(bottom & 255) - 0x18) < 3 && abs((int)(bottom >> 8 & 255) - 0x1A) < 3 &&
                   abs((int)(bottom >> 16) - 0x1F) < 3, "faded to the window's grey at its foot (%06x)", bottom);
+            CHECK(pos && pos[4] + 1 == 116 && pos[5] + 1 == 174 && pos[9] != pos[8],
+                  "the poster beside it: 232 OS units (the narrowest), 2:3, rounded (%d x %d)", pos ? pos[4] + 1 : 0,
+                  pos ? pos[5] + 1 : 0);
+            CHECK(log_count("/photo/:/transcode", "width", "116") >= 1, "the poster fetched at that size");
+            CHECK(strstr(plotted_text, "|2008|1h 30m|PG|Critics 7.5|Audience 8.1|Animation|Comedy|Short|"),
+                  "the labels: the facts, then the genres: %s", plotted_text);
             CHECK(strstr(plotted_text, "Big Buck Bunny|") && strstr(plotted_text, "Play|") &&
                   strstr(plotted_text, "Resume from 42:10|") && strstr(plotted_text, "Subtitles: None|"),
                   "the details drawn: %s", plotted_text);
@@ -1141,7 +1152,7 @@ static int script(int *b, int mask)
             return ev_redraw(b, w_browser);
         case 1503: {
             const int *spr = plotted_area ? plotted_area + 4 : NULL;
-            CHECK(strstr(plotted_text, "Directed by|Sacha Goedegebure|") && strstr(plotted_text, "Genre|Animation, Comedy, Short|") &&
+            CHECK(strstr(plotted_text, "Directed by|Sacha Goedegebure|") &&
                   strstr(plotted_text, "Released|10 April 2008|") && strstr(plotted_text, "Critics 7.5") &&
                   strstr(plotted_text, "Audience 8.1") && strstr(plotted_text, "1080p H.264") && strstr(plotted_text, "AAC 5.1"),
                   "the credits: %s", plotted_text);
@@ -1494,41 +1505,93 @@ static int script(int *b, int mask)
             pc++;
             return ev_tile(b, 2, 4);
         case 55:
-            CHECK(ui_test_items() == 1 && !strcmp(ui_test_item(0, 1), "2 seasons"), "a show");
-            pc++;
+            CHECK(ui_test_items() == 1 && !strcmp(ui_test_item(0, 1), "3 seasons") && ui_test_badge(0) == 2,
+                  "a show, with the count of episodes not seen");
+            pc = 551;
+            return ev_redraw(b, w_browser);
+        case 551:
+            CHECK(strstr(plotted_text, "|10|Space Show|3 seasons|"), "its badge: 10 episodes unwatched: %s", plotted_text);
+            pc = 56;
             return ev_key(b, w_browser, -1, 13);                /* Return opens the one selected */
-        case 56:
-            CHECK(ui_test_items() == 1 && !strcmp(ui_test_path(), "Attic > TV Programmes > Space Show"),
-                  "seasons: %s", ui_test_path());
-            pc++;
-            return ev_tile(b, 0, 4);
-        case 57:
-            CHECK(ui_test_items() == 6 && !strcmp(ui_test_item(2, 0), "Episode '3'") &&
-                  !strcmp(ui_test_item(2, 1), "S1 E3"), "episodes, Latin-1: %s / %s", ui_test_item(2, 0),
+        case 56: {
+            int se = -1;
+            CHECK(ui_test_show(&se) && se == 1 && !strcmp(ui_test_path(), "Attic > TV Programmes > Space Show"),
+                  "a show: its page, Series 1 (the first with episodes unwatched, not Specials): %s", ui_test_path());
+            CHECK(ui_test_items() == 6 && !strcmp(ui_test_item(2, 0), "3. Episode '3'") &&
+                  !strcmp(ui_test_item(2, 1), "45 min"), "its episodes as rows, Latin-1: %s / %s", ui_test_item(2, 0),
                   ui_test_item(2, 1));
+            CHECK(ui_test_sel() == 2, "the first not seen, selected (%d)", ui_test_sel());
+            CHECK(ui_test_badge(0) == 1 && ui_test_badge(2) == 0, "ticks on the episodes seen");
+            CHECK(!strcmp(ui_test_show_text(1), "6 episodes   \xb7   4 unwatched") &&
+                  !strcmp(ui_test_show_text(2), "Play S1 E3|Mark watched|"), "the count, and the buttons: %s / %s",
+                  ui_test_show_text(1), ui_test_show_text(2));
+            CHECK(log_count("/library/metadata/20", NULL, NULL) == 1 && log_count("/photo/:/transcode", "url", "/library/metadata/20/art/1") >= 1,
+                  "the show's details, and its backdrop");
             pc++;
-            return ev_key(b, w_browser, -1, 0x18D);             /* Right */
-        case 58:
-            CHECK(ui_test_sel() == 1, "Right moves the selection");
+            return ev_redraw(b, w_browser);
+        }
+        case 57:
+            CHECK(strstr(plotted_text, "Space Show|2020|3 series|12|8.2|10 unwatched|Five strangers") &&
+                  strstr(plotted_text, "Specials|Series 1|Series 2|6 episodes") && strstr(plotted_text, "1. Episode '1'|45 min|"),
+                  "the show page drawn: %s", plotted_text);
+            save_picture("show.ppm", w_browser);
+            drain_n = 0;
+            pc = 570;
+            return NULL_EVENT;
+        case 570:                                           /* the episodes' pictures */
+            DRAIN(10);
+            if (pc != 571)
+                return NULL_EVENT;
+            continue;
+        case 571:
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/thumb/1700000000") == 1 &&
+                  log_count("/photo/:/transcode", "width", "160") >= 3, "the episodes' pictures: 16:9, 160 pixels");
             pc++;
-            return ev_key(b, w_browser, -1, 0x18E);             /* Down (4 a row) */
+            return ev_key(b, w_browser, -1, 0x18E);             /* Down: the next episode */
+        case 572:
+            CHECK(ui_test_sel() == 3, "Down: the next row (%d)", ui_test_sel());
+            pc++;
+            return ev_button(b, w_browser, SH_TAB + 2, 0x400);  /* Series 2 */
+        case 573: {
+            int se = -1;
+            CHECK(ui_test_show(&se) && se == 2 && ui_test_items() == 6 && !strcmp(ui_test_item(0, 0), "1. Episode '1'") &&
+                  log_count("/library/metadata/22/children", NULL, NULL) == 1, "Series 2's episodes, in place");
+            CHECK(!strcmp(ui_test_show_text(2), "Play S2 E1|Mark watched|"), "Play: its first (%s)", ui_test_show_text(2));
+            memset(b, 0, 32);                                   /* as wide as the window opens */
+            b[0] = w_browser; b[1] = 480; b[2] = 388; b[3] = 480 + 2840; b[4] = 388 + 1478; b[7] = -1;
+            n_null = 0;
+            pc = 574;
+            return 2;
+        }
+        case 574:
+            if (n_null++ < 12) {                                /* its pictures at that size */
+                fake_cs += 20;
+                return NULL_EVENT;
+            }
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 575:
+            save_picture("show-wide.ppm", w_browser);
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/20/art/1") >= 2, "the backdrop again, wider");
+            memset(b, 0, 32);                                   /* back as it was */
+            b[0] = w_browser; b[1] = 1366; b[2] = 570; b[3] = 1366 + 1108; b[4] = 570 + 1100; b[7] = -1;
+            pc = 59;
+            return 2;
         case 59:
-            CHECK(ui_test_sel() == 5, "Down: a row on (%d)", ui_test_sel());
-            pc++;
+            pc = 60;
             return ev_key(b, w_browser, -1, 0x1CC);             /* F12: not ours */
         case 60:
             CHECK(keys_passed == 1, "other keys passed on");
             pc++;
             return ev_key(b, w_browser, -1, 0x1B);              /* Escape */
         case 61:
-            CHECK(!strcmp(ui_test_path(), "Attic > TV Programmes > Space Show"), "Escape goes back: %s",
-                  ui_test_path());
-            pc++;
-            return ev_button(b, w_browser, B_BACK, 0x400);      /* the Back button */
-        case 62:
-            CHECK(!strcmp(ui_test_path(), "Attic > TV Programmes"), "Back button: %s", ui_test_path());
+            CHECK(!strcmp(ui_test_path(), "Attic > TV Programmes") && !ui_test_show(&count0),
+                  "Escape goes back to where the show was opened (not Series 1): %s", ui_test_path());
             pc++;
             return ev_key(b, w_browser, -1, 0x7F);              /* Delete: back too */
+        case 62:
+            pc = 63;
+            continue;
         case 63:
             CHECK(!strcmp(ui_test_path(), "Attic"), "the top: %s", ui_test_path());
             prev_count = log_count("/library/sections", NULL, NULL);
@@ -1650,6 +1713,26 @@ static int script(int *b, int mask)
             return 2;
         case 9040:
             CHECK(ui_test_page() == PG_DETAILS, "still its details");
+            CHECK(last_poll == 0x400E1, "the backdrop and the poster wanted at the new size");
+            fake_cs = idle_time;
+            n_null = 0;
+            pc = 90404;
+            return NULL_EVENT;
+        case 90404:
+            if (n_null++ < 6) {
+                fake_cs += 20;
+                return NULL_EVENT;
+            }
+            pc = 90405;
+            continue;
+        case 90405:
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000") >= 2 && log_count("/photo/:/transcode", "width", "240") == 1,
+                  "fetched at the window's new size: the backdrop 1420 pixels wide, the poster 240 (%d, %d, %d)",
+                  log_count("/photo/:/transcode", "width", "1420"), log_count("/photo/:/transcode", "width", "240"), last_poll);
+            pc = 9041;
+            return ev_redraw(b, w_browser);
+        case 9041:
+            save_picture("details-wide.ppm", w_browser);
             pc = 905;
             fake_rc.len = 5400;
             open0 = fake_rc.opens;
@@ -2186,13 +2269,10 @@ static int script(int *b, int mask)
             pc++;
             return ev_tile(b, find_tile("TV Programmes"), 4);
         case 943:
-            pc++;
-            return ev_tile(b, find_tile("Space Show"), 4);
-        case 944:
-            pc++;
-            return ev_tile(b, find_tile("Series 1"), 4);
+            pc = 945;
+            return ev_tile(b, find_tile("Space Show"), 4);      /* its page: Series 1's episodes */
         case 945:
-            CHECK(find_tile("Episode '5'") == 4, "the episodes");
+            CHECK(find_tile("5. Episode '5'") == 4, "the episodes");
             pc++;
             return ev_tile(b, 4, 4);
         case 946:
@@ -2296,7 +2376,7 @@ static int script(int *b, int mask)
             pc++;
             return ev_tile(b, 0, 4);                            /* the show */
         case 968:
-            CHECK(!strcmp(ui_test_query(), "") && find_tile("Series 1") >= 0, "the show opens");
+            CHECK(!strcmp(ui_test_query(), "") && ui_test_show(&count0), "the show opens");
             pc = 9680;
             return ev_key(b, w_browser, -1, '/');               /* another search from there */
         case 9680:

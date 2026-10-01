@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test10
+!PlexRO - a Plex client for RISC OS                  0.1.0-test11
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -38,12 +38,15 @@ The browser
 Select on the icon bar icon opens it: a dark window, like a TV's. At the
 top: Back, where you are, a status line, and Refresh. Below them, a
 poster for each film, show, season or episode, with its name and (for
-example) its year, "S1 E3" or "3 seasons". A blue corner marks what you
-haven't watched; a blue bar on a poster shows how far you got. The
-selected poster has a blue ring, and the one under the pointer a grey one.
+example) its year, "S1 E3" or "3 seasons". On the posters: a bar along
+the foot shows how far you got; a tick in a circle, that you've watched
+it; on a show or series, a blue number, how many episodes you haven't.
+The selected poster has a light border, and the one under the pointer a
+grey one.
 
   click          select
-  double-click   open a library, show or season; a video's details page
+  double-click   open a library, show or season (a show: its page, below);
+                 a video's details page
   / or Ctrl-F    search (or the magnifying glass in the bar)
   Return         open, or play, the poster that's selected
   I              the selected video's details page
@@ -81,19 +84,38 @@ results.
 The details page
 ----------------
 Double-click a film or episode (or press I) and the window shows its
-details: its backdrop across the top (the window's width, and up to about
-half its height: it grows and shrinks with the window), its title, year, running time, age
-rating and score, its summary, and how it will play. Buttons: Play,
-Resume from h:mm:ss, From the start, Save file, Mark watched (or
-unwatched), and its subtitles. Under the summary: the genres, who
-directed and wrote it, the studio, when it came out (or was first
-shown), the ratings, and the file (such as "1080p H.264 . AAC 5.1 .
-MKV . 4.2 GB"); then the cast, with their photos and the parts they
-play (the photos arrive a moment after the page).
+details. Across the top, its backdrop (the window's width and up to about
+half its height), fading into the page; over it on the left, its poster
+(an episode: its show's), which grows and shrinks with the window.
+Beside the poster: the title; labels for the year, running time, age
+rating and scores; its genres; the summary; the buttons (Play, Resume
+from h:mm:ss, From the start, Mark watched or unwatched, Subtitles, Save
+file); and how it will play. Under them: the cast, with their photos and
+the parts they play (the photos arrive a moment after the page), and
+beside the cast (under it in a narrow window) who directed and wrote it,
+the studio, when it came out (or was first shown) and the file (such as
+"1080p H.264 . AAC 5.1 . MKV . 4.2 GB").
 
   Return         play
   Left, Right    the video before or after it in the list
   Back, Backspace, Escape  back to the posters, where you were
+
+A show's page
+-------------
+A show opens as a page of its own: its backdrop, poster, title, labels
+(the year it began, how many series, the age rating, the score and how
+many episodes you haven't watched), its summary, and two buttons: Play
+(or Resume) the next episode to watch, and Mark watched (the whole show).
+Under them, its series as tabs, the one with episodes you haven't seen
+chosen, and that series' episodes as a list: a picture, the title, how
+long it is (and how much is left), and two lines of its summary, with
+the bar and the tick as on the posters. The first episode you haven't
+finished is selected. Click a tab for another series.
+
+  click, arrow keys       select an episode
+  double-click, I         its details page
+  Return                  play it
+  Back, Backspace, Escape where you opened the show from
 
 Subtitles
 ---------

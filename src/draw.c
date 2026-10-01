@@ -153,6 +153,8 @@ static int inside(int g, double u, double v)
     case G_CORNER_TR: return u * u + (1 - v) * (1 - v) <= 1;
     case G_CORNER_BL: return (1 - u) * (1 - u) + v * v <= 1;
     case G_CORNER_BR: return u * u + v * v <= 1;
+    case G_TICK:                    /* a tick */
+        return seg_dist(u, v, 0.22, 0.52, 0.42, 0.72) <= 0.08 || seg_dist(u, v, 0.42, 0.72, 0.8, 0.3) <= 0.08;
     case G_SEARCH:                  /* a magnifying glass: a ring, and a handle to the bottom right */
         a = sqrt((u - 0.42) * (u - 0.42) + (v - 0.42) * (v - 0.42));
         return (a >= 0.2 && a <= 0.3) || seg_dist(u, v, 0.63, 0.63, 0.88, 0.88) <= 0.08;
@@ -162,19 +164,19 @@ static int inside(int g, double u, double v)
 
 static int *shape_make(int g, int w, int h, unsigned c, unsigned bg)
 {
-    size_t image = (size_t)w * h * 4;
-    int *a = malloc(16 + 44 + image), *s;
-    unsigned *px;
+    size_t image = (size_t)w * h * 4, words = (size_t)(w + 31) / 32, mask = bg == DRAW_NONE ? words * 4 * h : 0;
+    int *a = malloc(16 + 44 + image + mask), *s;
+    unsigned *px, *m;
     int fr = c >> 8 & 255, fg = c >> 16 & 255, fb = c >> 24 & 255;
     int br = bg >> 8 & 255, bgg = bg >> 16 & 255, bb = bg >> 24 & 255;
     if (!a)
         return NULL;
-    a[0] = (int)(16 + 44 + image);
+    a[0] = (int)(16 + 44 + image + mask);
     a[1] = 1;
     a[2] = 16;
     a[3] = a[0];
     s = a + 4;
-    s[0] = (int)(44 + image);
+    s[0] = (int)(44 + image + mask);
     memset(&s[1], 0, 12);
     ((char *)&s[1])[0] = 'g';
     s[4] = w - 1;
@@ -182,15 +184,23 @@ static int *shape_make(int g, int w, int h, unsigned c, unsigned bg)
     s[6] = 0;
     s[7] = 31;
     s[8] = 44;
-    s[9] = 44;                      /* no mask: the edges are mixed with bg */
+    s[9] = (int)(44 + (mask ? image : 0));  /* no mask: the edges are mixed with bg */
     s[10] = (int)(1u | ((unsigned)(180 >> xeig) << 1) | ((unsigned)(180 >> yeig) << 14) | (6u << 27));
     px = (unsigned *)(s + 11);
+    m = (unsigned *)((char *)s + 44 + image);
+    if (mask)
+        memset(m, 0, mask);
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             int n = 0;
             for (int j = 0; j < 4; j++)
                 for (int i = 0; i < 4; i++)
                     n += inside(g, (x + (i + 0.5) / 4) / w, (y + (j + 0.5) / 4) / h);
+            if (mask) {             /* in or out, by more than half */
+                if (n >= 8)
+                    m[y * words + x / 32] |= 1u << (x & 31);
+                n = 16;
+            }
             px[y * w + x] = (unsigned)((fr * n + br * (16 - n)) / 16) |
                             (unsigned)((fg * n + bgg * (16 - n)) / 16) << 8 |
                             (unsigned)((fb * n + bb * (16 - n)) / 16) << 16;
@@ -265,6 +275,26 @@ void draw_tri(int x0, int y0, int x1, int y1, int x2, int y2, unsigned c)
     plot(4, x0, y0);
     plot(4, x1, y1);
     plot(85, x2, y2);               /* triangle fill: the last two points and this */
+}
+
+void draw_text_over(int f, int x, int y, const char *s, unsigned fg)
+{
+    _kernel_swi_regs r;
+    if (f > 0 && font[f]) {
+        r.r[0] = font[f];
+        r.r[1] = 0;
+        r.r[2] = (int)fg;
+        r.r[3] = 14;
+        swi(ColourTrans_SetFontColours, &r);
+        r.r[0] = font[f];
+        r.r[1] = (intptr_t)s;
+        r.r[2] = 0x910;             /* OS units; the handle in R0; blended with the screen */
+        r.r[3] = x;
+        r.r[4] = y;
+        if (!swi(Font_Paint, &r))
+            return;
+    }
+    draw_text(f, x, y, s, fg, RGB(24, 26, 31));
 }
 
 void draw_text(int f, int x, int y, const char *s, unsigned fg, unsigned bg)

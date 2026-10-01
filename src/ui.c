@@ -161,6 +161,7 @@ typedef struct poster {
 
 typedef struct {
     char line[2][80];               /* Latin-1, cut to fit the tile */
+    char sum[2][160];               /* the show page: an episode's summary, two lines */
     poster_t *poster;
 } disp_t;
 
@@ -216,7 +217,10 @@ static struct {
     /* details */
     plex_list det;                  /* one item, from plex_details() */
     int have_det, det_i;            /* det_i: its place in the list shown (-1: gone) */
-    poster_t *det_art;
+    poster_t *det_art, *det_poster;
+    /* the labels under the title (year, running time...; then the genres) */
+    struct { int x0, y0, x1, kind; char t[64]; } chip[16];
+    int nchip;
     char det_title[120], det_meta[160], det_how[200], det_how_l[2][160], det_lines[10][160];
     int det_how_n;
     int det_nlines, det_h;
@@ -227,6 +231,29 @@ static struct {
     int ncast, cast_wanted;         /* cast_wanted: photos still to fetch (null events) */
     struct { int id, x0, y0, x1, y1; char label[48]; } btn[DET_BTN_MAX + 4];
     int nbtn;
+
+    /* the show page: a show's backdrop, poster, title, labels, summary and
+       buttons, its series as tabs, and the series shown as a list of
+       episodes (the list shown: S.list is the series' episodes) */
+    struct {
+        int on;                     /* the list shown is one of the show's series */
+        int have;                   /* det and seasons hold a show */
+        plex_list det, seasons;     /* the show (one item), its series */
+        int season;                 /* the one shown (in seasons) */
+        poster_t *art, *poster;
+        int w, head_h;              /* the width laid out for; the header's height */
+        int art_w, art_h, pw, ph, fw, due;  /* the boxes; the width fetched at; when to fetch again */
+        int tx, title_y, sum_y, count_x, count_y;
+        char title[120], count[80], lines[3][160];
+        int nlines;
+        struct { int x0, y0, x1; char t[48]; } chip[8];
+        int nchip;
+        struct { int x0, y0, x1, y1; char t[48]; } tab[12];
+        int ntab;
+        struct { int id, x0, y0, x1, y1; char t[48]; } btn[2];
+        int nbtn;
+        int next;                   /* the episode Play plays (in S.list) */
+    } show;
 
     /* menus */
     int menu_kind;                  /* 1 icon bar, 2 item, 3 subtitles, 4 player, 5 player's subtitles */
@@ -734,7 +761,9 @@ static void cache_free_all(void)
     S.cache_bytes = 0;
     for (int i = 0; S.disp && i < S.list.n; i++)
         S.disp[i].poster = NULL;
-    S.det_art = NULL;
+    S.det_art = S.det_poster = NULL;
+    S.show.art = S.show.poster = NULL;
+    S.show.fw = 0;
     for (int i = 0; i < S.ncast; i++)
         S.cast[i].photo = NULL;
     S.cast_wanted = S.ncast > 0;
@@ -753,7 +782,7 @@ static void cache_trim(void)
             used = S.disp[i].poster == p;
         for (int i = 0; i < S.ncast && !used; i++)
             used = S.cast[i].photo == p;
-        if (!used && p != S.det_art) {
+        if (!used && p != S.det_art && p != S.det_poster && p != S.show.art && p != S.show.poster) {
             *pp = p->next;
             S.cache_bytes -= p->bytes;
             free(p->area);
@@ -889,18 +918,27 @@ static void sprite_round(int *area, int w, int h, int round)
         }
 }
 
-/* The backdrop: darkened a little, and faded into the window's grey over
-   its lower part, so the title reads on it */
+/* The backdrop: darkened a little, faded into the window's grey over its
+   lower part, and across from the left (where the title, the labels and
+   the summary go, so they read as on the grey), as the picture fades into
+   the page. Done once, when it's fetched: plotting it costs no more. */
 static void sprite_fade(int *area, int w, int h)
 {
     unsigned *px = (unsigned *)(area + 4 + 11);
     const int bg[3] = { 24, 26, 31 };
-    int from = h * 45 / 100;
+    int from = h * 40 / 100, solid = w * 48 / 100, clear = w * 86 / 100;
+    static unsigned char across[4096];
+    for (int x = 0; x < w && x < 4096; x++) {       /* how much grey from the left, in 256ths */
+        int t = x <= solid ? 0 : x >= clear ? 256 : 256 * (x - solid) / (clear - solid);
+        int smooth = t * t / 256 * (768 - 2 * t) / 256;         /* 0..256, easing in and out */
+        across[x] = (unsigned char)(236 - 236 * smooth / 256);
+    }
     for (int y = 0; y < h; y++) {
-        /* k: how much of the grey, in 256ths */
-        int k = y < from ? 40 : 40 + (216 * (y - from) * (y - from)) / ((h - from) * (h - from));
+        /* down: how much of the grey, in 256ths */
+        int kd = y < from ? 40 : 40 + (216 * (y - from) * (y - from)) / ((h - from) * (h - from));
         for (int x = 0; x < w; x++) {
             unsigned p = px[y * w + x];
+            int ka = x < 4096 ? across[x] : 0, k = kd > ka ? kd : ka;
             int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
             for (int i = 0; i < 3; i++)
                 c[i] = (c[i] * (256 - k) + bg[i] * k) >> 8;
@@ -926,10 +964,11 @@ static int picture_get(const char *thumb, int w, int h, char **jpeg, size_t *len
 }
 
 /* art: 0 a poster (rounded corners), 1 a backdrop (faded), 2 a person's
-   photo (round, filling the circle) */
+   photo (round, filling the circle), 3 an episode's picture (filling its
+   box, rounded corners) */
 static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, int art)
 {
-    int round = art == 2 ? w / 2 : art ? 0 : 12 >> S.xeig;
+    int round = art == 2 ? w / 2 : art == 1 ? 0 : 12 >> S.xeig;
     poster_t *p = calloc(1, sizeof(*p));
     char *jpeg = NULL;
     size_t len = 0;
@@ -957,9 +996,22 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
 
 /* ---- the browser's layout ------------------------------------------------------ */
 
+/* The show page's episode rows: a 16:9 picture, the title, the summary */
+#define EP_TW   320                 /* the picture, OS units */
+#define EP_TH   180
+#define EP_ROW  (EP_TH + 40)
+#define EP_GAP  16
+
 static void tile_box(int i, int *x0, int *y0, int *x1, int *y1)
 {
     int col = i % S.cols, row = i / S.cols;
+    if (S.show.on) {
+        *x0 = 24;
+        *x1 = S.show.w - 24;
+        *y1 = -S.show.head_h - i * (EP_ROW + EP_GAP);
+        *y0 = *y1 - EP_ROW;
+        return;
+    }
     *x0 = GAP + col * (TILE_W + GAP);
     *x1 = *x0 + TILE_W;
     *y1 = -HEADER_H - GAP - row * (TILE_H + GAP);
@@ -975,6 +1027,8 @@ static int layout_cols(int width)
 static int list_height(void)
 {
     int rows = S.have_list ? (S.list.n + S.cols - 1) / S.cols : 0;
+    if (S.show.on)
+        return S.show.head_h + S.list.n * (EP_ROW + EP_GAP) + GAP;
     return HEADER_H + GAP + rows * (TILE_H + GAP);
 }
 
@@ -1007,6 +1061,47 @@ static void redraw_tile(int i)
     force_redraw(S.browser_w, x0 - 16, y0 - 16, x1 + 20, y1 + 16);
 }
 
+/* An episode's picture on the show page: its own key (its size differs
+   from a poster's) */
+static void ep_key(const plex_item *it, char *out, size_t size)
+{
+    snprintf(out, size, "ep:%s@%dx%d", it->thumb ? it->thumb : "", EP_TW, EP_TH);
+}
+
+/* The show page's rows: "3. The title", how long (and how much is left),
+   two lines of the summary */
+static void make_disp_episodes(void)
+{
+    int tw = S.show.w - 24 - (40 + EP_TW + 40) - 40;
+    if (tw > 1800)
+        tw = 1800;                  /* lines any longer are hard to read */
+    for (int i = 0; i < S.list.n; i++) {
+        const plex_item *it = &S.list.v[i];
+        disp_t *d = &S.disp[i];
+        char t[400], key[300], sum[1200], lines[2][160];
+        long m = (long)(it->duration_ms / 60000), left = (long)((it->duration_ms - it->view_offset_ms) / 60000);
+        int n;
+        if (it->index > 0)
+            snprintf(t, sizeof(t), "%d. %s", it->index, it->title);
+        else
+            snprintf(t, sizeof(t), "%s", it->title);
+        latin1(t, d->line[0], sizeof(d->line[0]));
+        draw_fit(D_BOLD, d->line[0], tw * 2 / 3);
+        if (it->view_offset_ms > 0 && m > 0)
+            snprintf(d->line[1], sizeof(d->line[1]), "%ld min   \xb7   %ld min left", m, left > 0 ? left : 1);
+        else if (m > 0)
+            snprintf(d->line[1], sizeof(d->line[1]), "%ld min", m);
+        else
+            d->line[1][0] = 0;
+        latin1(it->summary ? it->summary : "", sum, sizeof(sum));
+        n = draw_wrap(D_BODY, sum, tw, lines, 2);
+        for (int l = 0; l < 2; l++)
+            snprintf(d->sum[l], sizeof(d->sum[l]), "%s", l < n ? lines[l] : "");
+        ep_key(it, key, sizeof(key));
+        d->poster = it->thumb ? cache_find(key) : NULL;
+    }
+}
+
 /* The two lines under each poster, cut to fit */
 static void make_disp(void)
 {
@@ -1014,6 +1109,10 @@ static void make_disp(void)
     S.disp = calloc(S.list.n ? S.list.n : 1, sizeof(disp_t));
     if (!S.disp)
         return;
+    if (S.show.on) {
+        make_disp_episodes();
+        return;
+    }
     for (int i = 0; i < S.list.n; i++) {
         const plex_item *it = &S.list.v[i];
         latin1(it->title, S.disp[i].line[0], sizeof(S.disp[i].line[0]));
@@ -1127,6 +1226,41 @@ static const char *kind_name(const plex_item *it)
     return it->kind == PI_VIDEO ? "Video" : it->kind == PI_FOLDER ? "Folder" : "Not yet";
 }
 
+/* A picture's badges (screen coordinates of the picture): how far it's
+   been watched (a bar along its foot), a tick when it's been seen, or how
+   many episodes of a show or season haven't */
+/* Which badge: 1 a tick (watched), 2 the number not seen (a show, a series), 0 none */
+static int badge_kind(const plex_item *it)
+{
+    if (it->watched && it->rating_key && it->kind != PI_OTHER)
+        return 1;
+    if (it->kind == PI_FOLDER && it->unwatched > 0)
+        return 2;
+    return 0;
+}
+
+static void badges(const plex_item *it, int x0, int y0, int x1, int y1)
+{
+    if (it->kind == PI_VIDEO && it->view_offset_ms > 0 && it->duration_ms > 0) {
+        int part = (int)((int64_t)(x1 - x0 - 24) * it->view_offset_ms / it->duration_ms);
+        draw_rect(x0 + 12, y0 + 8, x1 - 12, y0 + 18, RGB(20, 21, 26));
+        draw_rect(x0 + 12, y0 + 8, x0 + 12 + (part < 8 ? 8 : part), y0 + 18, C_ACCENT);
+    }
+    if (badge_kind(it) == 1) {
+        draw_glyph(G_CIRCLE, x1 - 60, y1 - 60, x1 - 8, y1 - 8, C_TEXT, DRAW_NONE);
+        draw_glyph(G_TICK, x1 - 56, y1 - 56, x1 - 12, y1 - 12, RGB(15, 16, 20), C_TEXT);
+    } else if (badge_kind(it) == 2) {
+        char n[16];
+        int w;
+        snprintf(n, sizeof(n), "%d", it->unwatched);
+        w = draw_width(D_BOLD, n) + 28;
+        if (w < 52)
+            w = 52;
+        draw_round(x1 - 8 - w, y1 - 60, x1 - 8, y1 - 8, 26, C_ACCENT, DRAW_NONE);
+        draw_text(D_BOLD, x1 - 8 - (w + draw_width(D_BOLD, n)) / 2, y1 - 44, n, C_TEXT, C_ACCENT);
+    }
+}
+
 static void draw_tile(int i, int ox, int oy)
 {
     const plex_item *it = &S.list.v[i];
@@ -1134,12 +1268,11 @@ static void draw_tile(int i, int ox, int oy)
     int x0, y0, x1, y1, py0;
     tile_box(i, &x0, &y0, &x1, &y1);
     py0 = y1 - POSTER_H;
-    /* the ring round the selected (or pointed at) one, with a gap; or a
-       shadow */
+    /* a light border round the selected one (grey: pointed at); else a shadow */
     if (i == S.sel || i == S.hover) {
-        draw_round(ox + x0 - 12, oy + py0 - 12, ox + x1 + 12, oy + y1 + 12, 24,
-                   i == S.sel ? C_ACCENT : C_HOVER, C_BG);
-        draw_round(ox + x0 - 6, oy + py0 - 6, ox + x1 + 6, oy + y1 + 6, 18, C_BG, i == S.sel ? C_ACCENT : C_HOVER);
+        unsigned c = i == S.sel ? C_TEXT : C_HOVER;
+        draw_round(ox + x0 - 10, oy + py0 - 10, ox + x1 + 10, oy + y1 + 10, 22, c, C_BG);
+        draw_round(ox + x0 - 4, oy + py0 - 4, ox + x1 + 4, oy + y1 + 4, 16, C_BG, c);
     } else {
         draw_round(ox + x0 + 6, oy + py0 - 10, ox + x1 + 6, oy + y1 - 6, 16, C_SHADOW, C_BG);
     }
@@ -1150,21 +1283,15 @@ static void draw_tile(int i, int ox, int oy)
         draw_round(ox + x0, oy + py0, ox + x1, oy + y1, 12, C_CARD, C_BG);
         draw_text(D_BODY, ox + (x0 + x1 - draw_width(D_BODY, k)) / 2, oy + py0 + POSTER_H / 2 - 8, k, C_SUB, C_CARD);
     }
-    if (it->kind == PI_VIDEO && it->view_offset_ms > 0 && it->duration_ms > 0) {
-        /* how far it's been watched */
-        int part = (int)((int64_t)(TILE_W - 32) * it->view_offset_ms / it->duration_ms);
-        draw_rect(ox + x0 + 12, oy + py0 + 12, ox + x1 - 12, oy + py0 + 24, RGB(0, 0, 0));
-        draw_rect(ox + x0 + 12, oy + py0 + 12, ox + x0 + 12 + (part < 8 ? 8 : part), oy + py0 + 24, C_ACCENT);
-    } else if ((it->kind == PI_VIDEO || it->kind == PI_FOLDER) && !it->watched && it->rating_key) {
-        /* not watched yet: a corner turned down */
-        draw_tri(ox + x1 - 40, oy + y1, ox + x1, oy + y1, ox + x1, oy + y1 - 40, C_ACCENT);
-    }
+    badges(it, ox + x0, oy + py0, ox + x1, oy + y1);
     draw_text(D_BOLD, ox + x0, oy + py0 - 40, d->line[0], it->kind == PI_OTHER ? C_SUB : C_TEXT, C_BG);
     draw_text(D_BODY, ox + x0, oy + py0 - 80, d->line[1], C_SUB, C_BG);
 }
 
 static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1);
 static void signin_redraw(int ox, int oy, int vis_w);
+static void show_redraw(int ox, int oy, int cy0, int cy1);
+static void draw_episode(int i, int ox, int oy);
 
 static void redraw(int *b)
 {
@@ -1188,7 +1315,15 @@ static void redraw(int *b)
                 det_redraw(ox, oy, b[3] - b[1], cy0, cy1);
             else if (S.page == PG_SIGNIN)
                 signin_redraw(ox, oy, b[3] - b[1]);
-            else if (S.have_list && S.disp && S.cols > 0) {
+            else if (S.show.on && S.have_list && S.disp) {
+                show_redraw(ox, oy, cy0, cy1);
+                for (int i = 0; i < S.list.n; i++) {
+                    int x0, y0, x1, y1;
+                    tile_box(i, &x0, &y0, &x1, &y1);
+                    if (y0 <= cy1 && y1 >= cy0)
+                        draw_episode(i, ox, oy);
+                }
+            } else if (S.have_list && S.disp && S.cols > 0) {
                 int top = -HEADER_H - GAP;
                 int rf = (top - cy1) / (TILE_H + GAP) - 1, rl = (top - cy0) / (TILE_H + GAP) + 1;
                 if (rf < 0)
@@ -1222,6 +1357,27 @@ static int poster_step(void)
     window_state(S.browser_w, st);
     vtop = st[6];
     vbot = st[6] - (st[4] - st[2]);
+    if (S.show.on) {                /* the episodes' pictures, in view and a row more */
+        for (int i = 0; i < S.list.n; i++) {
+            const plex_item *it = &S.list.v[i];
+            int x0, y0, x1, y1;
+            char key[300];
+            tile_box(i, &x0, &y0, &x1, &y1);
+            if (y1 < vbot - EP_ROW)
+                break;
+            if (!it->thumb || S.disp[i].poster || y0 > vtop)
+                continue;
+            ep_key(it, key, sizeof(key));
+            if (!(S.disp[i].poster = cache_find(key))) {
+                S.disp[i].poster = poster_fetch(it->thumb, key, EP_TW >> S.xeig, EP_TH >> S.yeig, 3);
+                cache_trim();
+            }
+            redraw_tile(i);
+            return 1;
+        }
+        S.posters_wanted = 0;
+        return 0;
+    }
     rf = (-HEADER_H - GAP - vtop) / (TILE_H + GAP);
     rl = (-HEADER_H - GAP - vbot) / (TILE_H + GAP) + 1;     /* and a row more */
     if (rf < 0)
@@ -1242,6 +1398,271 @@ static int poster_step(void)
         return 1;
     }
     S.posters_wanted = 0;
+    return 0;
+}
+
+
+/* ---- the show page ------------------------------------------------------------------
+
+   A show opens as a page of its own (as Plex's apps show one): its
+   backdrop across the top, its poster, title, labels and summary, Play
+   (the next episode) and Mark watched, then its series as tabs and the
+   series chosen as a list of episodes, each a 16:9 picture with its title,
+   how long it is (and how much is left) and two lines of its summary. The
+   list is S.list (the series' episodes), so selecting, opening, the menus
+   and Back work as on the grid; S.show.on says how it's laid out. */
+
+
+static int vis_width(void);
+
+static void show_fetch_art(void)
+{
+    const plex_item *it = S.show.have ? &S.show.det.v[0] : NULL;
+    char key[320];
+    S.show.art = S.show.poster = NULL;
+    S.show.fw = S.show.w;
+    S.show.due = 0;
+    if (it && it->thumb) {
+        snprintf(key, sizeof(key), "dposter:%s@%dx%d", it->thumb, S.show.pw, S.show.ph);
+        if (!(S.show.poster = cache_find(key)))
+            S.show.poster = poster_fetch(it->thumb, key, S.show.pw >> S.xeig, S.show.ph >> S.yeig, 0);
+    }
+    if (it && it->art) {
+        snprintf(key, sizeof(key), "art:%s@%dx%d", it->art, S.show.art_w, S.show.art_h);
+        if (!(S.show.art = cache_find(key)))
+            S.show.art = poster_fetch(it->art, key, S.show.art_w >> S.xeig, S.show.art_h >> S.yeig, 1);
+    }
+    cache_trim();
+}
+
+static void show_chip(const char *t, int *x, int y)
+{
+    int w = draw_width(D_BOLD, t) + 44;
+    if (S.show.nchip >= 8)
+        return;
+    S.show.chip[S.show.nchip].x0 = *x;
+    S.show.chip[S.show.nchip].x1 = *x + w;
+    S.show.chip[S.show.nchip].y0 = y - 56;
+    snprintf(S.show.chip[S.show.nchip].t, sizeof(S.show.chip[0].t), "%s", t);
+    S.show.nchip++;
+    *x += w + 16;
+}
+
+static void show_button(int id, const char *t, int *x, int y)
+{
+    int w = draw_width(D_BOLD, t) + 64 + (id == SH_PLAY ? 36 : 0);
+    S.show.btn[S.show.nbtn].id = id;
+    S.show.btn[S.show.nbtn].x0 = *x;
+    S.show.btn[S.show.nbtn].x1 = *x + w;
+    S.show.btn[S.show.nbtn].y1 = y;
+    S.show.btn[S.show.nbtn].y0 = y - BTN;
+    snprintf(S.show.btn[S.show.nbtn].t, sizeof(S.show.btn[0].t), "%s", t);
+    S.show.nbtn++;
+    *x += w + 20;
+}
+
+/* Where everything on the show page goes, for the window's width */
+static void show_layout(void)
+{
+    const plex_item *it = &S.show.det.v[0], *se = &S.show.seasons.v[S.show.season];
+    int st[9], w = vis_width(), wh = 1100, x, y, top = -HEADER_H, foot, sw, unw = 0;
+    char t[400], g[400];
+    if (S.browser_open) {
+        window_state(S.browser_w, st);
+        wh = st[4] - st[2];
+    }
+    S.show.w = w;
+    S.show.art_w = w & ~((1 << S.xeig) - 1);
+    S.show.art_h = w * 9 / 16 < wh * 45 / 100 ? w * 9 / 16 : wh * 45 / 100;
+    if (S.show.art_h < 300)
+        S.show.art_h = 300;
+    S.show.art_h &= ~((1 << S.yeig) - 1);
+    S.show.pw = w * 13 / 100 < 200 ? 200 : w * 13 / 100 > 360 ? 360 : w * 13 / 100;
+    S.show.pw &= ~((2 << S.xeig) - 1);
+    S.show.ph = (S.show.pw * 3 / 2) & ~((1 << S.yeig) - 1);
+    if ((S.show.art || S.show.poster) && S.show.fw != w)
+        S.show.due = now_cs() + 50;     /* the pictures at the new size, once resizing stops */
+    S.show.tx = 40 + S.show.pw + 56;
+    latin1(it->title, S.show.title, sizeof(S.show.title));
+    draw_fit(D_TITLE, S.show.title, w - S.show.tx - 40);
+    S.show.title_y = top - 64 - 48;
+    /* the labels: first year, how many series, the age rating, the score, unwatched */
+    S.show.nchip = 0;
+    x = S.show.tx;
+    y = S.show.title_y - 44;
+    for (int i = 0; i < S.show.seasons.n; i++)
+        unw += S.show.seasons.v[i].unwatched;
+    if (it->year > 0) {
+        snprintf(t, sizeof(t), "%d", it->year);
+        show_chip(t, &x, y);
+    }
+    snprintf(t, sizeof(t), "%d series", S.show.seasons.n);
+    show_chip(t, &x, y);
+    if (it->content_rating) {
+        latin1(it->content_rating, g, sizeof(g));
+        show_chip(g, &x, y);
+    }
+    if (it->rating > 0) {
+        snprintf(t, sizeof(t), "%.1f", it->rating);
+        show_chip(t, &x, y);
+    }
+    if (unw > 0) {
+        snprintf(t, sizeof(t), "%d unwatched", unw);
+        show_chip(t, &x, y);
+    }
+    y -= 56 + 36;
+    /* the summary: three lines, over the backdrop's solid part */
+    {
+        static char sum[2400];
+        latin1(it->summary ? it->summary : "", sum, sizeof(sum));
+        sw = w * 52 / 100 - S.show.tx;
+        if (sw < 900)
+            sw = w - S.show.tx - 40 < 900 ? w - S.show.tx - 40 : 900;
+        S.show.nlines = draw_wrap(D_BODY, sum, sw, S.show.lines, 3);
+    }
+    S.show.sum_y = y - 12;
+    y = S.show.sum_y - S.show.nlines * 40 - (S.show.nlines ? 24 : 0);
+    /* Play (the episode in progress, or the first not seen), Mark watched */
+    S.show.nbtn = 0;
+    S.show.next = 0;
+    for (int i = 0; i < S.list.n; i++)
+        if (S.list.v[i].view_offset_ms > 0 || !S.list.v[i].watched) {
+            S.show.next = i;
+            break;
+        }
+    x = S.show.tx;
+    if (S.list.n) {
+        const plex_item *e = &S.list.v[S.show.next];
+        snprintf(t, sizeof(t), "%s S%d E%d", e->view_offset_ms > 0 ? "Resume" : "Play", e->parent_index, e->index);
+        show_button(SH_PLAY, t, &x, y);
+    }
+    show_button(SH_WATCHED, it->watched ? "Mark unwatched" : "Mark watched", &x, y);
+    y -= BTN + 40;
+    foot = top - 64 - S.show.ph - 40;
+    if (y > foot)
+        y = foot;
+    /* the series, as tabs */
+    S.show.ntab = 0;
+    x = 40;
+    for (int i = 0; i < S.show.seasons.n && S.show.ntab < 12; i++) {
+        int tw;
+        latin1(S.show.seasons.v[i].title, t, sizeof(t));
+        snprintf(S.show.tab[S.show.ntab].t, sizeof(S.show.tab[0].t), "%s", t);
+        tw = draw_width(D_BOLD, S.show.tab[S.show.ntab].t) + 56;
+        if (x + tw > w - 40 && x > 40) {
+            x = 40;
+            y -= 56 + 16;
+        }
+        S.show.tab[S.show.ntab].x0 = x;
+        S.show.tab[S.show.ntab].x1 = x + tw;
+        S.show.tab[S.show.ntab].y1 = y;
+        S.show.tab[S.show.ntab].y0 = y - 56;
+        S.show.ntab++;
+        x += tw + 16;
+    }
+    if (se->unwatched > 0)
+        snprintf(S.show.count, sizeof(S.show.count), "%d episode%s   \xb7   %d unwatched", S.list.n,
+                 S.list.n == 1 ? "" : "s", se->unwatched);
+    else
+        snprintf(S.show.count, sizeof(S.show.count), "%d episode%s", S.list.n, S.list.n == 1 ? "" : "s");
+    if (x + draw_width(D_BODY, S.show.count) + 24 > w - 40) {
+        x = 40;
+        y -= 56 + 16;
+    }
+    S.show.count_x = x + 8;
+    S.show.count_y = y - 38;
+    S.show.head_h = -(y - 56 - 40);
+}
+
+/* The show page's header: the backdrop, the poster, the texts, the buttons, the tabs */
+static void show_redraw(int ox, int oy, int cy0, int cy1)
+{
+    int top = -HEADER_H, px0 = 40, py1 = top - 64, py0 = py1 - S.show.ph;
+    if (cy1 > top - S.show.art_h && cy0 < top) {
+        if (S.show.art && S.show.art->area)
+            plot_sprite(S.show.art, 0, top - S.show.art_h, S.show.art_w, top);
+        else
+            draw_rect(ox, oy + top - S.show.art_h, ox + S.show.w, oy + top, RGB(30, 33, 39));
+    }
+    if (cy1 > py0 - 12 && cy0 < py1) {
+        draw_round(ox + px0 + 8, oy + py0 - 12, ox + px0 + S.show.pw + 8, oy + py1 - 8, 16, C_SHADOW, C_BG);
+        if (S.show.poster && S.show.poster->area && S.show.fw == S.show.w)
+            plot_sprite(S.show.poster, px0, py0, px0 + S.show.pw, py1);
+        else
+            draw_round(ox + px0, oy + py0, ox + px0 + S.show.pw, oy + py1, 12, C_CARD, C_BG);
+        badges(&S.show.det.v[0], ox + px0, oy + py0, ox + px0 + S.show.pw, oy + py1);
+    }
+    draw_text_over(D_TITLE, ox + S.show.tx, oy + S.show.title_y, S.show.title, C_TEXT);
+    for (int i = 0; i < S.show.nchip; i++) {
+        int y0 = oy + S.show.chip[i].y0;
+        draw_round(ox + S.show.chip[i].x0, y0, ox + S.show.chip[i].x1, y0 + 56, 28, C_CHIP, DRAW_NONE);
+        draw_text(D_BOLD, ox + S.show.chip[i].x0 + 22, y0 + 18, S.show.chip[i].t, C_TEXT, C_CHIP);
+    }
+    for (int l = 0; l < S.show.nlines; l++)
+        draw_text(D_BODY, ox + S.show.tx, oy + S.show.sum_y - l * 40, S.show.lines[l], C_TEXT, C_BG);
+    for (int i = 0; i < S.show.nbtn; i++) {
+        int x0 = ox + S.show.btn[i].x0, y0 = oy + S.show.btn[i].y0, x1 = ox + S.show.btn[i].x1, y1 = oy + S.show.btn[i].y1;
+        unsigned bg = S.show.btn[i].id == SH_PLAY ? C_ACCENT : C_CARD;
+        int tx = x0 + 32;
+        draw_round(x0, y0, x1, y1, BTN / 2, bg, DRAW_NONE);
+        if (S.show.btn[i].id == SH_PLAY) {
+            draw_glyph(G_PLAY, tx - 4, y0 + 16, tx + 28, y1 - 16, C_TEXT, bg);
+            tx += 36;
+        }
+        draw_text(D_BOLD, tx, y0 + 22, S.show.btn[i].t, C_TEXT, bg);
+    }
+    for (int i = 0; i < S.show.ntab; i++) {         /* the series shown: light, the others dark */
+        int on = i == S.show.season, y0 = oy + S.show.tab[i].y0;
+        unsigned bg = on ? C_TEXT : C_CARD;
+        draw_round(ox + S.show.tab[i].x0, y0, ox + S.show.tab[i].x1, y0 + 56, 28, bg, C_BG);
+        draw_text(D_BOLD, ox + S.show.tab[i].x0 + 28, y0 + 18, S.show.tab[i].t, on ? C_HEADER : C_TEXT, bg);
+    }
+    draw_text(D_BODY, ox + S.show.count_x, oy + S.show.count_y, S.show.count, C_SUB, C_BG);
+}
+
+/* An episode's row on the show page */
+static void draw_episode(int i, int ox, int oy)
+{
+    const plex_item *it = &S.list.v[i];
+    disp_t *d = &S.disp[i];
+    int x0, y0, x1, y1, px0, py0, py1, tx, ty;
+    unsigned rowbg = i == S.sel ? RGB(36, 39, 47) : i == S.hover ? RGB(30, 32, 39) : C_BG;
+    tile_box(i, &x0, &y0, &x1, &y1);
+    if (i == S.sel) {                               /* a light edge, as round a selected poster */
+        draw_round(ox + x0 - 6, oy + y0 - 6, ox + x1 + 6, oy + y1 + 6, 30, C_TEXT, C_BG);
+        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, 24, rowbg, C_TEXT);
+    } else if (rowbg != C_BG)
+        draw_round(ox + x0, oy + y0, ox + x1, oy + y1, 24, rowbg, C_BG);
+    px0 = x0 + 16;
+    py1 = y1 - 20;
+    py0 = py1 - EP_TH;
+    if (d->poster && d->poster->area)
+        plot_sprite(d->poster, px0, py0, px0 + EP_TW, py1);
+    else
+        draw_round(ox + px0, oy + py0, ox + px0 + EP_TW, oy + py1, 12, C_CARD, rowbg);
+    badges(it, ox + px0, oy + py0, ox + px0 + EP_TW, oy + py1);
+    tx = px0 + EP_TW + 40;
+    ty = py1 - 36;
+    draw_text(D_BOLD, ox + tx, oy + ty, d->line[0], C_TEXT, rowbg);
+    draw_text(D_BODY, ox + tx + draw_width(D_BOLD, d->line[0]) + 40, oy + ty, d->line[1], C_SUB, rowbg);
+    for (int l = 0; l < 2; l++)
+        draw_text(D_BODY, ox + tx, oy + ty - 52 - l * 40, d->sum[l], RGB(205, 208, 214), rowbg);
+}
+
+/* A tab or a button on the show page, at a screen point: SH_TAB + the
+   tab's number, SH_PLAY, SH_WATCHED; or 0 */
+static int show_hit(int sx, int sy)
+{
+    int st[9], wx, wy;
+    window_state(S.browser_w, st);
+    wx = sx - (st[1] - st[5]);
+    wy = sy - (st[4] - st[6]);
+    for (int i = 0; i < S.show.ntab; i++)
+        if (wx >= S.show.tab[i].x0 && wx < S.show.tab[i].x1 && wy >= S.show.tab[i].y0 && wy < S.show.tab[i].y1)
+            return SH_TAB + i;
+    for (int i = 0; i < S.show.nbtn; i++)
+        if (wx >= S.show.btn[i].x0 && wx < S.show.btn[i].x1 && wy >= S.show.btn[i].y0 && wy < S.show.btn[i].y1)
+            return S.show.btn[i].id;
     return 0;
 }
 
@@ -1352,6 +1773,25 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     if (!strncmp(path, "search:", 7))       /* the field shows what was searched for */
         latin1(path + 7, S.query, sizeof(S.query));
     S.sel = sel >= 0 && sel < l.n ? sel : l.n ? 0 : -1;
+    /* one of the show's series: the show page */
+    S.show.on = 0;
+    for (int i = 0; S.show.have && i < S.show.seasons.n; i++)
+        if (S.show.seasons.v[i].key && !strcmp(S.show.seasons.v[i].key, path)) {
+            S.show.on = 1;
+            S.show.season = i;
+        }
+    if (S.show.on) {
+        snprintf(S.list.title, sizeof(S.list.title), "%s", S.show.det.v[0].title);
+        S.cols = 1;
+        show_layout();
+        if (!S.show.art && !S.show.poster) {
+            hourglass(1);
+            show_fetch_art();
+            hourglass(0);
+        }
+    } else if (S.cols == 1 || S.cols != layout_cols(vis_width())) {
+        S.cols = layout_cols(vis_width());
+    }
     make_disp();
     set_where();
     if (!S.browser_open)
@@ -1491,7 +1931,7 @@ static int tile_at(int sx, int sy)
     for (int i = 0; i < S.list.n; i++) {
         int x0, y0, x1, y1;
         tile_box(i, &x0, &y0, &x1, &y1);
-        if (y1 < wy - TILE_H - GAP)
+        if (y1 < wy - (S.show.on ? EP_ROW : TILE_H) - GAP)
             break;
         if (wx >= x0 - GAP / 2 && wx < x1 + GAP / 2 && wy >= y0 - GAP / 2 && wy < y1 + GAP / 2)
             return i;
@@ -1558,7 +1998,7 @@ static void select_tile(int i)
    the summary. Back (the button, Backspace or Escape) returns to the grid
    where it was. */
 
-static int det_subs_y, det_how_y, det_sum_y;    /* baselines, work area */
+static int det_how_y, det_sum_y;                /* baselines, work area */
 static int det_cred_y, det_cast_y;              /* the credits' first baseline; the cast heading's */
 #define CAST_W  200                             /* a cast tile: the photo, the name and the part */
 #define CAST_PH 144                             /* the photo's diameter */
@@ -1566,6 +2006,9 @@ static int det_cred_y, det_cast_y;              /* the credits' first baseline; 
 #define CRED_X  300                             /* the credits' values, after their labels */
 static int det_wd = 1000, art_w, art_h;         /* the width laid out for; the backdrop's box */
 static int art_fw, art_fh, art_due;             /* the size fetched; when to fetch it at the new size (0: not) */
+static int det_pw, det_ph, det_pfw;             /* the poster's box (OS units), the width fetched */
+static int det_tx, det_title_y, det_bx;         /* the text column's left; the title's baseline; buttons' left */
+static int det_cred_x;                          /* the credits' labels' left */
 
 static const plex_item *det_item(void)
 {
@@ -1606,25 +2049,44 @@ static void det_art_box(void)
         art_h = most;
     art_w &= ~((1 << S.xeig) - 1);
     art_h &= ~((1 << S.yeig) - 1);
+    /* the poster on the left: 17% of the width, 2:3 */
+    det_pw = det_wd * 17 / 100;
+    if (det_pw < 232)
+        det_pw = 232;
+    if (det_pw > 480)
+        det_pw = 480;
+    det_pw &= ~((2 << S.xeig) - 1);
+    det_ph = (det_pw * 3 / 2) & ~((1 << S.yeig) - 1);
 }
 
-/* The backdrop, for the box laid out for */
+/* The poster beside the title: a film's, or an episode's show's */
+static const char *det_poster_thumb(const plex_item *it)
+{
+    return it->type && !strcmp(it->type, "episode") && it->show_thumb ? it->show_thumb : it->thumb;
+}
+
+/* The backdrop and the poster, for the boxes laid out for */
 static void det_fetch_art(void)
 {
     const plex_item *it = det_item();
     char key[320];
-    S.det_art = NULL;
+    S.det_art = S.det_poster = NULL;
     det_art_box();
     art_fw = art_w;
     art_fh = art_h;
+    det_pfw = det_pw;
     art_due = 0;
-    if (!it || !it->art)
-        return;
-    snprintf(key, sizeof(key), "art:%s@%dx%d", it->art, art_w, art_h);
-    if (!(S.det_art = cache_find(key))) {
-        S.det_art = poster_fetch(it->art, key, art_w >> S.xeig, art_h >> S.yeig, 1);
-        cache_trim();
+    if (it && det_poster_thumb(it)) {
+        snprintf(key, sizeof(key), "dposter:%s@%dx%d", det_poster_thumb(it), det_pw, det_ph);
+        if (!(S.det_poster = cache_find(key)))
+            S.det_poster = poster_fetch(det_poster_thumb(it), key, det_pw >> S.xeig, det_ph >> S.yeig, 0);
     }
+    if (it && it->art) {
+        snprintf(key, sizeof(key), "art:%s@%dx%d", it->art, art_w, art_h);
+        if (!(S.det_art = cache_find(key)))
+            S.det_art = poster_fetch(it->art, key, art_w >> S.xeig, art_h >> S.yeig, 1);
+    }
+    cache_trim();
 }
 
 /* One video's details, from the server, into S.det (and its backdrop,
@@ -1642,7 +2104,7 @@ static int det_fetch(const plex_item *it, int with_art)
         plex_list_free(&S.det);
     S.det = d;
     S.have_det = 1;
-    S.det_art = NULL;
+    S.det_art = S.det_poster = NULL;
     for (int i = 0; i < (int)(sizeof(S.cast) / sizeof(S.cast[0])); i++)
         S.cast[i].photo = NULL;
     S.ncast = 0;
@@ -1658,8 +2120,8 @@ static void det_button(int id, const char *label, int *x, int *y)
     int w = draw_width(D_BOLD, label) + 64 + (id == D_PLAY ? 36 : id == D_SUBS ? 40 : 0);
     if (S.nbtn >= DET_BTN_MAX)
         return;
-    if (*x + w > det_wd - 40 && *x > 40) {  /* a new row */
-        *x = 40;
+    if (*x + w > det_wd - 40 && *x > det_bx) {  /* a new row */
+        *x = det_bx;
         *y -= BTN + 20;
     }
     S.btn[S.nbtn].id = id;
@@ -1717,16 +2179,20 @@ static void tech_line(const plex_item *it, char *out, size_t size)
 }
 
 /* The credits and the cast, under the summary from y; the page's height */
+/* Under the title, the summary and the buttons: the cast (photos, names,
+   parts) and the credits (who made it, when, the file). Side by side in a
+   wide window, the credits on the right; else the credits first. */
 static void det_layout_more(const plex_item *it, int y)
 {
     char t[400], v[400];
-    int n = 0, cols, w = det_wd - 80;
+    int n = 0, cols, wide = det_wd >= 1700, cast_w, cred_w, cast_top;
+    cred_w = wide ? det_wd - det_wd * 56 / 100 - 40 : det_wd - 80;
+    cast_w = wide ? det_wd * 56 / 100 - 80 : det_wd - 80;
 #define CRED(label, ...) do { if (n < 8) { \
         snprintf(S.det_cred[n][0], sizeof(S.det_cred[0][0]), "%s", label); \
         snprintf(t, sizeof(t), __VA_ARGS__); latin1(t, v, sizeof(v)); \
-        draw_fit(D_BODY, v, w - CRED_X); \
+        draw_fit(D_BODY, v, cred_w - CRED_X); \
         snprintf(S.det_cred[n][1], sizeof(S.det_cred[0][1]), "%s", v); n++; } } while (0)
-    if (it->genres) CRED("Genre", "%s", it->genres);
     if (it->directors) CRED("Directed by", "%s", it->directors);
     if (it->writers) CRED("Written by", "%s", it->writers);
     if (it->studio) CRED("Studio", "%s", it->studio);
@@ -1735,10 +2201,6 @@ static void det_layout_more(const plex_item *it, int y)
         CRED(it->type && !strcmp(it->type, "episode") ? "First shown" : "Released", "%s", v);
     }
     if (it->country) CRED("Country", "%s", it->country);
-    if (it->rating > 0 && it->audience_rating > 0)
-        CRED("Ratings", "Critics %.1f   \xc2\xb7   Audience %.1f", it->rating, it->audience_rating);
-    else if (it->audience_rating > 0)
-        CRED("Ratings", "Audience %.1f", it->audience_rating);
     tech_line(it, v, sizeof(v));
     if (*v) {
         char l1[400];
@@ -1747,15 +2209,24 @@ static void det_layout_more(const plex_item *it, int y)
     }
 #undef CRED
     S.det_ncred = n;
-    det_cred_y = y - 12;
-    y -= n * 40 + (n ? 24 : 0);
+    if (wide) {                     /* the credits beside the cast */
+        det_cred_x = det_wd * 56 / 100;
+        det_cred_y = y - 36;
+        cast_top = y;
+    } else {
+        det_cred_x = 40;
+        det_cred_y = y - 12;
+        y -= n * 40 + (n ? 40 : 0);
+        cast_top = y;
+    }
     /* the cast: rows of photos with the name and the part under them */
+    y = cast_top;
     S.ncast = it->ncast < (int)(sizeof(S.cast) / sizeof(S.cast[0])) ? it->ncast : (int)(sizeof(S.cast) / sizeof(S.cast[0]));
     det_cast_y = 0;
     if (S.ncast) {
         det_cast_y = y - 36;
-        y -= 60;
-        cols = (w + 24) / (CAST_W + 24);
+        y -= 72;
+        cols = (cast_w + 24) / (CAST_W + 24);
         if (cols < 1)
             cols = 1;
         for (int i = 0; i < S.ncast; i++) {
@@ -1769,6 +2240,8 @@ static void det_layout_more(const plex_item *it, int y)
         }
         y -= ((S.ncast + cols - 1) / cols) * (CAST_H + 24);
     }
+    if (wide && det_cred_y - n * 40 - 24 < y)
+        y = det_cred_y - n * 40 - 24;
     S.det_h = -y + 40;
 }
 
@@ -1798,45 +2271,113 @@ static int det_cast_step(void)
     return 0;
 }
 
-/* The texts and buttons, where they go, and the page's height */
+/* A label under the title: kind 0 a fact (year, running time...), 1 a genre */
+static void det_chip(int kind, const char *text, int *x, int *y)
+{
+    int w = draw_width(kind ? D_BODY : D_BOLD, text) + 44;
+    if (S.nchip >= (int)(sizeof(S.chip) / sizeof(S.chip[0])))
+        return;
+    if (*x + w > det_wd - 40 && *x > det_tx) {
+        *x = det_tx;
+        *y -= 68;
+    }
+    S.chip[S.nchip].x0 = *x;
+    S.chip[S.nchip].x1 = *x + w;
+    S.chip[S.nchip].y0 = *y - 56;
+    S.chip[S.nchip].kind = kind;
+    snprintf(S.chip[S.nchip].t, sizeof(S.chip[0].t), "%s", text);
+    S.nchip++;
+    *x += w + 16;
+}
+
+/* The texts and buttons, where they go, and the page's height. The
+   backdrop across the top (faded into the page from the left and at its
+   foot), the poster on the left over it, and beside the poster: the title,
+   labels for the year, running time, age rating and scores, the genres,
+   the summary, the buttons and how it will play. Then the cast and the
+   credits. */
 static void det_layout(void)
 {
     const plex_item *it = det_item();
     static play_t p;
     caps_t k;
-    char t[400], when[32];
-    int x = 40, y, n = 0;
+    char t[400], when[32], g[400];
+    int x, y, tw, top = -HEADER_H, poster_foot;
     if (!it)
         return;
     det_wd = vis_width();
     det_art_box();                  /* plotted scaled to it until it's fetched at that size */
-    if (S.det_art && (art_w != art_fw || art_h != art_fh))
+    if ((S.det_art && (art_w != art_fw || art_h != art_fh)) || (S.det_poster && det_pw != det_pfw))
         art_due = now_cs() + 50;    /* once the window's been left alone for a moment */
-    y = -HEADER_H - art_h - 28;
+    det_tx = 40 + det_pw + 56;
+    tw = det_wd - det_tx - 40;
+    poster_foot = top - 96 - det_ph;
+    /* the title */
     latin1(it->title, S.det_title, sizeof(S.det_title));
-    draw_fit(D_TITLE, S.det_title, det_wd - 80);
-    /* year, how long, the rating: "2008  .  1h 30m  .  PG  .  7.5" */
-    t[0] = 0;
-#define META(...) do { if (n++) strcat(t, "   \xb7   "); snprintf(t + strlen(t), sizeof(t) - strlen(t), __VA_ARGS__); } while (0)
+    draw_fit(D_TITLE, S.det_title, tw);
+    det_title_y = top - 96 - 48;
+    /* the labels: (an episode's place), year, how long, the age rating, the scores */
+    S.nchip = 0;
+    S.det_meta[0] = 0;
+    x = det_tx;
+    y = det_title_y - 44;
+#define CHIP(...) do { snprintf(t, sizeof(t), __VA_ARGS__); det_chip(0, t, &x, &y); \
+        if (S.det_meta[0]) strncat(S.det_meta, "   \xb7   ", sizeof(S.det_meta) - strlen(S.det_meta) - 1); \
+        strncat(S.det_meta, t, sizeof(S.det_meta) - strlen(S.det_meta) - 1); } while (0)
     if (it->type && !strcmp(it->type, "episode") && it->subtitle)
-        META("%s", it->subtitle);
+        CHIP("%s", it->subtitle);
     if (it->year > 0)
-        META("%d", it->year);
+        CHIP("%d", it->year);
     if (it->duration_ms > 0) {
         long m = (long)(it->duration_ms / 60000);
         if (m >= 60)
-            META("%ldh %02ldm", m / 60, m % 60);
+            CHIP("%ldh %02ldm", m / 60, m % 60);
         else
-            META("%ldm", m);
+            CHIP("%ldm", m);
     }
-    if (it->content_rating)
-        META("%s", it->content_rating);
-    if (it->rating > 0)
-        META("%.1f", it->rating);
-#undef META
-    snprintf(S.det_meta, sizeof(S.det_meta), "%s", t);
+    if (it->content_rating) {
+        latin1(it->content_rating, g, sizeof(g));
+        CHIP("%s", g);
+    }
+    if (it->rating > 0 && it->audience_rating > 0 && it->rating != it->audience_rating) {
+        CHIP("Critics %.1f", it->rating);
+        CHIP("Audience %.1f", it->audience_rating);
+    } else if (it->rating > 0)
+        CHIP("%.1f", it->rating);
+#undef CHIP
+    /* the genres, on a line of their own */
+    if (it->genres) {
+        char *gp, *e;
+        latin1(it->genres, g, sizeof(g));
+        x = det_tx;
+        y -= 68;
+        for (gp = g; *gp; gp = e) {
+            e = strstr(gp, ", ");
+            if (e) {
+                *e = 0;
+                e += 2;
+            } else
+                e = gp + strlen(gp);
+            det_chip(1, gp, &x, &y);
+        }
+    }
+    y -= 56 + 36;
+    /* the summary */
+    {
+        static char sum[2400];
+        latin1(it->summary ? it->summary : "", sum, sizeof(sum));
+        /* over the backdrop's solid part (as the picture fades in, it'd be
+           hard to read), but never very narrow */
+        int sw = det_wd * 52 / 100 - det_tx;
+        if (sw < 900)
+            sw = tw < 900 ? tw : 900;
+        S.det_nlines = draw_wrap(D_BODY, sum, sw, S.det_lines, 6);
+    }
+    det_sum_y = y - 12;
+    y = det_sum_y - S.det_nlines * 40 - (S.det_nlines ? 24 : 0);
     /* the buttons */
     S.nbtn = 0;
+    det_bx = x = det_tx;
     det_button(D_PLAY, "Play", &x, &y);
     if (it->view_offset_ms > 0) {
         hms(it->view_offset_ms, when, sizeof(when));
@@ -1844,64 +2385,69 @@ static void det_layout(void)
         det_button(D_RESUME, t, &x, &y);
     }
     det_button(D_START, "From the start", &x, &y);
-    if (it->part_key && it->part_size <= FILE_MAX)
-        det_button(D_SAVE, "Save file", &x, &y);
     det_button(D_WATCHED, it->watched ? "Mark unwatched" : "Mark watched", &x, &y);
-    y -= BTN + 24;
-    /* subtitles */
     if (it->nsubs) {
         int sel = plex_sub_selected(it);
         char name[120];
         latin1(sel >= 0 ? it->subs[sel].title : "None", name, sizeof(name));
         snprintf(t, sizeof(t), "Subtitles: %s", name);
-        x = 40;
         det_button(D_SUBS, t, &x, &y);
-        y -= BTN + 24;
-        det_subs_y = 0;
-    } else {
-        det_subs_y = y - 36;
-        y -= 60;
     }
-    /* how it will play */
+    if (it->part_key && it->part_size <= FILE_MAX)
+        det_button(D_SAVE, "Save file", &x, &y);
+    y -= BTN + 20;
+    /* how it will play (and that it has no subtitles) */
     caps_for(S.quality, &k);
     k.own_subs = S.player == PLAYER_BUILTIN;
     caps_play(&S.px, it, &k, S.direct, 1, &p);
     latin1(p.why, S.det_how, sizeof(S.det_how));
-    S.det_how_n = draw_wrap(D_BODY, S.det_how, det_wd - 80, S.det_how_l, 2);
-    det_how_y = y - 12;
-    y -= 20 + 40 * S.det_how_n;
-    /* the summary */
-    {
-        static char sum[2400];
-        latin1(it->summary ? it->summary : "", sum, sizeof(sum));
-        S.det_nlines = draw_wrap(D_BODY, sum, det_wd - 80, S.det_lines, 10);
-    }
-    det_sum_y = y - 12;
-    y = det_sum_y - S.det_nlines * 40 - 24;
-    det_layout_more(it, y);
+    if (!it->nsubs && strlen(S.det_how) + 20 < sizeof(S.det_how))
+        strcat(S.det_how, ". No subtitles");
+    S.det_how_n = draw_wrap(D_BODY, S.det_how, tw, S.det_how_l, 2);
+    det_how_y = y - 16;
+    y -= 24 + 40 * S.det_how_n;
+    /* the rest under the poster or the text, whichever goes further down */
+    if (y > poster_foot)
+        y = poster_foot;
+    det_layout_more(it, y - 96);
 }
 
 static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
 {
     const plex_item *it = det_item();
-    int top = -HEADER_H;
-    (void)cy0;
+    int top = -HEADER_H, px0 = 40, py1 = top - 96, py0 = py1 - det_ph;
     (void)vis_w;
     if (!it)
         return;
-    if (cy1 > top - art_h) {
+    if (cy1 > top - art_h) {        /* the backdrop: across the top, faded into the page */
         if (S.det_art && S.det_art->area)
             plot_sprite(S.det_art, 0, top - art_h, art_w, top);
         else
-            draw_rect(ox, oy + top - art_h, ox + det_wd, oy + top, RGB(34, 37, 44));
-        draw_text(D_TITLE, ox + 40, oy + top - art_h + 84, S.det_title, C_TEXT, C_BG);
-        draw_text(D_BODY, ox + 40, oy + top - art_h + 34, S.det_meta, C_SUB, C_BG);
+            draw_rect(ox, oy + top - art_h, ox + det_wd, oy + top, RGB(30, 33, 39));
     }
+    if (cy1 > py0 && cy0 < py1) {   /* the poster, on a shadow */
+        draw_round(ox + px0 + 8, oy + py0 - 12, ox + px0 + det_pw + 8, oy + py1 - 8, 16, C_SHADOW, C_BG);
+        if (S.det_poster && S.det_poster->area && det_pfw == det_pw)
+            plot_sprite(S.det_poster, px0, py0, px0 + det_pw, py1);
+        else
+            draw_round(ox + px0, oy + py0, ox + px0 + det_pw, oy + py1, 12, C_CARD, C_BG);
+        badges(it, ox + px0, oy + py0, ox + px0 + det_pw, oy + py1);
+    }
+    draw_text_over(D_TITLE, ox + det_tx, oy + det_title_y, S.det_title, C_TEXT);
+    for (int i = 0; i < S.nchip; i++) {
+        unsigned bg = S.chip[i].kind ? RGB(33, 36, 43) : C_CHIP;
+        int y0 = oy + S.chip[i].y0;
+        draw_round(ox + S.chip[i].x0, y0, ox + S.chip[i].x1, y0 + 56, 28, bg, DRAW_NONE);
+        draw_text(S.chip[i].kind ? D_BODY : D_BOLD, ox + S.chip[i].x0 + 22, y0 + 18, S.chip[i].t,
+                  S.chip[i].kind ? C_SUB : C_TEXT, bg);
+    }
+    for (int l = 0; l < S.det_nlines; l++)
+        draw_text(D_BODY, ox + det_tx, oy + det_sum_y - l * 40, S.det_lines[l], C_TEXT, C_BG);
     for (int i = 0; i < S.nbtn; i++) {
         int x0 = ox + S.btn[i].x0, y0 = oy + S.btn[i].y0, x1 = ox + S.btn[i].x1, y1 = oy + S.btn[i].y1;
         unsigned bg = S.btn[i].id == D_PLAY ? C_ACCENT : C_CARD;
         int tx = x0 + 32;
-        draw_round(x0, y0, x1, y1, BTN / 2, bg, C_BG);
+        draw_round(x0, y0, x1, y1, BTN / 2, bg, DRAW_NONE);
         if (S.btn[i].id == D_PLAY) {            /* a play triangle */
             draw_glyph(G_PLAY, tx - 4, y0 + 16, tx + 28, y1 - 16, C_TEXT, bg);
             tx += 36;
@@ -1910,30 +2456,26 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
         if (S.btn[i].id == D_SUBS)              /* a menu arrow */
             draw_glyph(G_DOWN, x1 - 52, y0 + 16, x1 - 20, y1 - 16, C_TEXT, bg);
     }
-    if (det_subs_y)
-        draw_text(D_BODY, ox + 40, oy + det_subs_y, "No subtitles", C_SUB, C_BG);
     for (int l = 0; l < S.det_how_n; l++)
-        draw_text(D_BODY, ox + 40, oy + det_how_y - l * 40, S.det_how_l[l], C_SUB, C_BG);
-    for (int l = 0; l < S.det_nlines; l++)
-        draw_text(D_BODY, ox + 40, oy + det_sum_y - l * 40, S.det_lines[l], C_TEXT, C_BG);
+        draw_text(D_BODY, ox + det_tx, oy + det_how_y - l * 40, S.det_how_l[l], C_SUB, C_BG);
     for (int l = 0; l < S.det_ncred; l++) {
-        draw_text(D_BODY, ox + 40, oy + det_cred_y - l * 40, S.det_cred[l][0], C_SUB, C_BG);
-        draw_text(D_BODY, ox + CRED_X, oy + det_cred_y - l * 40, S.det_cred[l][1], C_TEXT, C_BG);
+        draw_text(D_BODY, ox + det_cred_x, oy + det_cred_y - l * 40, S.det_cred[l][0], C_SUB, C_BG);
+        draw_text(D_BOLD, ox + det_cred_x + CRED_X, oy + det_cred_y - l * 40, S.det_cred[l][1], C_TEXT, C_BG);
     }
     if (det_cast_y) {
-        draw_text(D_BOLD, ox + 40, oy + det_cast_y, "Cast", C_TEXT, C_BG);
+        draw_text(D_TITLE, ox + 40, oy + det_cast_y, "Cast", C_TEXT, C_BG);
         for (int i = 0; i < S.ncast; i++) {
             int x0 = S.cast[i].x0, y0 = S.cast[i].y0, px = x0 + (CAST_W - CAST_PH) / 2;
-            int py0 = y0 + CAST_H - CAST_PH;
+            int py0c = y0 + CAST_H - CAST_PH;
             if (y0 > cy1 || y0 + CAST_H < cy0)
                 continue;
             if (S.cast[i].photo && S.cast[i].photo->area)
-                plot_sprite(S.cast[i].photo, px, py0, px + CAST_PH, py0 + CAST_PH);
+                plot_sprite(S.cast[i].photo, px, py0c, px + CAST_PH, py0c + CAST_PH);
             else
-                draw_glyph(G_CIRCLE, ox + px, oy + py0, ox + px + CAST_PH, oy + py0 + CAST_PH, C_CARD, C_BG);
-            draw_text(D_BODY, ox + x0 + (CAST_W - draw_width(D_BODY, S.cast[i].name)) / 2, oy + py0 - 36,
+                draw_glyph(G_CIRCLE, ox + px, oy + py0c, ox + px + CAST_PH, oy + py0c + CAST_PH, C_CARD, C_BG);
+            draw_text(D_BOLD, ox + x0 + (CAST_W - draw_width(D_BOLD, S.cast[i].name)) / 2, oy + py0c - 36,
                       S.cast[i].name, C_TEXT, C_BG);
-            draw_text(D_BODY, ox + x0 + (CAST_W - draw_width(D_BODY, S.cast[i].role)) / 2, oy + py0 - 76,
+            draw_text(D_BODY, ox + x0 + (CAST_W - draw_width(D_BODY, S.cast[i].role)) / 2, oy + py0c - 76,
                       S.cast[i].role, C_SUB, C_BG);
         }
     }
@@ -3856,13 +4398,102 @@ static int menu_select(const int *sel)
     return 0;
 }
 
+/* A show: its page, with the series that has episodes not seen yet (or
+   the first) */
+static void show_open(const plex_item *it)
+{
+    plex_list d, se;
+    char back[64], path[256];
+    int k = 0, sel = 0;
+    hourglass(1);
+    if (plex_details(&S.px, it, &d) != 0 || !d.n) {
+        hourglass(0);
+        report("Can't get %s from the server: %s", it->title, S.px.err);
+        return;
+    }
+    if (plex_list_get(&S.px, it->key, &se) != 0) {
+        plex_list_free(&d);
+        hourglass(0);
+        report("Can't get its series: %s", S.px.err);
+        return;
+    }
+    hourglass(0);
+    if (!se.n || !se.v[0].type || strcmp(se.v[0].type, "season")) {   /* no series (Plex left them out) */
+        plex_list_free(&d);
+        plex_list_free(&se);
+        snprintf(back, sizeof(back), "%s", S.list.title);
+        snprintf(path, sizeof(path), "%s", it->key);
+        show_list(path, back, 1, 0);
+        return;
+    }
+    if (S.show.have) {
+        plex_list_free(&S.show.det);
+        plex_list_free(&S.show.seasons);
+    }
+    S.show.det = d;
+    S.show.seasons = se;
+    S.show.have = 1;
+    S.show.art = S.show.poster = NULL;
+    S.show.fw = 0;
+    for (int i = 0; i < se.n; i++)
+        if (se.v[i].unwatched > 0) {
+            k = i;
+            break;
+        }
+    snprintf(back, sizeof(back), "%s", S.list.title);
+    snprintf(path, sizeof(path), "%s", se.v[k].key ? se.v[k].key : "");
+    if (show_list(path, back, 1, 0) == 0 && S.show.on) {
+        for (int i = 0; i < S.list.n; i++)  /* the episode to carry on with, selected */
+            if (S.list.v[i].view_offset_ms > 0 || !S.list.v[i].watched) {
+                sel = i;
+                break;
+            }
+        S.sel = sel;
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+    }
+}
+
+/* Another series of the show: its episodes, in place (Back still goes to
+   where the show was opened from) */
+static void show_season(int k)
+{
+    char path[256];
+    if (!S.show.on || k < 0 || k >= S.show.seasons.n || k == S.show.season)
+        return;
+    snprintf(path, sizeof(path), "%s", S.show.seasons.v[k].key ? S.show.seasons.v[k].key : "");
+    show_list(path, "", 0, 0);
+}
+
+/* Play and Mark watched on the show page */
+static void show_action(int id)
+{
+    plex_item *it = &S.show.det.v[0];
+    if (id == SH_PLAY && S.show.next < S.list.n) {
+        select_tile(S.show.next);
+        play_item(&S.list.v[S.show.next], PLAY_DEFAULT);
+    } else if (id == SH_WATCHED) {
+        int w = !it->watched;
+        plex_list se;
+        mark(it, w);
+        it->watched = w;
+        if (plex_list_get(&S.px, it->key, &se) == 0 && se.n == S.show.seasons.n) {
+            plex_list_free(&S.show.seasons);    /* their unwatched counts */
+            S.show.seasons = se;
+        } else if (se.n || se.v)
+            plex_list_free(&se);
+        refresh_list();             /* the episodes' ticks */
+    }
+}
+
 static void open_item(int i, int how)
 {
     const plex_item *it;
     if (i < 0 || i >= S.list.n)
         return;
     it = &S.list.v[i];
-    if (it->kind == PI_FOLDER) {
+    if (it->kind == PI_FOLDER && it->type && !strcmp(it->type, "show") && it->key && it->rating_key) {
+        show_open(it);
+    } else if (it->kind == PI_FOLDER) {
         char path[256], back[64];
         snprintf(path, sizeof(path), "%s", it->key ? it->key : "");
         snprintf(back, sizeof(back), "%s", S.list.title);
@@ -3979,6 +4610,17 @@ static void click(int *b)
                 det_action(id, b[0], b[1]);
             return;
         }
+        if (S.show.on && (buttons & 0x505)) {
+            int h2 = show_hit(b[0], b[1]);
+            if (h2 >= SH_TAB) {
+                show_season(h2 - SH_TAB);
+                return;
+            }
+            if (h2) {
+                show_action(h2);
+                return;
+            }
+        }
         t = tile_at(b[0], b[1]);
         if (buttons & 2) {
             if (t >= 0)
@@ -4091,7 +4733,16 @@ static void open_request(int *b)
     if (b[0] == S.browser_w) {
         int w = b[3] - b[1], cols = layout_cols(w);
         S.posters_wanted = 1;       /* scrolled or resized: more may be in view */
-        if (cols != S.cols) {
+        if (S.show.on) {            /* the show page: laid out again for a new width */
+            if (w != S.show.w) {
+                show_layout();
+                make_disp();
+                if (S.page == PG_GRID) {
+                    set_extent();
+                    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+                }
+            }
+        } else if (cols != S.cols) {
             S.cols = cols;
             if (S.page == PG_GRID) {
                 set_extent();
@@ -4239,6 +4890,11 @@ static void nulls(void)
     }
     if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
         return;
+    if (S.show.due && S.show.on && S.page == PG_GRID && S.browser_open && now_cs() - S.show.due >= 0) {
+        show_fetch_art();           /* the backdrop and the poster at the window's new size */
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+        return;
+    }
     if (art_due && S.page == PG_DETAILS && S.browser_open && now_cs() - art_due >= 0) {
         det_fetch_art();            /* the backdrop at the window's new size */
         det_repaint();
@@ -4347,6 +5003,9 @@ int plexro_main(int argc, char **argv)
         } else if (S.search_due && searching()) {
             reason = Wimp_PollIdle;         /* the search, a moment after the last key */
             r.r[2] = S.search_due;
+        } else if (S.show.due && S.show.on && S.page == PG_GRID && S.browser_open) {
+            reason = Wimp_PollIdle;         /* the show's pictures at the new size, once resizing stops */
+            r.r[2] = S.show.due;
         } else if (art_due && S.page == PG_DETAILS && S.browser_open) {
             reason = Wimp_PollIdle;         /* the backdrop at the new size, once resizing stops */
             r.r[2] = art_due;
@@ -4465,6 +5124,16 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
                 found = 1;
             }
     }
+    for (int i = 0; w == S.browser_w && S.page == PG_GRID && S.show.on && i < S.show.nbtn; i++)
+        if (S.show.btn[i].id == id) {
+            x0 = S.show.btn[i].x0; y0 = S.show.btn[i].y0; x1 = S.show.btn[i].x1; y1 = S.show.btn[i].y1;
+            found = 1;
+        }
+    for (int i = 0; w == S.browser_w && S.page == PG_GRID && S.show.on && i < S.show.ntab; i++)
+        if (SH_TAB + i == id) {
+            x0 = S.show.tab[i].x0; y0 = S.show.tab[i].y0; x1 = S.show.tab[i].x1; y1 = S.show.tab[i].y1;
+            found = 1;
+        }
     for (int i = 0; w == S.browser_w && S.page == PG_DETAILS && i < S.nbtn; i++)
         if (S.btn[i].id == id) {
             x0 = S.btn[i].x0; y0 = S.btn[i].y0; x1 = S.btn[i].x1; y1 = S.btn[i].y1;
@@ -4475,6 +5144,19 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
     *x = (x0 + x1) / 2 + st[1] - st[5];
     *y = (y0 + y1) / 2 + st[4] - st[6];
     return 0;
+}
+int ui_test_badge(int i) { return i >= 0 && i < S.list.n ? badge_kind(&S.list.v[i]) : -1; }
+int ui_test_show(int *season) { *season = S.show.season; return S.show.on && S.page == PG_GRID; }
+const char *ui_test_show_text(int what)
+{
+    static char t[400];
+    if (what == 2) {                /* the buttons' labels */
+        t[0] = 0;
+        for (int i = 0; i < S.show.nbtn; i++)
+            snprintf(t + strlen(t), sizeof(t) - strlen(t), "%s|", S.show.btn[i].t);
+        return t;
+    }
+    return what == 0 ? S.show.title : S.show.count;
 }
 const char *ui_test_button(int id)
 {
