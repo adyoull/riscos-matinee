@@ -7,7 +7,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test17).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test18).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -22,7 +22,8 @@ the libraries in tabs under the bar, and the poster menu on Adjust too, with Rem
 watching; test15 adds a library's bar (Collections, Playlists, Sort, Unwatched, A to Z) and More
 like this and trailers on the details page; test16 adds Skip intro and Skip credits (the
 server's markers) and chapters while playing; test17 is test16 linked with UnixLib
-5.0.3.1-rc8 (and PThreadTicker 0.02).
+5.0.3.1-rc8 (and PThreadTicker 0.02); test18 is linked with the UnixLib 5.0.3.1 release
+(and PThreadTicker 0.03).
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
@@ -71,7 +72,7 @@ its LICENSE), and `third_party/pthreadticker` is revised BSD.
 | `build/` | `build.sh` (compile, link, AIF, checks), `package.sh` (the RISC OS zip), `env.sh` |
 | `tools/` | `mksprites.py` (the icon), `mkrozip.py`, `check-stack-probes.py`, `check-unixlib.sh` |
 | `third_party/cjson` | cJSON 1.7.18 (MIT) |
-| `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.02, which `!Run` loads |
+| `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.03, which `!Run` loads |
 | `tests/host/fakeplex.py` | A stand-in for plex.tv and a Plex Media Server |
 | `tests/host/core_test.c` | 98 checks against it, with Reel's own `sources.c` reading the hand-off |
 | `tests/host/ui_test.c` | The front end against a scripted fake Wimp and a fake VideoOverlay, under qemu-arm (302 checks); it also draws the windows into pictures |

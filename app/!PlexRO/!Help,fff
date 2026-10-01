@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test17
+!PlexRO - a Plex client for RISC OS                  0.1.0-test18
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -331,9 +331,9 @@ Needs
 - VideoOverlay (in !System on RISC OS 5), for the hardware overlay.
 - ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), only to play in them.
 
-!Run loads the modules it needs. PThreadTicker 0.02 (UnixLib's thread
+!Run loads the modules it needs. PThreadTicker 0.03 (UnixLib's thread
 timer) is in the application directory. PlexRO is built with UnixLib
-5.0.3.1-rc8 (a pre-release of riscos-unixlib).
+5.0.3.1 (riscos-unixlib).
 
 If you used an earlier test build, PlexRO starts with the built-in
 player once; choose ReelEGL on the Player menu to go back to it.
