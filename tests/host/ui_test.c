@@ -951,23 +951,25 @@ static int script(int *b, int mask)
             CHECK(win(w_browser)->open, "in the same window");
             {   /* the home page: its rows */
                 int rows = 0, pick = -1, st = 0, n = 0, vis = 0;
-                CHECK(ui_test_home(&rows, &pick) && rows == 4 && pick == 0, "the top: the home page, 4 rows (%d)", rows);
-                CHECK(ui_test_items() == 12, "the top list: %d items", ui_test_items());
+                CHECK(ui_test_home(&rows, &pick) && rows == 3 && pick == 0, "the top: the home page, 3 rows (%d)", rows);
+                CHECK(ui_test_items() == 9, "the top list: %d items", ui_test_items());
                 CHECK(ui_test_home_row(0, &st, &n, &vis) && !strcmp(ui_test_home_row(0, &st, &n, &vis), "Continue watching") &&
                       st == 0 && n == 1, "Continue watching first");
                 CHECK(!strcmp(ui_test_home_row(1, &st, &n, &vis), "Recently added in Films") && st == 1 && n == 6 && vis == 3,
                       "then Recently added in Films: 6, 3 fit the window (%d)", vis);
                 CHECK(!strcmp(ui_test_home_row(2, &st, &n, &vis), "Recently added in TV Programmes") && n == 2,
                       "then TV Programmes'");
-                CHECK(!strcmp(ui_test_home_row(3, &st, &n, &vis), "Libraries") && st == 9 && n == 3, "then the libraries");
+                CHECK(!ui_test_home_row(3, &st, &n, &vis), "no row of libraries: they're tabs, under the bar");
                 CHECK(!strcmp(ui_test_item(7, 0), "Space Show") && !strncmp(ui_test_item(7, 1), "S1 E6 Ep", 8) &&
                       !strcmp(ui_test_item(8, 0), "Space Show") && !strcmp(ui_test_item(8, 1), "Series 2"),
                       "recently added episodes and series under their show's name: %s / %s, %s / %s", ui_test_item(7, 0),
                       ui_test_item(7, 1), ui_test_item(8, 0), ui_test_item(8, 1));
             }
             CHECK(!strcmp(ui_test_path(), "Attic"), "where: %s", ui_test_path());
-            CHECK(find_tile("Films") == 9 && find_tile("Music") == 11, "the libraries: %d, %d", find_tile("Films"),
-                  find_tile("Music"));
+            {
+                int cur = -1;
+                CHECK(ui_test_tab(&cur) == 4 && cur == 0, "the tabs: Home (here) and the 3 libraries");
+            }
             snprintf(want, sizeof(want), "server_base %s\n", base);
             CHECK(strstr(read_file(choices), "account_token ACCT-TOKEN\n") && strstr(read_file(choices), want) &&
                   strstr(read_file(choices), "server_token SRV-TOKEN\n") &&
@@ -978,7 +980,8 @@ static int script(int *b, int mask)
             pc++;
             return ev_redraw(b, w_browser);
         case 4:
-            CHECK(strstr(plotted_text, "Attic|") && strstr(plotted_text, "12 items.|"), "the header: %s", plotted_text);
+            CHECK(strstr(plotted_text, "Attic|") && strstr(plotted_text, "9 items.|Home|Films|TV Programmes|Music|"),
+                  "the header, and the tabs under it: %s", plotted_text);
             CHECK(strstr(plotted_text, "CONTINUE WATCHING|Space Show|S1 E3 Episode Three|2020|1h 30m|PG|") &&
                   strstr(plotted_text, "|Resume|Details|81 min left|") && strstr(plotted_text, "|Continue watching|Space Show|"),
                   "the featured part, and the first row: %s", plotted_text);
@@ -1023,7 +1026,7 @@ static int script(int *b, int mask)
         case 60100:
             save_picture("home.ppm", w_browser);
             pc = 7;
-            return ev_tile(b, find_tile("Films"), 4);          /* double-click Films */
+            return ev_button(b, w_browser, TB_TAB + 1, 0x400);  /* the Films tab */
         case 7:
             CHECK(ui_test_items() == 6 && !strcmp(ui_test_path(), "Attic > Films"), "Films: %d items, %s",
                   ui_test_items(), ui_test_path());
@@ -1528,10 +1531,13 @@ static int script(int *b, int mask)
             pc++;
             return ev_key(b, w_browser, -1, 8);                 /* Backspace */
         case 54:
-            CHECK(ui_test_items() == 12 && !strcmp(ui_test_path(), "Attic") && ui_test_sel() == find_tile("Films"),
-                  "Back: the top again, Films selected (%d, %s)", ui_test_items(), ui_test_path());
+            {
+                int cur = -1;
+                CHECK(ui_test_items() == 9 && !strcmp(ui_test_path(), "Attic") && ui_test_tab(&cur) && cur == 0,
+                      "Back: home again (%d, %s)", ui_test_items(), ui_test_path());
+            }
             pc++;
-            return ev_tile(b, find_tile("TV Programmes"), 4);
+            return ev_button(b, w_browser, TB_TAB + 2, 0x400);  /* the TV Programmes tab */
         case 55:
             CHECK(ui_test_items() == 1 && !strcmp(ui_test_item(0, 1), "3 seasons") && ui_test_badge(0) == 2,
                   "a show, with the count of episodes not seen");
@@ -1572,8 +1578,8 @@ static int script(int *b, int mask)
                 return NULL_EVENT;
             continue;
         case 571:
-            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/thumb/1700000000") == 1 &&
-                  log_count("/photo/:/transcode", "width", "160") >= 3, "the episodes' pictures: 16:9, 160 pixels");
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/211/thumb/1700000000") == 1 &&
+                  log_count("/photo/:/transcode", "width", "160") >= 2, "the episodes' pictures: 16:9, 160 pixels (%d, %d)", log_count("/photo/:/transcode", "url", "/library/metadata/211/thumb/1700000000"), log_count("/photo/:/transcode", "width", "160"));
             pc++;
             return ev_key(b, w_browser, -1, 0x18E);             /* Down: the next episode */
         case 572:
@@ -1626,15 +1632,15 @@ static int script(int *b, int mask)
             pc++;
             return ev_button(b, w_browser, B_REFRESH, 0x400);   /* Refresh */
         case 64:
-            CHECK(log_count("/library/sections", NULL, NULL) == prev_count + 1 && ui_test_items() == 12,
+            CHECK(log_count("/library/sections", NULL, NULL) == prev_count + 1 && ui_test_items() == 9,
                   "Refresh fetches the list again");
             pc++;
-            return ev_tile(b, find_tile("Music"), 4);          /* Music */
+            return ev_button(b, w_browser, TB_TAB + 3, 0x400);  /* the Music tab */
         case 65:
-            CHECK(ui_test_items() == 12 && strstr(ui_test_status(), "can't be opened yet"), "music: %s",
+            CHECK(ui_test_items() == 9 && strstr(ui_test_status(), "can't be opened yet"), "music: %s",
                   ui_test_status());
             pc = 6500;
-            return ev_tile(b, find_tile("Films"), 4);          /* the grid, for the next steps */
+            return ev_button(b, w_browser, TB_TAB + 1, 0x400);  /* the grid, for the next steps */
         case 6500:
             pc = 650;
             continue;
@@ -1726,13 +1732,10 @@ static int script(int *b, int mask)
             pc++;
             return ev_menu(b, MB_PLAYER, PLAYER_BUILTIN);
         }
-        case 902: {
-            int t = find_tile("Films");
+        case 902:
             CHECK(strstr(read_file(choices), "player Built-in\n") != NULL, "Built-in kept");
-            CHECK(t >= 0, "the top list, with Films");
             pc++;
-            return ev_tile(b, t, 4);
-        }
+            return ev_button(b, w_browser, TB_TAB + 1, 0x400);
         case 903: {
             int t = find_tile("Big Buck Bunny");
             CHECK(t >= 0, "Films open");
@@ -2299,9 +2302,8 @@ static int script(int *b, int mask)
             pc++;
             return ev_key(b, w_browser, -1, 8);                     /* the top */
         case 942:
-            CHECK(find_tile("TV Programmes") >= 0, "the top list");
             pc++;
-            return ev_tile(b, find_tile("TV Programmes"), 4);
+            return ev_button(b, w_browser, TB_TAB + 2, 0x400);
         case 943:
             pc = 945;
             return ev_tile(b, find_tile("Space Show"), 4);      /* its page: Series 1's episodes */
@@ -2494,7 +2496,7 @@ static int script(int *b, int mask)
             pc = 83;
             return ev_key(b, w_browser, -1, 13);                /* Return in the token: Use these */
         case 83:
-            CHECK(ui_test_page() == PG_GRID && win(w_browser)->open && ui_test_items() == 12, "by hand: the home page");
+            CHECK(ui_test_page() == PG_GRID && win(w_browser)->open && ui_test_items() == 9, "by hand: the home page");
             snprintf(want, sizeof(want), "server_base %s\n", base);
             CHECK(strstr(read_file(choices), want) && strstr(read_file(choices), "server_token SRV-TOKEN\n") &&
                   strstr(read_file(choices), "account_token \n"), "Choices:\n%s", read_file(choices));
@@ -2506,7 +2508,7 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);
         case 101:
-            CHECK(win(w_browser)->open && ui_test_items() == 12 && ui_test_page() == PG_GRID,
+            CHECK(win(w_browser)->open && ui_test_items() == 9 && ui_test_page() == PG_GRID,
                   "Select: straight to the browser, from Choices");
             drain_n = 0;
             pc = 1010;
@@ -2520,13 +2522,26 @@ static int script(int *b, int mask)
             pc = 10110;
             return ev_redraw(b, w_browser);
         case 10110:
-            pc = 1011;              /* (then 1012, below) */
             save_picture("home-wide.ppm", w_browser);
             CHECK(ui_test_posters(NULL) >= 1 && log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000") == prev_count,
                   "the posters from the image cache: not fetched again (%d)",
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000") - prev_count);
+            pc = 10111;
+            return ev_tile(b, 0, 0x100);                        /* Adjust (a PC mouse's right button) on Continue watching */
+        case 10111:
+            CHECK(menu_open && ui_test_sel() == 0 && !strcmp(menu_text(menu_open, MI_REMOVE), "Remove from Continue watching") &&
+                  !menu_shaded(menu_open, MI_REMOVE) && !menu_shaded(menu_open, MI_WATCHED),
+                  "Adjust: the poster's menu, with Remove from Continue watching");
             pc++;
+            return ev_menu(b, MI_REMOVE, -1);
+        case 10112: {
+            int rows = 0, pick = 0;
+            CHECK(log_count("/actions/removeFromContinueWatching", "ratingKey", "213") == 1, "the server told");
+            CHECK(ui_test_home(&rows, &pick) && rows == 2 && ui_test_items() == 8 && strstr(ui_test_status(), "Continue watching"),
+                  "gone from the home page (%d rows, %d items): %s", rows, ui_test_items(), ui_test_status());
+            pc = 1012;
             return ev_click(b, -2, 3, 1000, 20, 2);
+        }
         case 1012:
             CHECK(menu_open && !strncmp(menu_text(menu_open, MB_CACHE), "Clear image cache (", 19) &&
                   !menu_shaded(menu_open, MB_CACHE), "Clear image cache, with its size: %s",
@@ -2562,6 +2577,7 @@ static int script(int *b, int mask)
 int main(int argc, char **argv)
 {
     char cmd[400];
+    setvbuf(stdout, NULL, _IONBF, 0);
     if (argc < 3)
         return 2;
     snprintf(base, sizeof(base), "http://127.0.0.1:%s", argv[1]);

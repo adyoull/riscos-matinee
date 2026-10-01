@@ -19,6 +19,8 @@ enum { SH_PLAY = 120, SH_WATCHED, SH_TAB = 200 };
 /* the home page's featured part (Resume or Play, Details, its dots: HB_DOT + n)
    and its rows' titles (HB_ROW + n: the whole list) */
 enum { HB_PLAY = 130, HB_DETAILS, HB_DOT = 210, HB_ROW = 220 };
+/* the tabs under the bar: TB_TAB (Home), TB_TAB + n (library n) */
+enum { TB_TAB = 300 };
 
 /* The save box's icons */
 enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
@@ -26,8 +28,8 @@ enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
 /* The icon bar menu's items, and the item menu's */
 enum { MB_INFO, MB_SIGNIN, MB_SERVERS, MB_PLAYER, MB_QUALITY, MB_SIZE, MB_DIRECT, MB_CACHE, MB_SIGNOUT, MB_QUIT,
        MB_COUNT };
-enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_SPEED, MI_WATCHED, MI_UNWATCHED, MI_BACK,
-       MI_REFRESH, MI_COUNT };
+enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_SPEED, MI_WATCHED, MI_UNWATCHED, MI_REMOVE,
+       MI_BACK, MI_REFRESH, MI_COUNT };
 
 /* Players */
 enum { PLAYER_BUILTIN, PLAYER_REELEGL, PLAYER_REEL, PLAYER_COUNT };
@@ -62,6 +64,7 @@ const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how i
 int ui_test_psize(void);
 int ui_test_badge(int i);                       /* item i's badge: 1 a tick, 2 a count, 0 none */
 int ui_test_show(int *season);
+int ui_test_tab(int *current);                  /* how many tabs (Home and the libraries); the current one */
 int ui_test_home(int *rows, int *pick);         /* the home page is shown: its rows, the one featured */
 const char *ui_test_home_row(int r, int *start, int *n, int *vis);   /* a row's title, items, shown */                  /* the show page is shown, and which series */
 const char *ui_test_show_text(int what);        /* 0 the title, 1 the episodes' count, 2 the buttons */

@@ -712,11 +712,12 @@ int plex_list_append(plex_list *dst, plex_list *src)
     return 0;
 }
 
-int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows)
+int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, plex_list *libs)
 {
     plex_list secs, l;
     int nr = 0;
     memset(out, 0, sizeof(*out));
+    memset(libs, 0, sizeof(*libs));
     *nrows = 0;
     if (!*c->base) {
         set_err(c, "no server chosen%s", NULL);
@@ -737,7 +738,7 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows)
         plex_list_append(out, &l);
     }
     /* recently added, in each film and TV library */
-    for (int i = 0; i < secs.n && nr < max - 1; i++) {
+    for (int i = 0; i < secs.n && nr < max; i++) {
         const plex_item *s2 = &secs.v[i];
         char path[200];
         const char *k = s2->key ? strstr(s2->key, "/library/sections/") : NULL;
@@ -757,14 +758,7 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows)
         }
         plex_list_append(out, &l);
     }
-    /* the libraries */
-    rows[nr].kind = PR_LIBRARIES;
-    rows[nr].start = out->n;
-    rows[nr].n = secs.n;
-    snprintf(rows[nr].title, sizeof(rows[nr].title), "Libraries");
-    rows[nr].path[0] = 0;
-    nr++;
-    plex_list_append(out, &secs);
+    *libs = secs;                   /* the libraries: the caller's, for its tabs */
     snprintf(out->title, sizeof(out->title), "%s", c->server_name);
     *nrows = nr;
     return 0;
@@ -842,6 +836,22 @@ int plex_audio_selected(const plex_item *it)
         if (it->auds[i].selected)
             return i;
     return it->nauds ? 0 : -1;
+}
+
+int plex_remove_continue(plex_ctx *c, const plex_item *it)
+{
+    char url[512], headers[1024];
+    net_buf b;
+    if (!it->rating_key) {
+        set_err(c, "it isn't something the server knows%s", NULL);
+        return -1;
+    }
+    snprintf(url, sizeof(url), "%s/actions/removeFromContinueWatching?ratingKey=%s", c->base, it->rating_key);
+    plex_headers(c, c->token, headers, sizeof(headers));
+    if (net_send(url, headers, "PUT", NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
+        return -1;
+    net_buf_free(&b);
+    return 0;
 }
 
 int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id)

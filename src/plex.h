@@ -158,9 +158,9 @@ void plex_list_free(plex_list *l);
 /* Moves src's items to the end of dst (src left empty). 0 = ok. */
 int plex_list_append(plex_list *dst, plex_list *src);
 
-/* The home page: Continue watching (on deck), what's been added lately to
-   each film and TV library, then the libraries, as one list (out), and
-   where each row starts in it. 0 = ok. */
+/* The home page: Continue watching (on deck) and what's been added lately
+   to each film and TV library, as one list (out), and where each row
+   starts in it; and the libraries (libs, for the caller's tabs). 0 = ok. */
 enum { PR_CONTINUE, PR_RECENT, PR_LIBRARIES };
 #define HOME_ROW 20                 /* items fetched for a row */
 typedef struct {
@@ -168,7 +168,11 @@ typedef struct {
     char title[96];
     char path[200];                 /* the whole list ("See all"), or "" */
 } plex_row;
-int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows);
+int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, plex_list *libs);
+
+/* Takes it off Continue watching (as Plex's apps' "Remove from Continue
+   Watching"; where you got to is kept). 0 = ok. */
+int plex_remove_continue(plex_ctx *c, const plex_item *it);
 
 /* Keeps only the items of that type (a show's children: its seasons, not
    "All episodes") */

@@ -125,7 +125,10 @@ static const struct { int w, h; const char *name; } sizes[3] = {
 #define TEXT_H    96                /* the title and a line under it */
 #define TILE_H    (POSTER_H + TEXT_H)
 #define GAP       36
-#define HEADER_H  128               /* Back, where you are, the status line, Refresh */
+#define TOPBAR_H  128               /* Back, where you are, the status line, Refresh */
+#define STRIP_H   88                /* under it: Home and the libraries, as tabs */
+static int strip_h(void);
+#define HEADER_H  (TOPBAR_H + strip_h())
 #define BR_MIN_W  (2 * (TILE_W + GAP) + GAP)
 #define BTN       64                /* a button's height */
 
@@ -254,6 +257,8 @@ static struct {
         int nbtn;
         int next;                   /* the episode Play plays (in S.list) */
     } show;
+
+    plex_list libs;                 /* the libraries (for the tabs under the bar) */
 
     /* the home page: a featured item (from Continue watching) across the
        top, then rows: Continue watching, Recently added in each library,
@@ -1196,7 +1201,7 @@ static void plot_sprite(const poster_t *p, int x0, int y0, int x1, int y1)
    of the width shown */
 static void header_button(int id, int vis_w, int *x0, int *y0, int *x1, int *y1)
 {
-    *y0 = -HEADER_H + 32;
+    *y0 = -TOPBAR_H + 32;
     *y1 = *y0 + BTN;
     *x0 = id == B_BACK ? 28 : id == B_SEARCH ? vis_w - 28 - 80 - 20 - 80 : vis_w - 28 - 80;
     *x1 = *x0 + 80;
@@ -1214,6 +1219,104 @@ static int searching(void)
 }
 
 /* ox, oy: the work area's origin on the screen; vis_w: the width shown */
+/* ---- Home and the libraries, as tabs under the bar ------------------------------------
+
+   Always there on the browser's pages (not signing in), so a library is
+   one click away from anywhere, as a TV app's top tabs. The one you're in
+   (or came from) is light. */
+
+#define LIB_TABS 16
+
+static int vis_width(void);
+
+static int strip_h(void)
+{
+    return S.page != PG_SIGNIN && S.page != PG_PLAYER && S.libs.n > 0 ? STRIP_H : 0;
+}
+
+/* Tab k (0 Home, then the libraries): where it is, work area */
+static int tab_box(int k, int *x0, int *y0, int *x1, int *y1)
+{
+    int x = 28;
+    if (k < 0 || k > S.libs.n || k >= LIB_TABS)
+        return -1;
+    for (int i = 0; i <= k; i++) {
+        const char *t = i ? S.libs.v[i - 1].title : "Home";
+        char l[80];
+        int w;
+        latin1(t, l, sizeof(l));
+        w = draw_width(D_BOLD, l) + 56;
+        if (i == k) {
+            *x0 = x;
+            *x1 = x + w;
+            break;
+        }
+        x += w + 12;
+    }
+    *y1 = -TOPBAR_H - 12;
+    *y0 = *y1 - 56;
+    return 0;
+}
+
+/* The tab for where you are: Home on the home page; a library in it, or
+   anywhere you went from it (its list in the history); else -1 */
+static int tab_current(void)
+{
+    if (!S.have_list)
+        return -1;
+    if (!*S.path)
+        return 0;
+    for (int i = 0; i < S.libs.n && i + 1 < LIB_TABS; i++) {
+        const char *k = S.libs.v[i].key;
+        if (!k)
+            continue;
+        if (!strcmp(S.path, k))
+            return i + 1;
+        for (int h = 0; h < S.nhist; h++)
+            if (!strcmp(S.hist[h].path, k))
+                return i + 1;
+    }
+    return -1;
+}
+
+static void draw_tabs(int ox, int oy)
+{
+    int cur = tab_current(), vis_w;
+    if (!strip_h())
+        return;
+    vis_w = vis_width();
+    for (int k = 0; k <= S.libs.n && k < LIB_TABS; k++) {
+        int x0, y0, x1, y1, on = k == cur;
+        char l[80];
+        if (tab_box(k, &x0, &y0, &x1, &y1) || x1 > vis_w - 28)
+            break;                  /* no more room */
+        latin1(k ? S.libs.v[k - 1].title : "Home", l, sizeof(l));
+        if (on)
+            draw_round(ox + x0, oy + y0, ox + x1, oy + y1, 28, C_TEXT, C_HEADER);
+        draw_text(D_BOLD, ox + x0 + 28, oy + y0 + 18, l, on ? C_HEADER : k && S.libs.v[k - 1].kind == PI_OTHER ? C_SUB : C_TEXT,
+                  on ? C_TEXT : C_HEADER);
+    }
+}
+
+/* The tab at a screen point, or -1 */
+static int tab_hit(int sx, int sy)
+{
+    int st[9], wx, wy;
+    if (!strip_h())
+        return -1;
+    window_state(S.browser_w, st);
+    wx = sx - (st[1] - st[5]);
+    wy = sy - (st[4] - st[6]);
+    for (int k = 0; k <= S.libs.n && k < LIB_TABS; k++) {
+        int x0, y0, x1, y1;
+        if (tab_box(k, &x0, &y0, &x1, &y1) || x1 > st[3] - st[1] - 28)
+            break;
+        if (wx >= x0 && wx < x1 && wy >= y0 && wy < y1)
+            return k;
+    }
+    return -1;
+}
+
 static void draw_header(int ox, int oy, int vis_w)
 {
     int x0, y0, x1, y1, tx = 28 + 80 + 28, right = vis_w - 28;
@@ -1242,7 +1345,7 @@ static void draw_header(int ox, int oy, int vis_w)
     }
     if (searching()) {          /* the field, where "where you are" would be */
         char q[120], n[40];
-        int fx0 = tx, fx1 = right, fy0 = -HEADER_H + 32, fy1 = fy0 + BTN, qw, room = fx1 - fx0 - 64;
+        int fx0 = tx, fx1 = right, fy0 = -TOPBAR_H + 32, fy1 = fy0 + BTN, qw, room = fx1 - fx0 - 64;
         snprintf(n, sizeof(n), "%d found", S.list.n);
         draw_round(ox + fx0, oy + fy0, ox + fx1, oy + fy1, BTN / 2, C_CARD, C_HEADER);
         snprintf(q, sizeof(q), "%s", S.query);
@@ -1258,6 +1361,7 @@ static void draw_header(int ox, int oy, int vis_w)
         else
             draw_text(D_BODY, ox + fx0 + 60, oy + fy0 + 22, "Search films and TV", C_SUB, C_CARD);
         draw_rect(ox + fx0 + 28 + qw + 4, oy + fy0 + 14, ox + fx0 + 28 + qw + 8, oy + fy1 - 14, C_ACCENT);   /* the caret */
+        draw_tabs(ox, oy);
         return;
     }
     snprintf(where, sizeof(where), "%s", S.where);
@@ -1266,6 +1370,7 @@ static void draw_header(int ox, int oy, int vis_w)
     snprintf(where, sizeof(where), "%s", S.status);
     draw_fit(D_BODY, where, right - tx);
     draw_text(D_BODY, ox + tx, oy - 100, where, C_SUB, C_HEADER);
+    draw_tabs(ox, oy);
 }
 
 static const char *kind_name(const plex_item *it)
@@ -2204,9 +2309,15 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     plex_row rows[8];
     int e, nrows = 0;
     hourglass(1);
-    if (!*path)                     /* the top: the home page */
-        e = plex_home(&S.px, &l, rows, 8, &nrows);
-    else
+    if (!*path) {                   /* the top: the home page */
+        plex_list libs;
+        e = plex_home(&S.px, &l, rows, 8, &nrows, &libs);
+        if (e == 0) {
+            if (S.libs.n || S.libs.v)
+                plex_list_free(&S.libs);
+            S.libs = libs;          /* the tabs */
+        }
+    } else
         e = plex_list_get(&S.px, path, &l);
     hourglass(0);
     if (e != 0) {
@@ -2382,6 +2493,33 @@ static void refresh_list(void)
     char path[256];
     snprintf(path, sizeof(path), "%s", S.path);
     show_list(path, "", 0, S.sel);
+}
+
+static void browser_top(void);
+
+/* A tab: Home, or a library (Back from it goes Home) */
+static void tab_open(int k)
+{
+    const plex_item *lib;
+    char path[256];
+    if (k == 0) {
+        browser_top();
+        return;
+    }
+    if (k < 1 || k > S.libs.n)
+        return;
+    lib = &S.libs.v[k - 1];
+    if (lib->kind != PI_FOLDER || !lib->key) {
+        set_status("%s libraries can't be opened yet: films and TV only.", lib->subtitle ? lib->subtitle : "These");
+        return;
+    }
+    snprintf(path, sizeof(path), "%s", lib->key);
+    S.nhist = 1;
+    snprintf(S.hist[0].path, sizeof(S.hist[0].path), "%s", "");
+    snprintf(S.hist[0].title, sizeof(S.hist[0].title), "%s", S.px.server_name);
+    S.hist[0].sel = 0;
+    if (show_list(path, "", 0, 0) != 0)
+        S.nhist = 0;
 }
 
 static void browser_top(void)
@@ -3320,6 +3458,8 @@ static void sign_out(void)
 {
     plex_ctx *c = &S.px;
     builtin_stop(0);
+    if (S.libs.n || S.libs.v)
+        plex_list_free(&S.libs);    /* no tabs until signed in again */
     c->account_token[0] = c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
     S.nservers = 0;
     if (S.browser_open)
@@ -4336,6 +4476,16 @@ static void subs_menu_build(void)
     menu_end(&m_subs);
 }
 
+/* Is it in Continue watching (part watched, or the list is Continue watching)? */
+static int in_continue(const plex_item *it)
+{
+    int c;
+    if (it->view_offset_ms > 0 || !strncmp(S.path, "/library/onDeck", 15))
+        return 1;
+    return S.home.on && S.sel >= 0 && home_row_of(S.sel, &c) >= 0 &&
+           S.home.row[home_row_of(S.sel, &c)].kind == PR_CONTINUE;
+}
+
 static void item_menu_build(void)
 {
     const plex_item *it = sel_item();
@@ -4367,7 +4517,9 @@ static void item_menu_build(void)
                  S.sv_ok && S.sv_size <= FILE_MAX ? S.save_w : -1, 0);
     menu_add(&m_item, "Test speed", 0, !S.sv_ok || S.save.active || S.speed.active, -1, 1);
     menu_add(&m_item, "Mark watched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 0);
-    menu_add(&m_item, "Mark unwatched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 1);
+    menu_add(&m_item, "Mark unwatched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 0);
+    menu_add(&m_item, "Remove from Continue watching", 0, !it || !it->rating_key || it->kind != PI_VIDEO || !in_continue(it),
+             -1, 1);
     menu_add(&m_item, "Back", 0, S.nhist == 0, -1, 0);
     menu_add(&m_item, "Refresh", 0, 0, -1, 0);
     menu_end(&m_item);
@@ -4791,6 +4943,20 @@ static int menu_select(const int *sel)
         case MI_SPEED:
             speed_start(it);
             break;
+        case MI_REMOVE:
+            if (it) {
+                hourglass(1);
+                if (plex_remove_continue(&S.px, it) != 0) {
+                    hourglass(0);
+                    report("Can't take it off Continue watching: %s", S.px.err);
+                    break;
+                }
+                hourglass(0);
+                if (S.home.on || !strncmp(S.path, "/library/onDeck", 15))
+                    refresh_list(); /* it's gone from the row */
+                set_status("Taken off Continue watching.");
+            }
+            break;
         case MI_WATCHED:
         case MI_UNWATCHED:
             if (it)
@@ -5100,6 +5266,15 @@ static void click(int *b)
                 refresh_list();
             return;
         }
+        if (S.page != PG_SIGNIN && (buttons & 0x505)) {
+            int k = tab_hit(b[0], b[1]);
+            if (k >= 0) {
+                if (S.page == PG_DETAILS)
+                    det_leave();
+                tab_open(k);
+                return;
+            }
+        }
         if (S.page == PG_SIGNIN) {
             int id = si_hit(b[0], b[1]);
             if (!(buttons & 0x505))
@@ -5116,7 +5291,7 @@ static void click(int *b)
         }
         if (S.page == PG_DETAILS) {
             int id = det_button_at(b[0], b[1]);
-            if (buttons & 2)
+            if ((buttons & 2) || ((buttons & 0x100) && !id))
                 item_menu_open(b[0], b[1]);
             else if (id && (buttons & 0x505))
                 det_action(id, b[0], b[1]);
@@ -5141,7 +5316,7 @@ static void click(int *b)
             }
         }
         t = tile_at(b[0], b[1]);
-        if (buttons & 2) {
+        if ((buttons & 2) || ((buttons & 0x100) && t >= 0)) {  /* Menu, or Adjust (a PC mouse's right button) */
             if (t >= 0)
                 select_tile(t);
             item_menu_open(b[0], b[1]);
@@ -5669,6 +5844,9 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
                 found = 1;
             }
     }
+    for (int k = 0; w == S.browser_w && strip_h() && k <= S.libs.n && k < LIB_TABS; k++)
+        if (TB_TAB + k == id && tab_box(k, &x0, &y0, &x1, &y1) == 0)
+            found = 1;
     for (int i = 0; w == S.browser_w && S.page == PG_GRID && S.home.on && i < S.home.nbtn; i++)
         if (S.home.btn[i].id == id) {
             x0 = S.home.btn[i].x0; y0 = S.home.btn[i].y0; x1 = S.home.btn[i].x1; y1 = S.home.btn[i].y1;
@@ -5716,6 +5894,7 @@ const char *ui_test_home_row(int r, int *start, int *n, int *vis)
     *vis = S.home.lay[r].vis;
     return S.home.row[r].title;
 }
+int ui_test_tab(int *current) { *current = tab_current(); return strip_h() ? S.libs.n + 1 : 0; }
 int ui_test_show(int *season) { *season = S.show.season; return S.show.on && S.page == PG_GRID; }
 const char *ui_test_show_text(int what)
 {

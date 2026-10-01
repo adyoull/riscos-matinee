@@ -25,6 +25,7 @@ def jpeg(url):
     return b"\xff\xd8\xff\xe0" + b"PLEXRO-TEST-JPEG" + url.encode() + b"\xff\xd9"
 
 
+ONDECK_GONE = set()          # rating keys taken off Continue watching
 SUBSEL = {}                 # part id -> the subtitle stream chosen (PUT /library/parts)
 AUDSEL = {}                 # part id -> the sound stream chosen
 
@@ -179,6 +180,9 @@ class H(BaseHTTPRequestHandler):
         self.record(body)
         if self.token() != SERVER:
             return self.send(401, {})
+        if u.path == "/actions/removeFromContinueWatching":
+            ONDECK_GONE.add(parse_qs(u.query).get("ratingKey", [""])[0])
+            return self.send(200, raw=b"")
         if u.path.startswith("/library/parts/"):
             q = parse_qs(u.query)
             if "subtitleStreamID" in q:
@@ -289,7 +293,8 @@ class H(BaseHTTPRequestHandler):
             e = movie(213, "Episode Three", 2020, "h264", 1280, 720, 3000, offset=600000)
             e.update({"type": "episode", "index": 3, "parentIndex": 1, "grandparentTitle": "Space Show",
                       "grandparentThumb": "/library/metadata/20/thumb/1", "grandparentRatingKey": "20"})
-            return self.send(200, {"MediaContainer": {"title1": "On Deck", "Metadata": [e]}})
+            return self.send(200, {"MediaContainer": {"title1": "On Deck",
+                                                      "Metadata": [e] if "213" not in ONDECK_GONE else []}})
         if p == "/photo/:/transcode":
             return self.send(200, raw=jpeg((q.get("url") or [""])[0]), ctype="image/jpeg")
         if p.startswith("/library/metadata/") and p.count("/") == 3:

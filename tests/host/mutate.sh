@@ -193,6 +193,14 @@ mutate "a row shows all, not what fits" src/ui.c \
 mutate "the featured backdrop not fetched again after a resize" src/ui.c \
   'if (S.home.art && S.home.fw != w)\n            S.home.due = now_cs() + 50;' ''
 
+# test14: tabs, Adjust, Remove from Continue watching
+mutate "no tabs" src/ui.c \
+  'return S.page != PG_SIGNIN && S.page != PG_PLAYER && S.libs.n > 0 ? STRIP_H : 0;' 'return 0;'
+mutate "Adjust only selects" src/ui.c \
+  'if ((buttons & 2) || ((buttons & 0x100) && t >= 0)) {' 'if (buttons & 2) {'
+mutate "Remove from Continue watching not sent" src/ui.c \
+  'if (plex_remove_continue(&S.px, it) != 0) {' 'if (0) {'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

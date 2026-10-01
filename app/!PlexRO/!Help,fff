@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test13
+!PlexRO - a Plex client for RISC OS                  0.1.0-test14
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -36,7 +36,10 @@ Backspace deletes, Ctrl-U empties the field.
 The browser
 -----------
 Select on the icon bar icon opens it: a dark window, like a TV's. At the
-top: Back, where you are, a status line, and Refresh. Below them, a
+top: Back, where you are, a status line, Search and Refresh; under them,
+tabs for Home and each of your libraries, on every page, so a library is
+one click away (the one you're in is light; Back from a library goes
+Home). Below them, a
 poster for each film, show, season or episode, with its name and (for
 example) its year, "S1 E3" or "3 seasons". On the posters: a bar along
 the foot shows how far you got; a tick in a circle, that you've watched
@@ -45,6 +48,7 @@ The selected poster has a light border, and the one under the pointer a
 grey one.
 
   click          select
+  Menu, or Adjust (a PC mouse's right button): the poster's menu (below)
   double-click   open a library, show or season (a show: its page, below);
                  a video's details page
   / or Ctrl-F    search (or the magnifying glass in the bar)
@@ -64,7 +68,7 @@ lines of its summary, Resume (or Play) with how far you got and how long
 is left, and Details; the dots on the right feature one of the next few
 instead. Under it, rows: Continue watching (pictures with a bar for how
 far you got), Recently added in each film and TV library (posters), and
-your libraries. A row shows as many as fit the window; click its title
+(your libraries are the tabs under the bar). A row shows as many as fit the window; click its title
 (with the arrow) for the whole list. A series in Recently added opens its
 show's page. Films and TV libraries open; music and photo libraries
 aren't handled yet.
@@ -82,7 +86,9 @@ Menu on a poster:
   Subtitles >         None, or one of its subtitle tracks (below)
   Save original file > the file itself, onto your disc (below)
   Test speed          how fast the server sends it (below)
-  Mark watched, Mark unwatched
+  Mark watched, Mark unwatched (a show or a series: all its episodes)
+  Remove from Continue watching   off the home page's first row (where
+                      you got to is kept)
   Back, Refresh
 
 Searching
