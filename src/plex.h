@@ -155,6 +155,9 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token);
    or a key from an item. 0 = ok. */
 int plex_list_get(plex_ctx *c, const char *path, plex_list *out);
 void plex_list_free(plex_list *l);
+/* Keeps only the items of that type (a show's children: its seasons, not
+   "All episodes") */
+void plex_list_keep(plex_list *l, const char *type);
 
 /* Parses a MediaContainer (for the tests and plex_list_get). path: what it
    was fetched from (relative keys are relative to it). 0 = ok. */

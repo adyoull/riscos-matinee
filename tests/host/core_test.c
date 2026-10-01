@@ -273,7 +273,10 @@ int main(int argc, char **argv)
     if (tv.n == 1) {
         CHECK(tv.v[0].kind == PI_FOLDER && !strcmp(tv.v[0].subtitle, "3 seasons") && !tv.v[0].watched &&
               tv.v[0].unwatched == 10, "show: 10 of 12 episodes unwatched (%d)", tv.v[0].unwatched);
-        CHECK(plex_list_get(&c, tv.v[0].key, &seasons) == 0 && seasons.n == 3 &&
+        CHECK(plex_list_get(&c, tv.v[0].key, &seasons) == 0 && seasons.n == 4 &&
+              !strcmp(seasons.v[0].title, "All episodes"), "the show's children: All episodes first, as Plex: %s", c.err);
+        plex_list_keep(&seasons, "season");
+        CHECK(seasons.n == 3 &&
               !strcmp(seasons.title, "Space Show"), "seasons: %s", c.err);
         if (seasons.n == 3) {
             CHECK(seasons.v[0].watched && !seasons.v[0].unwatched, "Specials: all seen");

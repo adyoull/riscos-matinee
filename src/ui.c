@@ -1499,7 +1499,8 @@ static void show_layout(void)
     snprintf(t, sizeof(t), "%d series", S.show.seasons.n);
     show_chip(t, &x, y);
     if (it->content_rating) {
-        latin1(it->content_rating, g, sizeof(g));
+        latin1(strchr(it->content_rating, '/') ? strchr(it->content_rating, '/') + 1 : it->content_rating, g,
+               sizeof(g));             /* "gb/18": 18 */
         show_chip(g, &x, y);
     }
     if (it->rating > 0) {
@@ -2336,7 +2337,8 @@ static void det_layout(void)
             CHIP("%ldm", m);
     }
     if (it->content_rating) {
-        latin1(it->content_rating, g, sizeof(g));
+        latin1(strchr(it->content_rating, '/') ? strchr(it->content_rating, '/') + 1 : it->content_rating, g,
+               sizeof(g));             /* "gb/18": 18 */
         CHIP("%s", g);
     }
     if (it->rating > 0 && it->audience_rating > 0 && it->rating != it->audience_rating) {
@@ -4418,7 +4420,8 @@ static void show_open(const plex_item *it)
         return;
     }
     hourglass(0);
-    if (!se.n || !se.v[0].type || strcmp(se.v[0].type, "season")) {   /* no series (Plex left them out) */
+    plex_list_keep(&se, "season");  /* not Plex's "All episodes" */
+    if (!se.n) {                    /* no series (Plex left them out) */
         plex_list_free(&d);
         plex_list_free(&se);
         snprintf(back, sizeof(back), "%s", S.list.title);
@@ -4476,7 +4479,7 @@ static void show_action(int id)
         plex_list se;
         mark(it, w);
         it->watched = w;
-        if (plex_list_get(&S.px, it->key, &se) == 0 && se.n == S.show.seasons.n) {
+        if (plex_list_get(&S.px, it->key, &se) == 0 && (plex_list_keep(&se, "season"), se.n == S.show.seasons.n)) {
             plex_list_free(&S.show.seasons);    /* their unwatched counts */
             S.show.seasons = se;
         } else if (se.n || se.v)

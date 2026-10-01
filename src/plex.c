@@ -678,6 +678,18 @@ static void item_free(plex_item *it)
     free(it->auds);
 }
 
+void plex_list_keep(plex_list *l, const char *type)
+{
+    int n = 0;
+    for (int i = 0; i < l->n; i++) {
+        if (l->v[i].type && !strcmp(l->v[i].type, type))
+            l->v[n++] = l->v[i];
+        else
+            item_free(&l->v[i]);
+    }
+    l->n = n;
+}
+
 void plex_list_free(plex_list *l)
 {
     for (int i = 0; i < l->n; i++)

@@ -179,6 +179,12 @@ mutate "another series pushes history" src/ui.c \
 mutate "the details poster not fetched" src/ui.c \
   'S.det_poster = poster_fetch(det_poster_thumb(it), key, det_pw >> S.xeig, det_ph >> S.yeig, 0);' '(void)0;'
 
+# test12: a real show's children start with "All episodes"
+mutate "All episodes taken for a series" src/ui.c \
+  'plex_list_keep(&se, "season");  /* not' '(void)0;  /* not'
+mutate "age ratings keep their country" src/ui.c \
+  "latin1(strchr(it->content_rating, '/') ? strchr(it->content_rating, '/') + 1 : it->content_rating, g,\n               sizeof(g));             /* \"gb/18\": 18 */\n        show_chip" "latin1(it->content_rating, g, sizeof(g));\n        show_chip"
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

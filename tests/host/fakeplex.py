@@ -112,7 +112,7 @@ def episodes(season=1):
 
 
 SHOW = {"ratingKey": "20", "key": "/library/metadata/20/children", "type": "show", "title": "Space Show",
-        "year": 2020, "contentRating": "12", "rating": 8.2, "childCount": 3, "leafCount": 13, "viewedLeafCount": 3,
+        "year": 2020, "contentRating": "gb/12", "rating": 8.2, "childCount": 3, "leafCount": 13, "viewedLeafCount": 3,
         "summary": "Five strangers crew a salvage ship at the edge of the solar system, and find that the wreck "
                    "they came for is still broadcasting.",
         "thumb": "/library/metadata/20/thumb/1", "art": "/library/metadata/20/art/1",
@@ -243,6 +243,8 @@ class H(BaseHTTPRequestHandler):
                 SHOW]}})
         if p == "/library/metadata/20/children":
             return self.send(200, {"MediaContainer": {"title2": "Space Show", "Metadata": [
+                {"key": "/library/metadata/20/allLeaves", "title": "All episodes", "leafCount": 13,
+                 "thumb": "/library/metadata/20/thumb/1"},
                 {"ratingKey": "23", "key": "/library/metadata/23/children", "type": "season",
                  "title": "Specials", "index": 0, "leafCount": 1, "viewedLeafCount": 1},
                 {"ratingKey": "21", "key": "/library/metadata/21/children", "type": "season",
