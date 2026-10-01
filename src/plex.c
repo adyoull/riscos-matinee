@@ -507,6 +507,8 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
         it->kind = PI_VIDEO;
     else if (!strcmp(type, "show") || !strcmp(type, "season") || !strcmp(type, "collection"))
         it->kind = PI_FOLDER;
+    else if (!strcmp(type, "playlist") && (!jstr(m, "playlistType") || !strcmp(jstr(m, "playlistType"), "video")))
+        it->kind = PI_FOLDER;       /* a playlist of videos: its items */
     else
         it->kind = PI_OTHER;
 
@@ -552,6 +554,13 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
         it->unwatched = n - (int)jnum(m, "viewedLeafCount", 0);
         if (it->unwatched < 0)
             it->unwatched = 0;
+    }
+    if (!strcmp(it->type, "collection") || !strcmp(it->type, "playlist")) {
+        int n = (int)jnum(m, "childCount", jnum(m, "leafCount", 0));
+        if (n)
+            snprintf(sub, sizeof(sub), "%d item%s", n, n == 1 ? "" : "s");
+        if (!it->thumb)             /* a playlist's picture: its composite */
+            it->thumb = dup_s(jstr(m, "composite"));
     }
     if (*sub)
         it->subtitle = dup_s(sub);

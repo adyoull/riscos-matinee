@@ -201,6 +201,14 @@ mutate "Adjust only selects" src/ui.c \
 mutate "Remove from Continue watching not sent" src/ui.c \
   'if (plex_remove_continue(&S.px, it) != 0) {' 'if (0) {'
 
+# test15: a library's bar, More like this
+mutate "A to Z ignores The" src/ui.c \
+  'if (!strncasecmp(t, "The ", 4)) t += 4;' ''
+mutate "Unwatched not asked for" src/ui.c \
+  'unwatched ? (sort ? "&unwatched=1" : "unwatched=1") : ""' '""'
+mutate "More like this not fetched" src/ui.c \
+  'snprintf(path, sizeof(path), "/library/metadata/%s/%s", S.det.v[0].rating_key, k ? "extras" : "similar");' 'snprintf(path, sizeof(path), "/nowhere");'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

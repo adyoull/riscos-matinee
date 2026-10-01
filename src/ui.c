@@ -129,6 +129,9 @@ static const struct { int w, h; const char *name; } sizes[3] = {
 #define STRIP_H   88                /* under it: Home and the libraries, as tabs */
 static int strip_h(void);
 #define HEADER_H  (TOPBAR_H + strip_h())
+#define LIBBAR_H  168               /* a library's bar: Library / Collections / Playlists, sort, filter; A-Z
+                                       (and a line more when the window's too narrow for one) */
+static int libbar_h(void);
 #define BR_MIN_W  (2 * (TILE_W + GAP) + GAP)
 #define BTN       64                /* a button's height */
 
@@ -231,6 +234,10 @@ static struct {
     char det_cred[8][2][160];
     int det_ncred;
     struct { poster_t *photo; char name[64], role[64]; int x0, y0; } cast[16];
+    /* under the cast: More like this (posters) and extras (trailers, 16:9) */
+    plex_list rel[2];
+    struct { int x0, y0, x1, y1; poster_t *pic; char line[2][80]; } relc[2][16];
+    int nrel[2], rel_y[2], rel_wanted;
     int ncast, cast_wanted;         /* cast_wanted: photos still to fetch (null events) */
     struct { int id, x0, y0, x1, y1; char label[48]; } btn[DET_BTN_MAX + 4];
     int nbtn;
@@ -259,6 +266,15 @@ static struct {
     } show;
 
     plex_list libs;                 /* the libraries (for the tabs under the bar) */
+    /* a library's list: which view (its films or shows, its collections, the
+       playlists), how it's sorted, unwatched only; from the list's path */
+    struct {
+        int on, sec, view, sort, unwatched, h;
+        struct { int id, x0, y0, x1, y1; char t[48]; } btn[6];
+        int nbtn;
+        int az_first[27];           /* each letter's first item (# then A-Z), -1 none */
+        int az_y;
+    } lib;
 
     /* the home page: a featured item (from Continue watching) across the
        top, then rows: Continue watching, Recently added in each library,
@@ -794,7 +810,10 @@ static void cache_free_all(void)
     S.home.fw = 0;
     for (int i = 0; i < S.ncast; i++)
         S.cast[i].photo = NULL;
-    S.cast_wanted = S.ncast > 0;
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < 16; i++)
+            S.relc[k][i].pic = NULL;
+    S.cast_wanted = S.ncast > 0 || S.nrel[0] || S.nrel[1];
 }
 
 /* Frees posters the list shown doesn't use, once the cache is big */
@@ -810,6 +829,9 @@ static void cache_trim(void)
             used = S.disp[i].poster == p;
         for (int i = 0; i < S.ncast && !used; i++)
             used = S.cast[i].photo == p;
+        for (int k = 0; k < 2 && !used; k++)
+            for (int i = 0; i < S.nrel[k] && !used; i++)
+                used = S.relc[k][i].pic == p;
         if (!used && p != S.det_art && p != S.det_poster && p != S.show.art && p != S.show.poster && p != S.home.art) {
             *pp = p->next;
             S.cache_bytes -= p->bytes;
@@ -1050,7 +1072,7 @@ static void tile_box(int i, int *x0, int *y0, int *x1, int *y1)
     }
     *x0 = GAP + col * (TILE_W + GAP);
     *x1 = *x0 + TILE_W;
-    *y1 = -HEADER_H - GAP - row * (TILE_H + GAP);
+    *y1 = -HEADER_H - libbar_h() - GAP - row * (TILE_H + GAP);
     *y0 = *y1 - TILE_H;
 }
 
@@ -1067,7 +1089,7 @@ static int list_height(void)
         return S.show.head_h + S.list.n * (EP_ROW + EP_GAP) + GAP;
     if (S.home.on)
         return S.home.h;
-    return HEADER_H + GAP + rows * (TILE_H + GAP);
+    return HEADER_H + libbar_h() + GAP + rows * (TILE_H + GAP);
 }
 
 static void set_extent(void)
@@ -1268,12 +1290,15 @@ static int tab_current(void)
         return 0;
     for (int i = 0; i < S.libs.n && i + 1 < LIB_TABS; i++) {
         const char *k = S.libs.v[i].key;
-        if (!k)
+        char pre[64];
+        int sec;
+        if (!k || sscanf(k, "/library/sections/%d/", &sec) != 1)
             continue;
-        if (!strcmp(S.path, k))
+        snprintf(pre, sizeof(pre), "/library/sections/%d/", sec);   /* its films, collections... */
+        if (!strncmp(S.path, pre, strlen(pre)) || (S.lib.on && S.lib.view == 2 && S.lib.sec == sec))
             return i + 1;
         for (int h = 0; h < S.nhist; h++)
-            if (!strcmp(S.hist[h].path, k))
+            if (!strncmp(S.hist[h].path, pre, strlen(pre)))
                 return i + 1;
     }
     return -1;
@@ -1445,6 +1470,7 @@ static void signin_redraw(int ox, int oy, int vis_w);
 static void show_redraw(int ox, int oy, int cy0, int cy1);
 static void draw_episode(int i, int ox, int oy);
 static void home_redraw(int ox, int oy, int cy0, int cy1);
+static void lib_redraw(int ox, int oy);
 static void draw_home_card(int i, int ox, int oy);
 
 static void redraw(int *b)
@@ -1486,7 +1512,9 @@ static void redraw(int *b)
                         draw_episode(i, ox, oy);
                 }
             } else if (S.have_list && S.disp && S.cols > 0) {
-                int top = -HEADER_H - GAP;
+                int top = -HEADER_H - libbar_h() - GAP;
+                if (S.lib.on && cy1 > top)
+                    lib_redraw(ox, oy);
                 int rf = (top - cy1) / (TILE_H + GAP) - 1, rl = (top - cy0) / (TILE_H + GAP) + 1;
                 if (rf < 0)
                     rf = 0;
@@ -1561,8 +1589,8 @@ static int poster_step(void)
         S.posters_wanted = 0;
         return 0;
     }
-    rf = (-HEADER_H - GAP - vtop) / (TILE_H + GAP);
-    rl = (-HEADER_H - GAP - vbot) / (TILE_H + GAP) + 1;     /* and a row more */
+    rf = (-HEADER_H - libbar_h() - GAP - vtop) / (TILE_H + GAP);
+    rl = (-HEADER_H - libbar_h() - GAP - vbot) / (TILE_H + GAP) + 1;     /* and a row more */
     if (rf < 0)
         rf = 0;
     for (int i = rf * S.cols; i < (rl + 1) * S.cols && i < S.list.n; i++) {
@@ -1850,6 +1878,173 @@ static int show_hit(int sx, int sy)
     return 0;
 }
 
+
+
+/* ---- a library's bar ------------------------------------------------------------------
+
+   Over a library's posters: Library, Collections and Playlists (the
+   videos' playlists), then Sort (Title, Date added, Year, Rating) and
+   Unwatched; under them, A to Z: a letter jumps to the first title
+   starting with it (sorted by title). They're the list's path, so Back and
+   Refresh keep them: /library/sections/<n>/all?sort=...&unwatched=1,
+   /library/sections/<n>/collections, /playlists?playlistType=video. */
+
+static const char *const sort_names[] = { "Title", "Date added", "Year", "Rating" };
+static const char *const sort_keys[] = { "", "addedAt:desc", "year:desc", "rating:desc" };
+#define SORTS 4
+
+static int libbar_h(void)
+{
+    return S.lib.on && S.page == PG_GRID ? (S.lib.h ? S.lib.h : LIBBAR_H) : 0;
+}
+
+/* What the list's path says */
+static void lib_parse(const char *path)
+{
+    int sec;
+    const char *q = strchr(path, '?');
+    S.lib.on = 0;
+    if (sscanf(path, "/library/sections/%d/", &sec) == 1 &&
+        (strstr(path, "/all") || strstr(path, "/collections"))) {
+        S.lib.on = 1;
+        S.lib.sec = sec;
+        S.lib.view = strstr(path, "/collections") ? 1 : 0;
+    } else if (!strncmp(path, "/playlists", 10) && S.lib.sec) {
+        S.lib.on = 1;
+        S.lib.view = 2;
+    }
+    S.lib.sort = 0;
+    S.lib.unwatched = 0;
+    for (int k = 1; q && k < SORTS; k++)
+        if (strstr(q, sort_keys[k]))
+            S.lib.sort = k;
+    S.lib.unwatched = q && strstr(q, "unwatched=1") != NULL;
+}
+
+static void lib_path(int view, int sort, int unwatched, char *out, size_t size)
+{
+    if (view == 2)
+        snprintf(out, size, "/playlists?playlistType=video");
+    else if (view == 1)
+        snprintf(out, size, "/library/sections/%d/collections", S.lib.sec);
+    else
+        snprintf(out, size, "/library/sections/%d/all%s%s%s%s", S.lib.sec, sort || unwatched ? "?" : "",
+                 sort ? "sort=" : "", sort ? sort_keys[sort] : "", unwatched ? (sort ? "&unwatched=1" : "unwatched=1") : "");
+}
+
+/* A title's letter for A to Z: 0 for # (not a letter), 1-26; "The", "A"
+   and "An" left off, as Plex sorts them */
+static int az_letter(const char *t)
+{
+    if (!strncasecmp(t, "The ", 4)) t += 4;
+    else if (!strncasecmp(t, "An ", 3)) t += 3;
+    else if (!strncasecmp(t, "A ", 2)) t += 2;
+    return (*t >= 'a' && *t <= 'z') ? *t - 'a' + 1 : (*t >= 'A' && *t <= 'Z') ? *t - 'A' + 1 : 0;
+}
+
+static void lib_button(int id, const char *t, int *x, int y, int right)
+{
+    int w = draw_width(D_BOLD, t) + 56 + (id >= LB_SORT && id < LB_UNWATCHED ? 40 : 0);
+    if (S.lib.nbtn >= 6)
+        return;
+    if (right)
+        *x -= w;
+    S.lib.btn[S.lib.nbtn].id = id;
+    S.lib.btn[S.lib.nbtn].x0 = *x;
+    S.lib.btn[S.lib.nbtn].x1 = *x + w;
+    S.lib.btn[S.lib.nbtn].y1 = y;
+    S.lib.btn[S.lib.nbtn].y0 = y - 56;
+    snprintf(S.lib.btn[S.lib.nbtn].t, sizeof(S.lib.btn[0].t), "%s", t);
+    S.lib.nbtn++;
+    if (right)
+        *x -= 16;
+    else
+        *x += w + 16;
+}
+
+static void lib_layout(void)
+{
+    int x = GAP, y = -HEADER_H - 16, w = vis_width();
+    char t[64];
+    S.lib.nbtn = 0;
+    lib_button(LB_VIEW + 0, "Library", &x, y, 0);
+    lib_button(LB_VIEW + 1, "Collections", &x, y, 0);
+    lib_button(LB_VIEW + 2, "Playlists", &x, y, 0);
+    S.lib.h = LIBBAR_H;
+    if (S.lib.view == 0) {
+        int xr = w - GAP, need;
+        snprintf(t, sizeof(t), "Sort: %s", sort_names[S.lib.sort]);
+        need = draw_width(D_BOLD, t) + 96 + 16 + draw_width(D_BOLD, "Unwatched") + 56 + 16;
+        if (xr - need < x) {        /* too narrow: on a line of their own */
+            xr = w - GAP;
+            y -= 56 + 16;
+            S.lib.h = LIBBAR_H + 56 + 16;
+        }
+        lib_button(LB_UNWATCHED, "Unwatched", &xr, y, 1);
+        lib_button(LB_SORT, t, &xr, y, 1);
+    }
+    /* A to Z: each letter's first title (sorted by title only) */
+    for (int k = 0; k < 27; k++)
+        S.lib.az_first[k] = -1;
+    if (S.lib.view == 0 && S.lib.sort == 0)
+        for (int i = S.list.n - 1; i >= 0; i--)
+            S.lib.az_first[az_letter(S.list.v[i].title)] = i;
+    S.lib.az_y = y - 56 - 56;
+}
+
+/* A letter's box: k 0 (#) to 26 (Z) */
+static void az_box(int k, int *x0, int *y0, int *x1, int *y1)
+{
+    int w = vis_width(), step = (w - 2 * GAP) / 27;
+    if (step > 56)
+        step = 56;
+    *x0 = GAP + k * step;
+    *x1 = *x0 + step;
+    *y1 = S.lib.az_y + 40;
+    *y0 = S.lib.az_y - 16;
+}
+
+static void lib_redraw(int ox, int oy)
+{
+    for (int i = 0; i < S.lib.nbtn; i++) {
+        int id = S.lib.btn[i].id, on = (id >= LB_VIEW && id < LB_VIEW + 3 && id - LB_VIEW == S.lib.view) ||
+                                     (id == LB_UNWATCHED && S.lib.unwatched);
+        unsigned bg = on ? C_TEXT : C_CARD;
+        int x0 = ox + S.lib.btn[i].x0, y0 = oy + S.lib.btn[i].y0, x1 = ox + S.lib.btn[i].x1;
+        draw_round(x0, y0, x1, y0 + 56, 28, bg, C_BG);
+        draw_text(D_BOLD, x0 + 28, y0 + 18, S.lib.btn[i].t, on ? C_HEADER : C_TEXT, bg);
+        if (id == LB_SORT)
+            draw_glyph(G_DOWN, x1 - 52, y0 + 14, x1 - 24, y0 + 42, C_TEXT, bg);
+    }
+    if (S.lib.view == 0 && S.lib.sort == 0 && S.list.n > 0)
+        for (int k = 0; k < 27; k++) {
+            int x0, y0, x1, y1;
+            char l[2] = { k ? (char)('A' + k - 1) : '#', 0 };
+            az_box(k, &x0, &y0, &x1, &y1);
+            draw_text(D_BOLD, ox + (x0 + x1 - draw_width(D_BOLD, l)) / 2, oy + S.lib.az_y, l,
+                      S.lib.az_first[k] >= 0 ? C_TEXT : RGB(70, 74, 84), C_BG);
+        }
+}
+
+/* A button or a letter at a screen point: LB_*, LB_AZ + k; or 0 */
+static int lib_hit(int sx, int sy)
+{
+    int st[9], wx, wy;
+    window_state(S.browser_w, st);
+    wx = sx - (st[1] - st[5]);
+    wy = sy - (st[4] - st[6]);
+    for (int i = 0; i < S.lib.nbtn; i++)
+        if (wx >= S.lib.btn[i].x0 && wx < S.lib.btn[i].x1 && wy >= S.lib.btn[i].y0 && wy < S.lib.btn[i].y1)
+            return S.lib.btn[i].id;
+    if (S.lib.view == 0 && S.lib.sort == 0 && S.list.n > 0)
+        for (int k = 0; k < 27; k++) {
+            int x0, y0, x1, y1;
+            az_box(k, &x0, &y0, &x1, &y1);
+            if (wx >= x0 && wx < x1 && wy >= y0 && wy < y1)
+                return LB_AZ + k;
+        }
+    return 0;
+}
 
 /* ---- the home page ------------------------------------------------------------------
 
@@ -2345,6 +2540,8 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     if (!strncmp(path, "search:", 7))       /* the field shows what was searched for */
         latin1(path + 7, S.query, sizeof(S.query));
     S.sel = sel >= 0 && sel < l.n ? sel : l.n ? 0 : -1;
+    /* a library's list: its bar */
+    lib_parse(path);
     /* the top: the home page */
     S.home.on = !*path;
     if (S.home.on) {
@@ -2378,6 +2575,8 @@ static int show_list(const char *path, const char *back_title, int push, int sel
         S.cols = layout_cols(vis_width());
     }
     make_disp();
+    if (S.lib.on)
+        lib_layout();
     set_where();
     if (!S.browser_open)
         browser_open();
@@ -2721,6 +2920,17 @@ static int det_fetch(const plex_item *it, int with_art)
         S.cast[i].photo = NULL;
     S.ncast = 0;
     S.cast_wanted = 1;              /* laid out by det_layout, fetched from null events */
+    for (int k = 0; k < 2; k++) {   /* More like this (not for an episode), and its extras */
+        char path[160];
+        if (S.rel[k].n || S.rel[k].v)
+            plex_list_free(&S.rel[k]);
+        S.nrel[k] = 0;
+        if (!S.det.v[0].rating_key || (k == 0 && S.det.v[0].type && !strcmp(S.det.v[0].type, "episode")))
+            continue;
+        snprintf(path, sizeof(path), "/library/metadata/%s/%s", S.det.v[0].rating_key, k ? "extras" : "similar");
+        if (plex_list_get(&S.px, path, &S.rel[k]) != 0)
+            memset(&S.rel[k], 0, sizeof(S.rel[k]));
+    }
     if (with_art)
         det_fetch_art();
     hourglass(0);
@@ -2834,6 +3044,9 @@ static void det_layout_more(const plex_item *it, int y)
     /* the cast: rows of photos with the name and the part under them */
     y = cast_top;
     S.ncast = it->ncast < (int)(sizeof(S.cast) / sizeof(S.cast[0])) ? it->ncast : (int)(sizeof(S.cast) / sizeof(S.cast[0]));
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < 16; i++)
+            S.relc[k][i].pic = NULL;
     det_cast_y = 0;
     if (S.ncast) {
         det_cast_y = y - 36;
@@ -2854,6 +3067,30 @@ static void det_layout_more(const plex_item *it, int y)
     }
     if (wide && det_cred_y - n * 40 - 24 < y)
         y = det_cred_y - n * 40 - 24;
+    /* More like this, extras: a row each, as many as fit */
+    for (int k = 0; k < 2; k++) {
+        int cw = k ? EP_TW : TILE_W, ch = k ? EP_TH : POSTER_H, fit = (det_wd - 80 + GAP) / (cw + GAP);
+        S.nrel[k] = S.rel[k].n < fit ? S.rel[k].n : fit;
+        if (S.nrel[k] > 16)
+            S.nrel[k] = 16;
+        if (!S.nrel[k])
+            continue;
+        S.rel_y[k] = y - 56;
+        y -= 84;
+        for (int i = 0; i < S.nrel[k]; i++) {
+            const plex_item *r = &S.rel[k].v[i];
+            S.relc[k][i].x0 = 40 + i * (cw + GAP);
+            S.relc[k][i].x1 = S.relc[k][i].x0 + cw;
+            S.relc[k][i].y1 = y;
+            S.relc[k][i].y0 = y - ch;
+            latin1(r->title, S.relc[k][i].line[0], sizeof(S.relc[k][i].line[0]));
+            latin1(r->subtitle ? r->subtitle : "", S.relc[k][i].line[1], sizeof(S.relc[k][i].line[1]));
+            draw_fit(D_BOLD, S.relc[k][i].line[0], cw);
+            draw_fit(D_BODY, S.relc[k][i].line[1], cw);
+        }
+        y -= ch + 96 + 40;
+        S.rel_wanted = 1;
+    }
     S.det_h = -y + 40;
 }
 
@@ -2879,6 +3116,24 @@ static int det_cast_step(void)
         force_redraw(S.browser_w, S.cast[i].x0, S.cast[i].y0, S.cast[i].x0 + CAST_W, S.cast[i].y0 + CAST_H);
         return 1;
     }
+    for (int k = 0; k < 2; k++)     /* More like this, extras */
+        for (int i = 0; i < S.nrel[k]; i++) {
+            const plex_item *r = &S.rel[k].v[i];
+            char key[320];
+            int cw = S.relc[k][i].x1 - S.relc[k][i].x0, ch = S.relc[k][i].y1 - S.relc[k][i].y0;
+            if (!r->thumb || S.relc[k][i].pic)
+                continue;
+            if (k)
+                snprintf(key, sizeof(key), "ep:%s@%dx%d", r->thumb, cw, ch);
+            else
+                snprintf(key, sizeof(key), "%s", r->thumb);     /* as on the grid */
+            if (!(S.relc[k][i].pic = cache_find(key))) {
+                S.relc[k][i].pic = poster_fetch(r->thumb, key, cw >> S.xeig, ch >> S.yeig, k ? 3 : 0);
+                cache_trim();
+            }
+            force_redraw(S.browser_w, S.relc[k][i].x0 - 8, S.relc[k][i].y0 - 8, S.relc[k][i].x1 + 8, S.relc[k][i].y1 + 8);
+            return 1;
+        }
     S.cast_wanted = 0;
     return 0;
 }
@@ -3075,6 +3330,26 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
         draw_text(D_BODY, ox + det_cred_x, oy + det_cred_y - l * 40, S.det_cred[l][0], C_SUB, C_BG);
         draw_text(D_BOLD, ox + det_cred_x + CRED_X, oy + det_cred_y - l * 40, S.det_cred[l][1], C_TEXT, C_BG);
     }
+    for (int k = 0; k < 2; k++) {
+        if (!S.nrel[k] || S.rel_y[k] - 60 > cy1 || S.relc[k][0].y0 - 100 > cy1 || S.relc[k][0].y1 + 80 < cy0)
+            continue;
+        draw_text(D_HEAD, ox + 40, oy + S.rel_y[k], k ? "Trailers and extras" : "More like this", C_TEXT, C_BG);
+        for (int i = 0; i < S.nrel[k]; i++) {
+            int x0 = S.relc[k][i].x0, y0 = S.relc[k][i].y0, x1 = S.relc[k][i].x1, y1 = S.relc[k][i].y1;
+            draw_round(ox + x0 + 6, oy + y0 - 10, ox + x1 + 6, oy + y1 - 6, 16, C_SHADOW, C_BG);
+            if (S.relc[k][i].pic && S.relc[k][i].pic->area)
+                plot_sprite(S.relc[k][i].pic, x0, y0, x1, y1);
+            else
+                draw_round(ox + x0, oy + y0, ox + x1, oy + y1, 12, C_CARD, C_BG);
+            if (k)                  /* a play triangle on a trailer */
+                draw_glyph(G_PLAY, ox + (x0 + x1) / 2 - 24, oy + (y0 + y1) / 2 - 28, ox + (x0 + x1) / 2 + 28,
+                           oy + (y0 + y1) / 2 + 28, C_TEXT, DRAW_NONE);
+            else
+                badges(&S.rel[k].v[i], ox + x0, oy + y0, ox + x1, oy + y1);
+            draw_text(D_BOLD, ox + x0, oy + y0 - 40, S.relc[k][i].line[0], C_TEXT, C_BG);
+            draw_text(D_BODY, ox + x0, oy + y0 - 80, S.relc[k][i].line[1], C_SUB, C_BG);
+        }
+    }
     if (det_cast_y) {
         draw_text(D_TITLE, ox + 40, oy + det_cast_y, "Cast", C_TEXT, C_BG);
         for (int i = 0; i < S.ncast; i++) {
@@ -3171,6 +3446,20 @@ static void det_refresh(void)
 }
 
 /* The details button at a screen point, or 0 */
+/* More like this or an extra at a screen point: 1000 * (k + 1) + i, or 0 */
+static int det_rel_at(int sx, int sy)
+{
+    int st[9], wx, wy;
+    window_state(S.browser_w, st);
+    wx = sx - (st[1] - st[5]);
+    wy = sy - (st[4] - st[6]);
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < S.nrel[k]; i++)
+            if (wx >= S.relc[k][i].x0 && wx < S.relc[k][i].x1 && wy >= S.relc[k][i].y0 - 96 && wy < S.relc[k][i].y1)
+                return 1000 * (k + 1) + i;
+    return 0;
+}
+
 static int det_button_at(int sx, int sy)
 {
     int st[9], wx, wy;
@@ -4476,6 +4765,32 @@ static void subs_menu_build(void)
     menu_end(&m_subs);
 }
 
+static menu_t m_sort;
+
+/* The library bar's buttons and letters */
+static void lib_action(int id, int x, int y)
+{
+    char path[256];
+    if (id >= LB_VIEW && id < LB_VIEW + 3 && id - LB_VIEW != S.lib.view) {
+        lib_path(id - LB_VIEW, 0, 0, path, sizeof(path));
+        show_list(path, "", 0, 0);
+    } else if (id == LB_UNWATCHED) {
+        lib_path(0, S.lib.sort, !S.lib.unwatched, path, sizeof(path));
+        show_list(path, "", 0, 0);
+    } else if (id == LB_SORT) {
+        menu_begin(&m_sort, "Sort by");
+        for (int k = 0; k < SORTS; k++)
+            menu_add(&m_sort, sort_names[k], k == S.lib.sort, 0, -1, 0);
+        menu_end(&m_sort);
+        S.menu_kind = 6;
+        S.menu_x = x;
+        S.menu_y = y;
+        open_menu(&m_sort, x - 64, y);
+    } else if (id >= LB_AZ && id < LB_AZ + 27 && S.lib.az_first[id - LB_AZ] >= 0) {
+        select_tile(S.lib.az_first[id - LB_AZ]);    /* (scrolled into view) */
+    }
+}
+
 /* Is it in Continue watching (part watched, or the list is Continue watching)? */
 static int in_continue(const plex_item *it)
 {
@@ -4971,6 +5286,13 @@ static int menu_select(const int *sel)
         }
     } else if (kind == 3) {
         choose_sub(sel[0]);
+    } else if (kind == 6 && S.lib.on) {
+        if (sel[0] >= 0 && sel[0] < SORTS && sel[0] != S.lib.sort) {
+            char path[256];
+            lib_path(0, sel[0], S.lib.unwatched, path, sizeof(path));
+            show_list(path, "", 0, 0);
+        }
+        return 0;
     } else if (kind == 5 && S.pl.on) {
         choose_psub(sel[0]);
     } else if (kind == 4 && S.pl.on) {
@@ -5185,6 +5507,25 @@ static void open_item(int i, int how)
 
 /* ---- events --------------------------------------------------------------------- */
 
+/* More like this (k 0): that film's details, in place; an extra (k 1):
+   play it, from the start */
+static void det_open_rel(int k, int i)
+{
+    if (k < 0 || k > 1 || i < 0 || i >= S.rel[k].n)
+        return;
+    if (k == 1) {
+        play_item(&S.rel[k].v[i], PLAY_START);
+        return;
+    }
+    /* (det_fetch uses the item only to ask the server, before it lets
+       S.rel go) */
+    if (det_fetch(&S.rel[0].v[i], 1) != 0)
+        return;
+    S.det_i = -1;                   /* not one of the list's */
+    det_repaint();
+    set_where();
+}
+
 /* A button in the details window */
 static void det_action(int id, int x, int y)
 {
@@ -5290,12 +5631,23 @@ static void click(int *b)
             return;
         }
         if (S.page == PG_DETAILS) {
-            int id = det_button_at(b[0], b[1]);
+            int id = det_button_at(b[0], b[1]), rel = id ? 0 : det_rel_at(b[0], b[1]);
+            if (rel && (buttons & 0x505)) {         /* More like this: its details; an extra: play it */
+                det_open_rel(rel / 1000 - 1, rel % 1000);
+                return;
+            }
             if ((buttons & 2) || ((buttons & 0x100) && !id))
                 item_menu_open(b[0], b[1]);
             else if (id && (buttons & 0x505))
                 det_action(id, b[0], b[1]);
             return;
+        }
+        if (S.lib.on && S.page == PG_GRID && (buttons & 0x505)) {
+            int h2 = lib_hit(b[0], b[1]);
+            if (h2) {
+                lib_action(h2, b[0], b[1]);
+                return;
+            }
         }
         if (S.home.on && (buttons & 0x505)) {
             int h2 = home_hit(b[0], b[1]);
@@ -5454,8 +5806,11 @@ static void open_request(int *b)
                     force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
                 }
             }
-        } else if (cols != S.cols) {
+        } else if (cols != S.cols || (S.lib.on && w != S.width)) {
             S.cols = cols;
+            S.width = w;
+            if (S.lib.on)
+                lib_layout();
             if (S.page == PG_GRID) {
                 set_extent();
                 force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
@@ -5844,6 +6199,20 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
                 found = 1;
             }
     }
+    if (w == S.browser_w && S.page == PG_DETAILS && id >= 1000 && id < 3000 && (id % 1000) < S.nrel[id / 1000 - 1]) {
+        int k = id / 1000 - 1, i = id % 1000;      /* More like this, extras */
+        x0 = S.relc[k][i].x0; y0 = S.relc[k][i].y0; x1 = S.relc[k][i].x1; y1 = S.relc[k][i].y1;
+        found = 1;
+    }
+    for (int i = 0; w == S.browser_w && S.page == PG_GRID && S.lib.on && i < S.lib.nbtn; i++)
+        if (S.lib.btn[i].id == id) {
+            x0 = S.lib.btn[i].x0; y0 = S.lib.btn[i].y0; x1 = S.lib.btn[i].x1; y1 = S.lib.btn[i].y1;
+            found = 1;
+        }
+    if (w == S.browser_w && S.page == PG_GRID && S.lib.on && id >= LB_AZ && id < LB_AZ + 27) {
+        az_box(id - LB_AZ, &x0, &y0, &x1, &y1);
+        found = 1;
+    }
     for (int k = 0; w == S.browser_w && strip_h() && k <= S.libs.n && k < LIB_TABS; k++)
         if (TB_TAB + k == id && tab_box(k, &x0, &y0, &x1, &y1) == 0)
             found = 1;
@@ -5893,6 +6262,13 @@ const char *ui_test_home_row(int r, int *start, int *n, int *vis)
     *n = S.home.row[r].n;
     *vis = S.home.lay[r].vis;
     return S.home.row[r].title;
+}
+int ui_test_lib(int *view, int *sort, int *unwatched)
+{
+    *view = S.lib.view;
+    *sort = S.lib.sort;
+    *unwatched = S.lib.unwatched;
+    return S.lib.on && S.page == PG_GRID;
 }
 int ui_test_tab(int *current) { *current = tab_current(); return strip_h() ? S.libs.n + 1 : 0; }
 int ui_test_show(int *season) { *season = S.show.season; return S.show.on && S.page == PG_GRID; }

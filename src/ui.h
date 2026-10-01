@@ -21,6 +21,8 @@ enum { SH_PLAY = 120, SH_WATCHED, SH_TAB = 200 };
 enum { HB_PLAY = 130, HB_DETAILS, HB_DOT = 210, HB_ROW = 220 };
 /* the tabs under the bar: TB_TAB (Home), TB_TAB + n (library n) */
 enum { TB_TAB = 300 };
+/* a library's bar: Library, Collections, Playlists (LB_VIEW + n), Sort, Unwatched; A-Z (LB_AZ + k, 0 #) */
+enum { LB_VIEW = 400, LB_SORT = 410, LB_UNWATCHED = 411, LB_AZ = 420 };
 
 /* The save box's icons */
 enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
@@ -64,7 +66,8 @@ const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how i
 int ui_test_psize(void);
 int ui_test_badge(int i);                       /* item i's badge: 1 a tick, 2 a count, 0 none */
 int ui_test_show(int *season);
-int ui_test_tab(int *current);                  /* how many tabs (Home and the libraries); the current one */
+int ui_test_tab(int *current);
+int ui_test_lib(int *view, int *sort, int *unwatched);   /* a library's bar shows; what it says */                  /* how many tabs (Home and the libraries); the current one */
 int ui_test_home(int *rows, int *pick);         /* the home page is shown: its rows, the one featured */
 const char *ui_test_home_row(int r, int *start, int *n, int *vis);   /* a row's title, items, shown */                  /* the show page is shown, and which series */
 const char *ui_test_show_text(int what);        /* 0 the title, 1 the episodes' count, 2 the buttons */

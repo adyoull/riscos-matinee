@@ -239,9 +239,37 @@ class H(BaseHTTPRequestHandler):
                 {"key": "2", "title": "TV Programmes", "type": "show"},
                 {"key": "3", "title": "Music", "type": "artist"}]}})
         if p == "/library/sections/1/all":
-            return self.send(200, {"MediaContainer": {"size": len(MOVIES), "totalSize": len(MOVIES),
+            films = list(MOVIES)
+            srt = (q.get("sort") or [""])[0]
+            if srt == "year:desc":
+                films.sort(key=lambda m: -m["year"])
+            elif srt == "addedAt:desc":
+                films.reverse()
+            if (q.get("unwatched") or [""])[0] == "1":
+                films = [m for m in films if not m.get("viewCount")]
+            return self.send(200, {"MediaContainer": {"size": len(films), "totalSize": len(films),
                                                       "librarySectionTitle": "Films", "title1": "Films",
-                                                      "Metadata": MOVIES}})
+                                                      "Metadata": films}})
+        if p == "/library/sections/1/collections":
+            return self.send(200, {"MediaContainer": {"title1": "Films", "title2": "Collections", "Metadata": [
+                {"ratingKey": "500", "key": "/library/collections/500/children", "type": "collection",
+                 "title": "Open Movies", "childCount": 2, "thumb": "/library/collections/500/thumb/1"}]}})
+        if p == "/library/collections/500/children":
+            return self.send(200, {"MediaContainer": {"title2": "Open Movies", "Metadata": MOVIES[:2]}})
+        if p == "/playlists":
+            return self.send(200, {"MediaContainer": {"title1": "Playlists", "Metadata": [
+                {"ratingKey": "600", "key": "/playlists/600/items", "type": "playlist", "playlistType": "video",
+                 "title": "Friday Night", "leafCount": 3, "composite": "/playlists/600/composite/1"},
+                {"ratingKey": "601", "key": "/playlists/601/items", "type": "playlist", "playlistType": "audio",
+                 "title": "Some Songs", "leafCount": 9}]}})
+        if p == "/playlists/600/items":
+            return self.send(200, {"MediaContainer": {"title": "Friday Night", "Metadata": MOVIES[2:5]}})
+        if p == "/library/metadata/101/similar":
+            return self.send(200, {"MediaContainer": {"Metadata": [MOVIES[1], MOVIES[4]]}})
+        if p == "/library/metadata/101/extras":
+            t = movie(701, "Big Buck Bunny Trailer", 2008, "h264", 1280, 720, 3000)
+            t.update({"type": "clip", "subtype": "trailer", "duration": 33000})
+            return self.send(200, {"MediaContainer": {"Metadata": [t]}})
         if p == "/library/sections/2/all":
             return self.send(200, {"MediaContainer": {"title1": "TV Programmes", "Metadata": [
                 SHOW]}})

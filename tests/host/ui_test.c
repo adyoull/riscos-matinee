@@ -1190,7 +1190,27 @@ static int script(int *b, int mask)
             CHECK(strstr(plotted_text, "Cast|") && strstr(plotted_text, "Frank|Flying s") &&
                   strstr(plotted_text, "Gamera|Chinchilla|"), "the cast, with their parts");
             CHECK(spr && spr[4] + 1 == 72 && spr[9] != spr[8], "a photo: round (masked), 72 pixels");
+            {
+                int x, y;
+                CHECK(strstr(plotted_text, "More like this|Hevc Film|2020|Sixty|2021|"), "More like this: %s", plotted_text);
+                CHECK(log_count("/library/metadata/101/extras", NULL, NULL) >= 1 && ui_test_button_xy(w_browser, 2000, &x, &y) == 0,
+                      "and its trailer, under it");
+            }
             save_picture("cast.ppm", w_browser);
+            pc = 15030;
+            return ev_button(b, w_browser, 1000, 0x400);        /* More like this: Hevc Film */
+        }
+        case 15030:
+            CHECK(ui_test_page() == PG_DETAILS && !strcmp(ui_test_det(0), "Hevc Film") &&
+                  log_count("/library/metadata/102", NULL, NULL) >= 1, "its details, in place: %s", ui_test_det(0));
+            pc++;
+            return ev_key(b, w_browser, -1, 8);                 /* Back: the films */
+        case 15031:
+            CHECK(ui_test_page() == PG_GRID, "Back: the films");
+            pc++;
+            return ev_tile(b, find_tile("Big Buck Bunny"), 4);
+        case 15032: {
+            CHECK(ui_test_page() == PG_DETAILS && !strcmp(ui_test_det(0), "Big Buck Bunny"), "Big Buck Bunny again");
             memset(b, 0, 32);                                   /* back to the top */
             memcpy(b + 1, win(w_browser)->vis, 16);
             b[0] = w_browser; b[6] = 0; b[7] = -1;
@@ -1641,9 +1661,71 @@ static int script(int *b, int mask)
                   ui_test_status());
             pc = 6500;
             return ev_button(b, w_browser, TB_TAB + 1, 0x400);  /* the grid, for the next steps */
-        case 6500:
+        case 6500: {
+            int v = -1, so = -1, un = -1;
+            CHECK(ui_test_lib(&v, &so, &un) && v == 0 && so == 0 && !un, "Films: its bar (Library, by title)");
+            pc++;
+            return ev_redraw(b, w_browser);
+        }
+        case 6501:
+            save_picture("library.ppm", w_browser);
+            CHECK(strstr(plotted_text, "Library|Collections|Playlists|Unwatched|Sort: Title|#|A|B|C|"),
+                  "the bar: the views, Unwatched, Sort, A to Z: %s", plotted_text);
+            pc++;
+            return ev_button(b, w_browser, LB_AZ + 'R' - 'A' + 1, 0x400);   /* R */
+        case 6502:
+            CHECK(ui_test_sel() == find_tile("Remux"), "R: the first title with R selected (%d)", ui_test_sel());
+            pc++;
+            return ev_button(b, w_browser, LB_SORT, 0x400);
+        case 6503:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, 2), "Year") && (menu_flags(menu_open, 0) & 1), "the Sort menu");
+            pc++;
+            return ev_menu(b, 2, -1);                           /* Year */
+        case 6504: {
+            int v = -1, so = -1, un = -1, cur = -1;
+            CHECK(ui_test_lib(&v, &so, &un) && so == 2 && log_count("/library/sections/1/all", "sort", "year:desc") == 1 &&
+                  !strcmp(ui_test_item(0, 0), "Sixty") && !strcmp(ui_test_item(5, 0), "Dvd Rip"), "by year, newest first");
+            CHECK(ui_test_tab(&cur) && cur == 1, "still in the Films tab");
+            pc++;
+            return ev_button(b, w_browser, LB_UNWATCHED, 0x400);
+        }
+        case 6505: {
+            int v = -1, so = -1, un = -1;
+            CHECK(ui_test_lib(&v, &so, &un) && so == 2 && un && ui_test_items() == 5 && find_tile("Dvd Rip") < 0,
+                  "Unwatched: Dvd Rip (watched) left out, still by year");
+            pc++;
+            return ev_button(b, w_browser, LB_VIEW + 1, 0x400); /* Collections */
+        }
+        case 6506:
+            CHECK(ui_test_items() == 1 && !strcmp(ui_test_item(0, 0), "Open Movies") && !strcmp(ui_test_item(0, 1), "2 items"),
+                  "Collections");
+            pc++;
+            return ev_tile(b, 0, 4);
+        case 6507:
+            CHECK(ui_test_items() == 2 && !strcmp(ui_test_item(0, 0), "Big Buck Bunny"), "a collection's films");
+            pc++;
+            return ev_key(b, w_browser, -1, 8);                 /* Back: the collections */
+        case 6508:
+            CHECK(ui_test_items() == 1 && !strcmp(ui_test_item(0, 0), "Open Movies"), "Back: the collections");
+            pc++;
+            return ev_button(b, w_browser, LB_VIEW + 2, 0x400); /* Playlists */
+        case 6509: {
+            int cur = -1;
+            CHECK(ui_test_items() == 2 && !strcmp(ui_test_item(0, 0), "Friday Night") && !strcmp(ui_test_item(0, 1), "3 items") &&
+                  ui_test_tab(&cur) && cur == 1, "Playlists (in the Films tab)");
+            pc++;
+            return ev_tile(b, 0, 4);
+        }
+        case 6510:
+            CHECK(ui_test_items() == 3 && !strcmp(ui_test_item(0, 0), "Ten Bit"), "a playlist's videos");
+            pc++;
+            return ev_button(b, w_browser, TB_TAB + 1, 0x400); /* the Films tab: as it was */
+        case 6511: {
+            int v = -1, so = -1, un = -1;
+            CHECK(ui_test_lib(&v, &so, &un) && v == 0 && so == 0 && !un && ui_test_items() == 6, "Films again, by title");
             pc = 650;
             continue;
+        }
         case 650:                                           /* the posters first */
             if (!(mask & 1))
                 return NULL_EVENT;

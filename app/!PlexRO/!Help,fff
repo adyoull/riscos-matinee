@@ -1,4 +1,4 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test14
+!PlexRO - a Plex client for RISC OS                  0.1.0-test15
 ===================================================================
 
 PlexRO browses the films and TV programmes on a Plex Media Server and
@@ -57,6 +57,14 @@ grey one.
   arrow keys     move the selection
   Backspace, Escape, Delete  go back
 
+A library has a bar over its posters: Library (its films or shows),
+Collections and Playlists (your video playlists); for Library, Sort (by
+Title, Date added, Year or Rating, newest or best first) and Unwatched
+(only what you haven't seen); and, sorted by title, A to Z: click a
+letter to go to the first title starting with it (grey letters have
+none). Back and Refresh keep what you chose; the library's tab sets it
+back to all, by title.
+
 Poster size on the icon's menu: Small, Medium (the default) or Large,
 remembered.
 
@@ -114,7 +122,9 @@ file); and how it will play. Under them: the cast, with their photos and
 the parts they play (the photos arrive a moment after the page), and
 beside the cast (under it in a narrow window) who directed and wrote it,
 the studio, when it came out (or was first shown) and the file (such as
-"1080p H.264 . AAC 5.1 . MKV . 4.2 GB").
+"1080p H.264 . AAC 5.1 . MKV . 4.2 GB"). Under those: More like this
+(a film's: click one for its details) and Trailers and extras (click one
+to play it).
 
   Return         play
   Left, Right    the video before or after it in the list
