@@ -2,7 +2,7 @@
 
 ## The toolchain: GCCSDK GCC 10.2 with UnixLib 5.0.3.1
 
-PlexRO is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`) in
+Matinee is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`) in
 `~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.3.1** (riscos-unixlib
 release v5.0.3.1; test17 used pre-release rc8, test1 to test16 release v5.0.2), so programs built with
 `-D_FILE_OFFSET_BITS=64` handle files over 2GB (up to 4GB−1), and fork, `_exit`, heaps past 128 MB and
@@ -102,7 +102,7 @@ calls to SDL's audio are answered by `src/sdlstub.c`.
 
 The results, in `build/out/`:
 
-- `plexro_g`: the ELF with debug information. Keep it for `addr2line` on crash
+- `matinee_g`: the ELF with debug information. Keep it for `addr2line` on crash
   addresses, and don't ship it. UnixLib's debug information holds its build
   path.
 - `!RunImage,ff8`: the AIF.
@@ -113,11 +113,11 @@ Then it checks three things:
 - UnixLib 5.0.3.1 was linked;
 - no build path or unwanted name is in `!RunImage`.
 
-`build/package.sh` makes `dist/PlexRO-<version>.zip`, with RISC OS filetypes. It holds
-`!PlexRO` with `!RunImage`, `!Sprites` (`tools/mksprites.py`), `PThrTicker` (its sha256
+`build/package.sh` makes `dist/Matinee-<version>.zip`, with RISC OS filetypes. It holds
+`!Matinee` with `!RunImage`, `!Sprites` (`tools/mksprites.py`), `PThrTicker` (its sha256
 is checked), the licences and the source. It stops if two names differ only in case.
 
-Build in a directory whose path holds nothing personal (such as `/build/riscos-plex`):
+Build in a directory whose path holds nothing personal (such as `/build/riscos-matinee`):
 paths can end up in objects.
 
 ## Host tests

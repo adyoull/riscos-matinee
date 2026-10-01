@@ -1,6 +1,6 @@
 /*
  * net.c - HTTP(S) requests through FFmpeg's avio (see net.h).
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include "net.h"
 
@@ -17,7 +17,7 @@
 
 #define FETCH_MAX (16 << 20)   /* 16 MB: far more than any Plex listing */
 
-static char agent[64] = "PlexRO";
+static char agent[64] = "Matinee";
 
 struct net_stream {
     AVIOContext *io;
@@ -28,9 +28,9 @@ void net_init(const char *user_agent)
     if (user_agent)
         snprintf(agent, sizeof(agent), "%s", user_agent);
     /* FFmpeg's messages go to stderr, which a Wimp task has nowhere to
-       show; errors are reported through err instead. PlexRO$Debug (any
+       show; errors are reported through err instead. Matinee$Debug (any
        value) keeps them, for running from a TaskWindow. */
-    if (!getenv("PlexRO$Debug"))
+    if (!getenv("Matinee$Debug"))
         av_log_set_level(AV_LOG_QUIET);
     avformat_network_init();
 }

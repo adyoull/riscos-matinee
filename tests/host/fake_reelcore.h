@@ -1,6 +1,6 @@
 /*
  * fake_reelcore.h - what the fake reelcore (fake_reelcore.c) was asked,
- * for ui_test's checks. Part of riscos-plex. GPL v2 or later.
+ * for ui_test's checks. Part of riscos-matinee. GPL v2 or later.
  */
 #ifndef FAKE_REELCORE_H
 #define FAKE_REELCORE_H

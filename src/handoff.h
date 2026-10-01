@@ -1,14 +1,14 @@
 /*
- * handoff.h - what PlexRO gives Reel to play.
+ * handoff.h - what Matinee gives Reel to play.
  *
  * Reel (0.1.17 and later) plays yt-dlp's JSON: the address, the HTTP
  * headers to send with it, the title, and a key for "carry on from where
- * you stopped" (webpage_url). PlexRO writes the same form, so Reel and
+ * you stopped" (webpage_url). Matinee writes the same form, so Reel and
  * ReelEGL need no change to play from a Plex server.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_HANDOFF_H
-#define PLEXRO_HANDOFF_H
+#ifndef MATINEE_HANDOFF_H
+#define MATINEE_HANDOFF_H
 #include "caps.h"
 
 /* The JSON text for it (malloc'd), NULL if out of memory.

@@ -1,11 +1,11 @@
 /*
- * player.c - PlexRO's built-in player (see player.h).
+ * player.c - Matinee's built-in player (see player.h).
  *
  * Built on riscos-ffmpeg's reelcore (libreelcore.a from its devkit), with
  * the window side done as !Reel does it (player/reel.c): the sprite path,
  * the VideoOverlay path and its rules, and full screen as a desktop window.
  * Those parts follow Reel's code closely, so fixes there apply here too.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -124,7 +124,7 @@ static int now_cs(void)
     return swi(OS_ReadMonotonicTime, &r) ? (int)(clock() * 100 / CLOCKS_PER_SEC) : r.r[0];
 }
 
-/* <Wimp$ScrapDir>.PlexROLog while playing (PlexRO$Log: another file, or "off") */
+/* <Wimp$ScrapDir>.MatineeLog while playing (Matinee$Log: another file, or "off") */
 static void lg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lg(const char *fmt, ...)
 {
@@ -141,7 +141,7 @@ static void lg(const char *fmt, ...)
 
 static void log_open(void)
 {
-    const char *e = getenv("PlexRO$Log"), *scrap = getenv("Wimp$ScrapDir");
+    const char *e = getenv("Matinee$Log"), *scrap = getenv("Wimp$ScrapDir");
     char path[300];
     if (P.log)
         return;
@@ -151,9 +151,9 @@ static void log_open(void)
         snprintf(path, sizeof(path), "%s", e);
     else if (scrap && *scrap)
 #ifdef __riscos__
-        snprintf(path, sizeof(path), "%s.PlexROLog", scrap);
+        snprintf(path, sizeof(path), "%s.MatineeLog", scrap);
 #else
-        snprintf(path, sizeof(path), "%s/PlexROLog", scrap);
+        snprintf(path, sizeof(path), "%s/MatineeLog", scrap);
 #endif
     else
         return;
@@ -449,7 +449,7 @@ static struct {
 static int ov_allowed(void)
 {
     const char *e = getenv("EGL$Overlay");
-    if (!P.hw || getenv("PlexRO$NoOverlay"))
+    if (!P.hw || getenv("Matinee$NoOverlay"))
         return 0;
     return !(e && (!strcasecmp(e, "off") || !strcasecmp(e, "no") || !strcmp(e, "0")));
 }
@@ -919,7 +919,12 @@ static void draw_rect_of(int w, int *b, int update)
                 draw_text(D_BODY, ox + P.pic.x0 + 40, oy + (P.pic.y0 + P.pic.y1) / 2 - 40,
                           P.failed ? P.error : "Opening...", C_SUB, RGB(0, 0, 0));
             }
-        }
+        } else if (!update)
+            /* the overlay shows over everything, but only over its own
+               rectangle: the rest of the box (the bars beside or above a
+               picture that fits) is blacked here, or what the window held
+               before (the details page) stays there */
+            draw_rect(c.x0, c.y0, c.x1, c.y1, RGB(0, 0, 0));
     }
     if (!update && ov.shown && w == ov.win) {
         r.r[0] = ov.id;
@@ -1716,9 +1721,9 @@ static void watch_pointer(void)
     if (swi(Wimp_GetPointerInfo, &r))
         return;
     /* full screen: the pointer goes after HIDE_POINTER while it's still over
-       the picture and playing (PlexRO$NoHidePointer: never), back when it moves */
+       the picture and playing (Matinee$NoHidePointer: never), back when it moves */
     if (p[0] == P.ptr_x && p[1] == P.ptr_y && !P.ptr_hidden && p[3] == P.full && !reelcore_paused(P.v) &&
-        !P.ended && !P.card && now_cs() - P.ptr_cs >= HIDE_POINTER && !getenv("PlexRO$NoHidePointer"))
+        !P.ended && !P.card && now_cs() - P.ptr_cs >= HIDE_POINTER && !getenv("Matinee$NoHidePointer"))
         pointer_show(0);
     if (p[0] != P.ptr_x || p[1] != P.ptr_y) {
         P.ptr_x = p[0];
@@ -2156,7 +2161,7 @@ void player_note(const char *text)
     bar_refresh();
 }
 
-#ifdef PLEXRO_TEST
+#ifdef MATINEE_TEST
 int player_test_button_xy(int id, int *x, int *y)
 {
     int st[9], w = cur_win();

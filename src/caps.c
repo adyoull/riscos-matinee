@@ -1,6 +1,6 @@
 /*
  * caps.c - what Reel can play, and the requests for it (see caps.h).
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include "caps.h"
 #include "net.h"

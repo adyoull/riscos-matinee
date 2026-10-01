@@ -1,5 +1,5 @@
 /*
- * draw.h - PlexRO's drawing: filled shapes in true colour and text in
+ * draw.h - Matinee's drawing: filled shapes in true colour and text in
  * outline fonts, for the dark browser and details windows. Everything is
  * in screen OS units, inside a Wimp redraw loop.
  *
@@ -10,10 +10,10 @@
  *            D_TITLE and D_HERO Homerton Bold at 12, 16, 20 and 28 point
  *            (Font_Paint), or the desktop font if the Font Manager can't
  *            find it
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_DRAW_H
-#define PLEXRO_DRAW_H
+#ifndef MATINEE_DRAW_H
+#define MATINEE_DRAW_H
 #include <stddef.h>
 
 #define RGB(r, g, b) ((unsigned)(b) << 24 | (unsigned)(g) << 16 | (unsigned)(r) << 8)
@@ -28,12 +28,13 @@
 #define C_SUB     RGB(150, 156, 168)
 #define C_ACCENT  RGB(70, 150, 235)     /* selection, progress, Play */
 #define C_HOVER   RGB(120, 128, 142)
+#define C_GOLD    RGB(245, 190, 40)     /* your rating's stars */
 #define C_CHIP    RGB(40, 43, 51)       /* the details' chips (year, rating...) */
 
 enum { D_BODY, D_BOLD, D_TITLE, D_HEAD, D_HERO, D_FONTS };
 
 /* Glyphs, drawn smooth in a box */
-enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH, G_TICK, G_NEXT };
+enum { G_PLAY, G_BACK, G_REFRESH, G_DOWN, G_CIRCLE, G_CORNER_TL, G_CORNER_TR, G_CORNER_BL, G_CORNER_BR, G_SEARCH, G_TICK, G_NEXT, G_STAR };
 
 void draw_init(int xeig, int yeig);     /* the fonts and the screen (again after a mode change) */
 void draw_done(void);                   /* lets the fonts and the shape sprites go */

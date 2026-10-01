@@ -1,3 +1,0 @@
-| !Boot for !PlexRO (a Plex client that plays through ReelEGL or Reel)
-If "<PlexRO$Dir>"="" Then Set PlexRO$Dir <Obey$Dir>
-IconSprites <Obey$Dir>.!Sprites

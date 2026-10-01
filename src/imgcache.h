@@ -3,15 +3,15 @@
  * cast photos, as the JPEGs the server sent, so the next time a list or a
  * details page is shown they come from the disc instead of the network.
  *
- * Kept in Choices (<Choices$Write>.PlexRO.Cache, or PlexRO$Cache), in 256
+ * Kept in Choices (<Choices$Write>.Matinee.Cache, or Matinee$Cache), in 256
  * directories by the first two hex digits of a hash of the picture's key
  * (so no directory holds many files: FileCore's older formats hold 77).
  * Held to a size: the oldest go first. Clear image cache on the icon bar
  * menu empties it.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_IMGCACHE_H
-#define PLEXRO_IMGCACHE_H
+#ifndef MATINEE_IMGCACHE_H
+#define MATINEE_IMGCACHE_H
 #include <stddef.h>
 
 /* Where it is (made if missing), and the most it may hold; it's trimmed

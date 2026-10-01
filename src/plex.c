@@ -1,6 +1,6 @@
 /*
- * plex.c - the parts of the Plex API PlexRO uses (see plex.h).
- * Part of riscos-plex. GPL v2 or later.
+ * plex.c - the parts of the Plex API Matinee uses (see plex.h).
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include "plex.h"
 #include "net.h"
@@ -23,7 +23,7 @@ void plex_ctx_init(plex_ctx *c, const char *client_id, const char *version)
 {
     memset(c, 0, sizeof(*c));
     snprintf(c->client_id, sizeof(c->client_id), "%s", client_id);
-    snprintf(c->product, sizeof(c->product), "PlexRO");
+    snprintf(c->product, sizeof(c->product), "Matinee");
     snprintf(c->version, sizeof(c->version), "%s", version);
     /* An unknown platform gets the server's generic profile, which the
        X-Plex-Client-Profile-Extra of each playback request then narrows */
@@ -555,6 +555,7 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->released = dup_s(jstr(m, "originallyAvailableAt"));
     it->guid = dup_s(jstr(m, "guid"));
     it->audience_rating = jnum(m, "audienceRating", 0);
+    it->user_rating = jnum(m, "userRating", 0);
     cast(it, m);
     markers(it, m);
     it->rating = jnum(m, "rating", 0) > 0 ? jnum(m, "rating", 0) : jnum(m, "audienceRating", 0);
@@ -660,7 +661,7 @@ int plex_list_parse(const char *json, const char *path, plex_list *out)
             char k[160];
             snprintf(k, sizeof(k), "/library/sections/%s/all", jstr(e, "key"));
             it->key = dup_s(k);
-            /* music and photos: shown, but PlexRO plays video only for now */
+            /* music and photos: shown, but Matinee plays video only for now */
             it->kind = type && (!strcmp(type, "movie") || !strcmp(type, "show")) ? PI_FOLDER : PI_OTHER;
             it->subtitle = dup_s(type && !strcmp(type, "movie") ? "Films" :
                                  type && !strcmp(type, "show") ? "TV" :
@@ -921,6 +922,87 @@ int plex_remove_continue(plex_ctx *c, const plex_item *it)
     if (net_send(url, headers, "PUT", NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
     net_buf_free(&b);
+    return 0;
+}
+
+int plex_rate(plex_ctx *c, const plex_item *it, int rating)
+{
+    char url[512], headers[1024];
+    net_buf b;
+    if (!it->rating_key) {
+        set_err(c, "it isn't something the server knows%s", NULL);
+        return -1;
+    }
+    if (rating > 10)
+        rating = 10;
+    if (rating < 0)
+        rating = -1;
+    snprintf(url, sizeof(url), "%s/:/rate?key=%s&identifier=com.plexapp.plugins.library&rating=%d", c->base,
+             it->rating_key, rating);
+    plex_headers(c, c->token, headers, sizeof(headers));
+    if (net_send(url, headers, "PUT", NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
+        return -1;
+    net_buf_free(&b);
+    return 0;
+}
+
+/* ---- Plex Home ------------------------------------------------------------- */
+
+int plex_home_users(plex_ctx *c, plex_user *out, int max)
+{
+    char url[256];
+    cJSON *j, *u, *users;
+    int n = 0;
+    snprintf(url, sizeof(url), "%s/api/v2/home/users", c->plextv);
+    if (!(j = get_json(c, url, c->account_token, NULL, API_TIMEOUT, NULL)))
+        return -1;
+    users = cJSON_IsArray(j) ? j : cJSON_GetObjectItemCaseSensitive(j, "users");
+    cJSON_ArrayForEach(u, users) {
+        const char *id = jstr(u, "uuid"), *t = jstr(u, "title");
+        plex_user *p;
+        if (n >= max)
+            break;
+        if (!id || !*id)
+            continue;
+        p = &out[n++];
+        memset(p, 0, sizeof(*p));
+        snprintf(p->uuid, sizeof(p->uuid), "%s", id);
+        if (!t || !*t)
+            t = jstr(u, "username");
+        snprintf(p->title, sizeof(p->title), "%s", t && *t ? t : "User");
+        p->admin = jbool(u, "admin");
+        p->protected_ = jbool(u, "protected");
+        p->restricted = jbool(u, "restricted");
+        p->guest = jbool(u, "guest");
+    }
+    cJSON_Delete(j);
+    return n;
+}
+
+int plex_switch_user(plex_ctx *c, const char *uuid, const char *pin)
+{
+    char url[400], esc[64];
+    const char *tok;
+    int status = 0;
+    cJSON *j;
+    net_escape(pin ? pin : "", esc, sizeof(esc));
+    snprintf(url, sizeof(url), "%s/api/v2/home/users/%s/switch%s%s", c->plextv, uuid, pin && *pin ? "?pin=" : "",
+             pin && *pin ? esc : "");
+    if (!(j = get_json(c, url, c->account_token, "", API_TIMEOUT, &status))) {
+        if (status == 401 || status == 403 || status == 422) {    /* plex.tv refuses the PIN */
+            set_err(c, "that PIN isn't right%s", NULL);
+            return -2;
+        }
+        return -1;
+    }
+    tok = jstr(j, "authToken") ? jstr(j, "authToken") : jstr(j, "authenticationToken");
+    if (!tok || !*tok) {
+        cJSON_Delete(j);
+        set_err(c, "plex.tv didn't switch to that user%s", NULL);
+        return -1;
+    }
+    snprintf(c->account_token, sizeof(c->account_token), "%s", tok);
+    cJSON_Delete(j);
     return 0;
 }
 

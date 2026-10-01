@@ -1,7 +1,7 @@
-!PlexRO - a Plex client for RISC OS                  0.1.0-test18
+!Matinee - a Plex client for RISC OS                  0.1.0-test19
 ===================================================================
 
-PlexRO browses the films and TV programmes on a Plex Media Server and
+Matinee browses the films and TV programmes on a Plex Media Server and
 plays them in its own window, with the player core of riscos-ffmpeg's
 Reel (or hands them to ReelEGL or Reel, if you'd rather). Files it can
 play as they are are played directly. Everything else is converted by
@@ -10,21 +10,22 @@ stereo AAC sound.
 
 This is a test build.
 
-PlexRO is a working name. Plex is a trademark of Plex, Inc.; PlexRO isn't
+Matinee was called PlexRO in its first test builds (its choices and
+sign-in carry over). Plex is a trademark of Plex, Inc.; Matinee isn't
 made by Plex or connected with it.
 
 Starting
 --------
-Double-click !PlexRO: its icon (a screen with posters and a play button)
+Double-click !Matinee: its icon (a screen with posters and a play button)
 appears on the icon bar. The first time, click Select on it to sign in.
 
 Signing in
 ----------
-PlexRO has one window. Until you've signed in, it shows the sign-in page
+Matinee has one window. Until you've signed in, it shows the sign-in page
 with a four-letter code. On any computer or phone, go to plex.tv/link,
-sign in to your Plex account there, and type the code. PlexRO checks every
+sign in to your Plex account there, and type the code. Matinee checks every
 2 seconds, and carries on by itself once the code has been typed: it finds
-your servers and shows your libraries. PlexRO never sees your password. A
+your servers and shows your libraries. Matinee never sees your password. A
 code runs out after a while: New code gets another.
 
 A server on your own network can be used without plex.tv: click in
@@ -95,6 +96,8 @@ Menu on a poster:
   Save original file > the file itself, onto your disc (below)
   Test speed          how fast the server sends it (below)
   Mark watched, Mark unwatched (a show or a series: all its episodes)
+  Rate >              No rating, or 1 to 5 stars: yours, kept by the
+                      server (the Plex apps show it too)
   Remove from Continue watching   off the home page's first row (where
                       you got to is kept)
   Back, Refresh
@@ -118,7 +121,8 @@ half its height), fading into the page; over it on the left, its poster
 Beside the poster: the title; labels for the year, running time, age
 rating and scores; its genres; the summary; the buttons (Play, Resume
 from h:mm:ss, From the start, Mark watched or unwatched, Subtitles, Save
-file); and how it will play. Under them: the cast, with their photos and
+file); Your rating (five stars: click one to rate it, the one you
+gave again to take the rating away); and how it will play. Under them: the cast, with their photos and
 the parts they play (the photos arrive a moment after the page), and
 beside the cast (under it in a narrow window) who directed and wrote it,
 the studio, when it came out (or was first shown) and the file (such as
@@ -169,7 +173,7 @@ Playing
 Player on the icon's menu chooses what plays the video: Built-in (the
 default), ReelEGL or Reel.
 
-Built-in: the video plays in PlexRO's window, at the size the window is
+Built-in: the video plays in Matinee's window, at the size the window is
 (the window opens at three quarters of the screen, in the middle). Play carries on from where you stopped (as Resume); From
 the start (or Play from start) begins again. Under the picture: the title and the time, Back, Play or
 Pause, back and on 10 seconds, the position bar (click to go there),
@@ -195,7 +199,7 @@ Subtitles (when it has some), Stats and Full screen.
 Full screen is a window over the whole screen, still in the desktop:
 other programs carry on. Move the pointer to see the controls; a pointer
 left still over the picture for 2 seconds is hidden (*Set
-PlexRO$NoHidePointer 1 to keep it).
+Matinee$NoHidePointer 1 to keep it).
 
 The stats (S) are drawn in the picture at a size you can read, in a
 window or full screen: the connection's speed, how much has come in and
@@ -221,7 +225,7 @@ Play/Pause, the position bar and Normal. Drag the picture to move it,
 and the grip in its bottom right corner to make it bigger or smaller (it
 keeps the video's shape); it opens there, at that size, next time.
 Double-click the picture, click Normal, press M or Escape, or click
-PlexRO's icon, for the window again. The next episode plays on in it
+Matinee's icon, for the window again. The next episode plays on in it
 (the Up next card isn't shown; it starts after 10 seconds).
 
 It decodes a little less: the deblocking filter is skipped on the
@@ -249,16 +253,16 @@ the end of an episode the next one is offered, and starts in 10 seconds
 
 Seeking in a video the server is converting works as in a file: the
 server starts converting from the new place, which can take a few
-seconds. While one is paused, PlexRO tells the server now and then that
+seconds. While one is paused, Matinee tells the server now and then that
 it's still wanted.
 
-A log of what the player did goes to <Wimp$ScrapDir>.PlexROLog (*Set
-PlexRO$Log off to stop it, or to a file's name).
+A log of what the player did goes to <Wimp$ScrapDir>.MatineeLog (*Set
+Matinee$Log off to stop it, or to a file's name).
 
 ReelEGL or Reel: if it's running, it gets the video at once; if not,
-PlexRO starts it. The Filer must have seen the player's application
+Matinee starts it. The Filer must have seen the player's application
 (open the directory it's in, or add it to your boot sequence), or
-PlexRO can't find it.
+Matinee can't find it.
 
 The status line says how it will play:
   "Direct Play: ..."   the file itself: nothing is changed by the server
@@ -300,20 +304,30 @@ refused at once.
 The image cache
 ---------------
 The posters, backdrops and cast photos the server sends are kept on the
-disc, in Choices (PlexRO.Cache), so lists and details pages come up
+disc, in Choices (Matinee.Cache), so lists and details pages come up
 quicker the next time. It holds up to 64 MB (image_cache_mb in the
-Choices file; 0 turns it off): past that the oldest go when PlexRO
+Choices file; 0 turns it off): past that the oldest go when Matinee
 starts. Clear image cache on the icon's menu empties it, and says how
 big it was.
 
 Sign out (on the icon's menu) asks first.
 
+Who's watching (Plex Home)
+--------------------------
+If your Plex account is a Plex Home, Switch user on the icon's menu
+lists its people; the one watching is ticked, and the window's title
+says who it is. Choose someone to switch to them: their Continue
+watching, watched marks, ratings and restrictions. Someone with a PIN
+has "(PIN)" after their name: move to the right of it, type the PIN in
+the box and press Return. Matinee remembers who was watching for the
+next time.
+
 Choices
 -------
-Kept in Choices:PlexRO.Choices: the player, the quality, direct play,
+Kept in Choices:Matinee.Choices: the player, the quality, direct play,
 the poster size, the built-in player's picture, volume and hardware
-overlay, the server in use, and the tokens that sign PlexRO in to plex.tv and the
-server. Anyone who can read your Choices can use those tokens: Sign out
+overlay, the server in use, who's watching (Plex Home), and the tokens
+that sign Matinee in to plex.tv and the server. Anyone who can read your Choices can use those tokens: Sign out
 on the icon's menu removes them.
 
 Needs
@@ -332,21 +346,21 @@ Needs
 - ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), only to play in them.
 
 !Run loads the modules it needs. PThreadTicker 0.03 (UnixLib's thread
-timer) is in the application directory. PlexRO is built with UnixLib
+timer) is in the application directory. Matinee is built with UnixLib
 5.0.3.1 (riscos-unixlib).
 
-If you used an earlier test build, PlexRO starts with the built-in
+If you used an earlier test build, Matinee starts with the built-in
 player once; choose ReelEGL on the Player menu to go back to it.
 
-Debugging: *Set PlexRO$Debug 1 before starting it lets FFmpeg's network
+Debugging: *Set Matinee$Debug 1 before starting it lets FFmpeg's network
 messages through (to see them, run !RunImage from a TaskWindow).
 
 Licence
 -------
-PlexRO is free software under the GNU General Public License, version 2
+Matinee is free software under the GNU General Public License, version 2
 or later. It uses cJSON (MIT licence), FFmpeg 5.1 from riscos-ffmpeg
 (GPL v2 or later), riscos-ffmpeg's reelcore (LGPL 2.1 or later) and
 UnixLib (see its licences). The licences are in
-docs.Licences, and PlexRO's own source is in docs.source.
+docs.Licences, and Matinee's own source is in docs.source.
 
 Andrew Youll

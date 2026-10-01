@@ -1,6 +1,6 @@
 /*
- * player.h - PlexRO's built-in player: riscos-ffmpeg's reelcore playing
- * inside PlexRO's own window, as its player page.
+ * player.h - Matinee's built-in player: riscos-ffmpeg's reelcore playing
+ * inside Matinee's own window, as its player page.
  *
  * The picture fills the window above a bar of controls (Back, Play/Pause,
  * back and forward 10 s, the title, the time and a position bar, Stats and
@@ -17,10 +17,10 @@
  * The player knows nothing of Plex: ui.c tells the server where it's got
  * to, and offers the
  * next episode (player_card).
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_PLAYER_H
-#define PLEXRO_PLAYER_H
+#ifndef MATINEE_PLAYER_H
+#define MATINEE_PLAYER_H
 
 /* What player_null, player_click and player_key report */
 enum {
@@ -154,7 +154,7 @@ const char *player_skip_label(void);
 /* A short note in the bar instead of the time, for a few seconds */
 void player_note(const char *text);
 
-#ifdef PLEXRO_TEST
+#ifdef MATINEE_TEST
 int player_test_button_xy(int id, int *x, int *y);   /* screen OS units; 0 = ok */
 const char *player_test_time(void);
 int player_test_panel_rows(void);

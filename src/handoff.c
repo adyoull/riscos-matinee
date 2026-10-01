@@ -1,6 +1,6 @@
 /*
  * handoff.c - yt-dlp style JSON for Reel (see handoff.h).
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include "handoff.h"
 #include "cJSON.h"
@@ -50,7 +50,7 @@ char *handoff_json(const play_t *p, const char *title, const char *user_agent)
     if (user_agent && *user_agent)
         cJSON_AddStringToObject(h, "User-Agent", user_agent);
     cJSON_AddItemToObject(o, "http_headers", h);
-    cJSON_AddStringToObject(o, "extractor", "plexro");
+    cJSON_AddStringToObject(o, "extractor", "matinee");
     text = cJSON_Print(o);
     cJSON_Delete(o);
     return text;

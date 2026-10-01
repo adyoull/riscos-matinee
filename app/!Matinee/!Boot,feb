@@ -1,0 +1,3 @@
+| !Boot for !Matinee (a Plex client that plays through ReelEGL or Reel)
+If "<Matinee$Dir>"="" Then Set Matinee$Dir <Obey$Dir>
+IconSprites <Obey$Dir>.!Sprites

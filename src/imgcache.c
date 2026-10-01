@@ -2,7 +2,7 @@
  * imgcache.c - the server's pictures kept on disc (see imgcache.h).
  * The directories are read with OS_GBPB 10 (names, lengths and date
  * stamps), made with OS_File 8; files are read and written with stdio.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <stdint.h>
 #include <stdio.h>

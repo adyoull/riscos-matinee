@@ -18,8 +18,8 @@
  * Returns the window handle, or -1 if the Wimp refused (the caller then
  * leaves Info without a submenu).
  */
-#ifndef PLEXRO_PROGINFO_H
-#define PLEXRO_PROGINFO_H
+#ifndef MATINEE_PROGINFO_H
+#define MATINEE_PROGINFO_H
 
 #include <stdint.h>
 #include <string.h>

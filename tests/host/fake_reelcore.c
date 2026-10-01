@@ -8,7 +8,7 @@
  * follows the position, so a picture drawn can be told from the one
  * before. What the player asked for is kept in fake_rc for the checks.
  * reelcore itself is tested in riscos-ffmpeg (reel_test and the rest).
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <stdint.h>
 #include <stdio.h>

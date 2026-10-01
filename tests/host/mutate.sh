@@ -5,7 +5,7 @@
 #   REEL_SRC=<riscos-ffmpeg checkout> [QEMU=...] tests/host/mutate.sh
 set -e
 TOP=$(cd "$(dirname "$0")/../.." && pwd)
-WORK=${WORK:-/tmp/plexro-mutate}
+WORK=${WORK:-/tmp/matinee-mutate}
 REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at reel-0.1.21 (riscos14)
 export REEL_SRC
 survived=0
@@ -216,6 +216,14 @@ mutate "Skip credits only skips them" src/ui.c \
   'if (k->type == PM_CREDITS && (k->final' 'if (0 && (k->final'
 mutate "Page Up always goes to this chapter's start" src/ui.c \
   'else if (c >= 0 && t - it->chapters[c].start_ms / 1000.0 < 3)' 'else if (0)'
+
+# test19: the overlay's box, your rating, Plex Home
+mutate "the box left alone under the overlay" src/player.c \
+  '} else if (!update)\n            /* the overlay shows' '} else if (0)\n            /* the overlay shows'
+mutate "the same star doesn't take the rating away" src/ui.c \
+  'it->user_rating < r + 1 ? -1 : r);' 'it->user_rating < r + 1 ? r : r);'
+mutate "the server's token not fetched again after a switch" src/ui.c \
+  '    if (use_server(k) != 0)\n        return;\n    if (S.libs.n' '    if (0)\n        return;\n    if (S.libs.n'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

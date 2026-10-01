@@ -1,6 +1,6 @@
 /*
- * draw.c - shapes and text for PlexRO's windows (see draw.h).
- * Part of riscos-plex. GPL v2 or later.
+ * draw.c - shapes and text for Matinee's windows (see draw.h).
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <math.h>
 #include <stdint.h>
@@ -159,6 +159,19 @@ static int inside(int g, double u, double v)
         return seg_dist(u, v, 0.34, 0.14, 0.7, 0.5) <= 0.09 || seg_dist(u, v, 0.7, 0.5, 0.34, 0.86) <= 0.09;
     case G_TICK:                    /* a tick */
         return seg_dist(u, v, 0.22, 0.52, 0.42, 0.72) <= 0.08 || seg_dist(u, v, 0.42, 0.72, 0.8, 0.3) <= 0.08;
+    case G_STAR: {                  /* five points: in the polygon of its ten corners (even-odd) */
+        double px[10], py[10];
+        int in = 0;
+        for (int k = 0; k < 10; k++) {
+            double r = k & 1 ? 0.2 : 0.5, t = -1.5707963 + k * 0.6283185;
+            px[k] = r * cos(t);
+            py[k] = r * sin(t) + 0.04;
+        }
+        for (int k = 0, j = 9; k < 10; j = k++)
+            if (((py[k] > -y) != (py[j] > -y)) && (x < (px[j] - px[k]) * (-y - py[k]) / (py[j] - py[k]) + px[k]))
+                in = !in;
+        return in;
+    }
     case G_SEARCH:                  /* a magnifying glass: a ring, and a handle to the bottom right */
         a = sqrt((u - 0.42) * (u - 0.42) + (v - 0.42) * (v - 0.42));
         return (a >= 0.2 && a <= 0.3) || seg_dist(u, v, 0.63, 0.63, 0.88, 0.88) <= 0.08;

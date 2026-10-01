@@ -1,8 +1,8 @@
 /*
- * core_test.c - PlexRO's core (net, plex, caps, handoff) against
+ * core_test.c - Matinee's core (net, plex, caps, handoff) against
  * fakeplex.py, and the hand-off read back by Reel's own sources.c.
  *   core_test PORT
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include "net.h"
 #include "plex.h"
@@ -98,7 +98,7 @@ int main(int argc, char **argv)
     if (argc < 2)
         return 2;
     snprintf(base, sizeof(base), "http://127.0.0.1:%s", argv[1]);
-    net_init("PlexRO/test");
+    net_init("Matinee/test");
     plex_ctx_init(&c, "client-123", "0.1.0");
     snprintf(c.plextv, sizeof(c.plextv), "%s", base);
     server_reset();
@@ -117,11 +117,34 @@ int main(int argc, char **argv)
         CHECK(r && strstr(cJSON_GetObjectItem(r, "body")->valuestring, "strong=false"), "short code asked for");
         CHECK(r && !strcmp(hdr(r, "Content-Type"), "application/x-www-form-urlencoded"), "form type");
         CHECK(r && !strcmp(hdr(r, "X-Plex-Client-Identifier"), "client-123"), "client id sent");
-        CHECK(r && !strcmp(hdr(r, "X-Plex-Product"), "PlexRO"), "product sent");
+        CHECK(r && !strcmp(hdr(r, "X-Plex-Product"), "Matinee"), "product sent");
         CHECK(r && !strcmp(hdr(r, "Accept"), "application/json"), "asks for JSON");
         CHECK(r && !*hdr(r, "X-Plex-Token"), "no token before signing in");
     }
     cJSON_Delete(log);
+
+    /* ---- Plex Home */
+    {
+        plex_user u[PLEX_USERS];
+        plex_ctx k = c;
+        int nu = plex_home_users(&k, u, PLEX_USERS);
+        CHECK(nu == 2 && !strcmp(u[0].uuid, "u-admin") && !strcmp(u[0].title, "Andrew") && u[0].admin &&
+              u[0].protected_ && !strcmp(u[1].title, "Kids") && !u[1].protected_ && u[1].restricted,
+              "Plex Home: Andrew (the owner, a PIN) and Kids (%d: %s)", nu, k.err);
+        CHECK(plex_switch_user(&k, "u-admin", "0000") == -2 && !strcmp(k.account_token, "ACCT-TOKEN"),
+              "a wrong PIN: -2, the token kept");
+        CHECK(plex_switch_user(&k, "u-kids", "") == 0 && !strcmp(k.account_token, "KID-ACCT"), "to Kids: their token");
+        CHECK(plex_servers(&k, servers, 4) == 1 && !strcmp(servers[0].token, "KID-SRV"), "the server's token for Kids");
+        CHECK(plex_switch_user(&k, "u-admin", "1234") == 0 && !strcmp(k.account_token, "ACCT-TOKEN"),
+              "back to Andrew with his PIN");
+        log = server_log();
+        {
+            const cJSON *r = last(log, "/api/v2/home/users/u-admin/switch");
+            CHECK(r && !strcmp(cJSON_GetObjectItem(r, "method")->valuestring, "POST") && !strcmp(qv(r, "pin"), "1234") &&
+                  !strcmp(hdr(r, "X-Plex-Token"), "KID-ACCT"), "POST .../switch?pin=1234, as the user switching");
+        }
+        cJSON_Delete(log);
+    }
 
     /* ---- servers */
     n = plex_servers(&c, servers, 4);
@@ -211,7 +234,7 @@ int main(int argc, char **argv)
         snprintf(want, sizeof(want), "%s/library/parts/11/101/file.mp4", base);
         CHECK(!strcmp(p.url, want) && !strstr(p.url, "Token"), "direct url %s (token in the headers only)", p.url);
         CHECK(!strcmp(p.key, "plex:MID/101"), "carry-on key %s", p.key);
-        json = handoff_json(&p, "Big Buck Bunny \xe2\x80\x93 Director\xe2\x80\x99s cut", "PlexRO/test");
+        json = handoff_json(&p, "Big Buck Bunny \xe2\x80\x93 Director\xe2\x80\x99s cut", "Matinee/test");
         CHECK(json != NULL, "json");
         n = sources_parse(json, strlen(json), src, 2, &hls);
         CHECK(n == 1, "Reel reads one source from it, got %d", n);
@@ -220,7 +243,7 @@ int main(int argc, char **argv)
             CHECK(src[0].headers && strstr(src[0].headers, "X-Plex-Token: SRV-TOKEN\r\n") &&
                   strstr(src[0].headers, "X-Plex-Client-Identifier: client-123\r\n") &&
                   !strstr(src[0].headers, "Accept:"), "Reel's headers: %s", src[0].headers);
-            CHECK(src[0].user_agent && !strcmp(src[0].user_agent, "PlexRO/test"), "Reel's user agent");
+            CHECK(src[0].user_agent && !strcmp(src[0].user_agent, "Matinee/test"), "Reel's user agent");
             CHECK(src[0].title && !strcmp(src[0].title, "Big Buck Bunny - Director's cut"),
                   "title in Latin-1: %s", src[0].title);
             CHECK(src[0].key && !strcmp(src[0].key, "plex:MID/101"), "Reel's key");
@@ -305,6 +328,14 @@ int main(int argc, char **argv)
               (unsigned char)jpeg[0] == 0xFF && (unsigned char)jpeg[1] == 0xD8, "poster");
         free(jpeg);
         CHECK(plex_mark(&c, &films.v[0], 1) == 0 && plex_mark(&c, &films.v[0], 0) == 0, "mark");
+        CHECK(plex_rate(&c, &films.v[0], 7) == 0, "rate");
+        {
+            plex_list d;
+            CHECK(plex_details(&c, &films.v[0], &d) == 0 && d.n == 1 && d.v[0].user_rating == 7, "your rating comes back");
+            if (d.n)
+                plex_list_free(&d);
+            CHECK(plex_rate(&c, &films.v[0], -1) == 0, "the rating taken away");
+        }
         log = server_log();
         {
             const cJSON *r = last(log, "/photo/:/transcode");

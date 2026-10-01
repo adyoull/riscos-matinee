@@ -1,18 +1,18 @@
 /*
- * net.h - HTTP(S) requests for PlexRO, through FFmpeg's avio.
+ * net.h - HTTP(S) requests for Matinee, through FFmpeg's avio.
  *
  * On RISC OS https goes through the AcornSSL module (riscos-ffmpeg's
  * patch 0018, tls_acornssl.c), the same code Reel plays web addresses
- * with, so PlexRO has no TLS code of its own. On Linux (the host tests)
+ * with, so Matinee has no TLS code of its own. On Linux (the host tests)
  * it is the system FFmpeg.
  *
  * Every call blocks until it's done or times out: the front end shows the
  * hourglass meanwhile, and reads big things (a film being saved) a piece
  * at a time from null events.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_NET_H
-#define PLEXRO_NET_H
+#ifndef MATINEE_NET_H
+#define MATINEE_NET_H
 #include <stddef.h>
 #include <stdint.h>
 

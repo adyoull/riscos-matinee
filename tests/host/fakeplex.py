@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """fakeplex.py PORT - a stand-in for plex.tv and a Plex Media Server, for
-the host tests. It answers the requests PlexRO makes with fixed JSON, and
+the host tests. It answers the requests Matinee makes with fixed JSON, and
 records every request (method, path, query, headers, body); GET /_log
 returns the record as JSON, POST /_reset clears it.
 
@@ -13,6 +13,17 @@ from urllib.parse import urlsplit, parse_qs
 PORT = int(sys.argv[1])
 ACCOUNT = "ACCT-TOKEN"
 SERVER = "SRV-TOKEN"
+KID = "KID-ACCT"                # Plex Home: the account token of the user "Kids"
+KID_SERVER = "KID-SRV"          # and the server's token for them
+SERVERS = (SERVER, KID_SERVER)
+ACCOUNTS = (ACCOUNT, KID)
+HOME_USERS = [
+    {"id": 1, "uuid": "u-admin", "title": "Andrew", "username": "andrew", "admin": True, "guest": False,
+     "restricted": False, "protected": True, "thumb": "https://plex.tv/users/1/avatar"},
+    {"id": 2, "uuid": "u-kids", "title": "Kids", "username": "", "admin": False, "guest": False,
+     "restricted": True, "protected": False, "thumb": "https://plex.tv/users/2/avatar"},
+]
+RATED = {}                      # rating key -> the user's rating (PUT /:/rate)
 LOG = []
 LOCK = threading.Lock()
 PIN_POLLS = {"n": 0}
@@ -22,7 +33,7 @@ PART = bytes((i * 7 + (i >> 11)) & 255 for i in range(5 * 1024 * 1024))
 def jpeg(url):
     """A stand-in JPEG: the right first and last bytes, and the picture's
     address inside (so each poster is different)."""
-    return b"\xff\xd8\xff\xe0" + b"PLEXRO-TEST-JPEG" + url.encode() + b"\xff\xd9"
+    return b"\xff\xd8\xff\xe0" + b"MATINEE-TEST-JPEG" + url.encode() + b"\xff\xd9"
 
 
 ONDECK_GONE = set()          # rating keys taken off Continue watching
@@ -158,9 +169,21 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {})
         self.record(body)
         if p == "/playQueues":
-            if self.token() != SERVER:
+            if self.token() not in SERVERS:
                 return self.send(401, {})
             return self.post_playqueue(parse_qs(urlsplit(self.path).query))
+        if p.startswith("/api/v2/home/users/") and p.endswith("/switch"):
+            if self.token() not in ACCOUNTS:
+                return self.send(401, {})
+            uuid = p.split("/")[5]
+            pin = (parse_qs(urlsplit(self.path).query).get("pin") or [""])[0]
+            if uuid == "u-admin":
+                if pin != "1234":
+                    return self.send(403, {"errors": [{"code": 1041, "message": "Invalid PIN"}]})
+                return self.send(201, {"id": 1, "uuid": "u-admin", "title": "Andrew", "authToken": ACCOUNT})
+            if uuid == "u-kids":
+                return self.send(201, {"id": 2, "uuid": "u-kids", "title": "Kids", "authToken": KID})
+            return self.send(404, {})
         if p == "/api/v2/pins":
             PIN_POLLS["n"] = 0
             return self.send(201, {"id": 4242, "code": "ABCD", "authToken": None})
@@ -178,8 +201,13 @@ class H(BaseHTTPRequestHandler):
         body = self.rfile.read(n)
         u = urlsplit(self.path)
         self.record(body)
-        if self.token() != SERVER:
+        if self.token() not in SERVERS:
             return self.send(401, {})
+        if u.path == "/:/rate":
+            q = parse_qs(u.query)
+            r = float(q["rating"][0])
+            RATED[q["key"][0]] = r
+            return self.send(200, raw=b"")
         if u.path == "/actions/removeFromContinueWatching":
             ONDECK_GONE.add(parse_qs(u.query).get("ratingKey", [""])[0])
             return self.send(200, raw=b"")
@@ -205,15 +233,19 @@ class H(BaseHTTPRequestHandler):
                                    "authToken": ACCOUNT if PIN_POLLS["n"] >= 2 else None})
         if p.startswith("/api/v2/pins/"):
             return self.send(404, {"errors": [{"code": 1020, "message": "Code not found or expired"}]})
+        if p == "/api/v2/home/users":
+            if self.token() not in ACCOUNTS:
+                return self.send(401, {})
+            return self.send(200, {"id": 77, "name": "Youll", "users": HOME_USERS})
         if p == "/api/v2/resources":
-            if self.token() != ACCOUNT:
+            if self.token() not in ACCOUNTS:
                 return self.send(401, {})
             base = "127.0.0.1"
             return self.send(200, [
                 {"name": "Living room TV", "provides": "player", "clientIdentifier": "TV1",
                  "connections": []},
                 {"name": "Attic", "provides": "server", "clientIdentifier": "MID", "owned": True,
-                 "accessToken": SERVER,
+                 "accessToken": SERVER if self.token() == ACCOUNT else KID_SERVER,
                  "connections": [
                      {"protocol": "https", "address": "10.9.9.9", "port": 32400, "local": False,
                       "relay": True, "uri": "https://10-9-9-9.relay.plex.direct:32400"},
@@ -227,11 +259,11 @@ class H(BaseHTTPRequestHandler):
         if p == "/identity":
             return self.send(200, {"MediaContainer": {"machineIdentifier": "MID", "version": "1.41"}})
         if p == "/":
-            if self.token() != SERVER:
+            if self.token() not in SERVERS:
                 return self.send(401, {})
             return self.send(200, {"MediaContainer": {"friendlyName": "Attic"}})
         # everything below needs the server's token
-        if self.token() != SERVER:
+        if self.token() not in SERVERS:
             return self.send(401, {})
         if p == "/library/sections":
             return self.send(200, {"MediaContainer": {"size": 3, "title1": "Plex Library", "Directory": [
@@ -290,7 +322,7 @@ class H(BaseHTTPRequestHandler):
             shows = [{"ratingKey": "20", "key": "/library/metadata/20/children", "type": "show",
                       "title": "Space Show", "childCount": 2, "thumb": "/library/metadata/20/thumb/1"}] \
                 if words in "space show" else []
-            hubs = [{"type": "episode", "hubIdentifier": "episode", "Metadata": eps},   # not in PlexRO's order
+            hubs = [{"type": "episode", "hubIdentifier": "episode", "Metadata": eps},   # not in Matinee's order
                     {"type": "actor", "hubIdentifier": "actor", "Metadata": [{"tag": "Nobody"}]},
                     {"type": "movie", "hubIdentifier": "movie", "Metadata": films},
                     {"type": "show", "hubIdentifier": "show", "Metadata": shows}]
@@ -331,6 +363,8 @@ class H(BaseHTTPRequestHandler):
                 if m["ratingKey"] == rk:
                     m = json.loads(json.dumps(m))
                     m["Media"][0]["Part"][0]["Stream"] = streams(m)
+                    if RATED.get(rk, -1) > 0:
+                        m["userRating"] = RATED[rk]
                     if q.get("includeMarkers") == ["1"] and m["type"] == "episode":
                         m["Marker"] = [{"id": 1, "type": "intro", "startTimeOffset": 2000, "endTimeOffset": 8000},
                                        {"id": 2, "type": "commercial", "startTimeOffset": 9000, "endTimeOffset": 10000},

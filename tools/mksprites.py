@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Write !PlexRO's sprite files: '!plexro' (the icon bar and Filer icon) and
-'sm!plexro' (small), 32 bpp (TBGR) new-format sprites with a 1 bpp mask,
+"""Write !Matinee's sprite files: '!matinee' (the icon bar and Filer icon) and
+'sm!matinee' (small), 32 bpp (TBGR) new-format sprites with a 1 bpp mask,
 as riscos-ffmpeg's mksprites.py makes Reel's.
 
   mksprites.py OUT        !Sprites: 34 x 34 and 17 x 17 at 90 dpi
@@ -139,9 +139,9 @@ def main():
     hi = args and args[0] == "--hi"
     if hi:
         args = args[1:]
-        sprites = [sprite("!plexro", 68, 180), sprite("sm!plexro", 34, 180)]
+        sprites = [sprite("!matinee", 68, 180), sprite("sm!matinee", 34, 180)]
     else:
-        sprites = [sprite("!plexro", 34, 90), sprite("sm!plexro", 17, 90)]
+        sprites = [sprite("!matinee", 34, 90), sprite("sm!matinee", 17, 90)]
     body = b"".join(sprites)
     # the file is a sprite area without its first word: count, first, free
     area = struct.pack("<iii", len(sprites), 16, 16 + len(body)) + body

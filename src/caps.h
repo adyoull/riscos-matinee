@@ -1,5 +1,5 @@
 /*
- * caps.h - what Reel can play on RISC OS, and how PlexRO asks for it.
+ * caps.h - what Reel can play on RISC OS, and how Matinee asks for it.
  *
  * One table of limits (caps_t) is used twice:
  *   - to decide whether a file can be played as it is (direct play: Reel
@@ -13,10 +13,10 @@
  * size; 8-bit 4:2:0 only (High 10 and 4:4:4 are far too slow); 1080p up to
  * 30 pictures a second, 720p up to 60. Reel mixes any sound down to stereo
  * itself, so direct play takes 5.1 AC-3 or AAC as it is.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_CAPS_H
-#define PLEXRO_CAPS_H
+#ifndef MATINEE_CAPS_H
+#define MATINEE_CAPS_H
 #include <stddef.h>
 #include "plex.h"
 

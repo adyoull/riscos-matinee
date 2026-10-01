@@ -1,5 +1,5 @@
 /*
- * ui.c - PlexRO's desktop front end.
+ * ui.c - Matinee's desktop front end.
  *
  * An icon on the icon bar. Select on it opens the browser (or, before
  * signing in, the sign-in window); Menu gives:
@@ -26,7 +26,7 @@
  * (chosen on the server, which burns them into a converted stream).
  *
  * Playing: the yt-dlp style JSON that Reel reads (handoff.c) is written to
- * <Wimp$ScrapDir>.PlexRO.PlayN, typed as video/mp4, and given to the
+ * <Wimp$ScrapDir>.Matinee.PlayN, typed as video/mp4, and given to the
  * chosen player with Message_DataOpen, sent to that task alone. If it isn't
  * running (or doesn't claim it), the player is started with the file:
  * *Run <ReelEGL$Dir>.!Run <file>.
@@ -39,11 +39,11 @@
  * (JPEG_PlotScaled with output switched to the sprite) and plotted with
  * Wimp_PlotIcon.
  *
- * Choices: Choices:PlexRO.Choices, written to <Choices$Write>.PlexRO.
- * PlexRO$ChoicesDir (a directory) replaces both, for the host test.
+ * Choices: Choices:Matinee.Choices, written to <Choices$Write>.Matinee.
+ * Matinee$ChoicesDir (a directory) replaces both, for the host test.
  *
  * Plain Wimp SWIs, as in Reel: no Toolbox, no Templates.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <errno.h>
 #include <stdarg.h>
@@ -112,8 +112,8 @@
 #define MSG_PREQUIT     8
 #define MSG_MODECHANGE  0x400C1
 
-#define APP       "PlexRO"
-#define ICON      "!plexro"
+#define APP       "Matinee"
+#define ICON      "!matinee"
 #define PURPOSE   "Plex client"
 
 /* The browser's layout, OS units: posters are 2:3, in three sizes */
@@ -136,7 +136,7 @@ static int libbar_h(void);
 #define BTN       64                /* a button's height */
 
 /* The details page */
-#define DET_BTN_MAX 8
+#define DET_BTN_MAX 14
 
 #define SAVE_STEP (256 * 1024)      /* bytes saved each null event */
 #define FILE_MAX  4294967295LL      /* 4GB-1: the biggest file FileCore holds */
@@ -148,7 +148,7 @@ static int libbar_h(void);
 
 #ifdef __riscos__
 /* UnixLib: the heap in a dynamic area of its own (the posters live there) */
-const char *const __dynamic_da_name = "PlexRO Heap";
+const char *const __dynamic_da_name = "Matinee Heap";
 int __dynamic_da_max_size = 512 << 20;    /* the posters, and the player's pictures and packets */
 #endif
 
@@ -198,6 +198,11 @@ static struct {
 
     plex_server servers[SERVERS_MAX];
     int nservers;
+    /* Plex Home: the people on the account (nusers -1: not asked yet), and
+       who's watching (Choices) */
+    plex_user users[PLEX_USERS];
+    int nusers;
+    char user_uuid[64], user_title[64];
 
     /* sign-in */
     long pin_id;
@@ -490,7 +495,13 @@ static FILE *choices_open(int write)
         make_dir("<Choices$Write>." APP);
         snprintf(path, sizeof(path), "<Choices$Write>." APP ".Choices");
     } else {
+        FILE *f;
         snprintf(path, sizeof(path), "Choices:" APP ".Choices");
+        if ((f = fopen(path, "r")) != NULL)
+            return f;
+        /* the test builds were called PlexRO: their sign-in and choices
+           carry over (written as Matinee's from then on) */
+        snprintf(path, sizeof(path), "Choices:PlexRO.Choices");
     }
     return fopen(path, write ? "w" : "r");
 }
@@ -506,11 +517,11 @@ static void choices_save(void)
             "client_id %s\naccount_token %s\nserver_base %s\nserver_token %s\n"
             "server_name %s\nserver_id %s\nserver_local %d\nplayer %s\nquality %d\ndirect_play %d\n"
             "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\nimage_cache_mb %d\n"
-            "keep_on_top %d\nmini_width %d\nmini_right %d\nmini_bottom %d\n",
+            "keep_on_top %d\nmini_width %d\nmini_right %d\nmini_bottom %d\nuser_uuid %s\nuser_title %s\n",
             S.px.client_id, S.px.account_token, S.px.base, S.px.token,
             S.px.server_name, S.px.server_id, S.px.local, player_names[S.player], S.quality, S.direct,
             S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5), S.cache_mb,
-            player_ontop(), mw, mr, mb);
+            player_ontop(), mw, mr, mb, S.user_uuid, S.user_title);
     fclose(f);
 }
 
@@ -538,6 +549,7 @@ static void choices_load(void)
     S.quality = Q_720;
     S.direct = 1;
     S.psize = 1;                    /* Medium */
+    S.nusers = -1;                  /* Plex Home: not asked yet */
     S.overlay = 1;
     S.pic_mode = PIC_FIT;
     S.volume = 1;
@@ -587,9 +599,9 @@ static void choices_load(void)
         S.player = player;
     if (!*id) {                     /* made once: the server knows us by it */
         unsigned a = (unsigned)time(NULL), b = (unsigned)now_cs() * 2654435761u ^ (unsigned)clock();
-        snprintf(id, sizeof(id), "plexro-%08x%08x", a, b);
+        snprintf(id, sizeof(id), "matinee-%08x%08x", a, b);
     }
-    plex_ctx_init(c, id, PLEXRO_VERSION);
+    plex_ctx_init(c, id, MATINEE_VERSION);
     {
         /* the name the server shows for this computer (the dashboard, the
            other apps' "play on"): the network's host name, if it has one */
@@ -602,6 +614,10 @@ static void choices_load(void)
         while (fgets(line, sizeof(line), f)) {
             if (value(line, "account_token", v, sizeof(v)))
                 snprintf(c->account_token, sizeof(c->account_token), "%s", v);
+            else if (value(line, "user_uuid", v, sizeof(v)))
+                snprintf(S.user_uuid, sizeof(S.user_uuid), "%s", v);
+            else if (value(line, "user_title", v, sizeof(v)))
+                snprintf(S.user_title, sizeof(S.user_title), "%s", v);
             else if (value(line, "server_base", v, sizeof(v)))
                 snprintf(c->base, sizeof(c->base), "%s", v);
             else if (value(line, "server_token", v, sizeof(v)))
@@ -2446,7 +2462,12 @@ static void set_where(void)
             snprintf(t + n, sizeof(t) - n, " > %s", S.det.v[0].title);
         latin1(t, S.where, sizeof(S.where));
         latin1(S.px.server_name, t, sizeof(t));
-        snprintf(S.title, sizeof(S.title), "%s: %s", APP, t);
+        if (*S.user_title && S.nusers > 1) {        /* Plex Home: who's watching */
+            char u[80];
+            latin1(S.user_title, u, sizeof(u));
+            snprintf(S.title, sizeof(S.title), "%s: %s (%s)", APP, t, u);
+        } else
+            snprintf(S.title, sizeof(S.title), "%s: %s", APP, t);
     }
     if (S.browser_open) {
         _kernel_swi_regs r;         /* the title bar, redrawn (RISC OS 5) */
@@ -2722,8 +2743,12 @@ static void tab_open(int k)
         S.nhist = 0;
 }
 
+static int users_get(void);
+
 static void browser_top(void)
 {
+    if (S.nusers < 0 && *S.px.account_token)
+        users_get();                /* Plex Home: who's watching, for the title */
     S.nhist = 0;
     if (S.have_list) {
         plex_list_free(&S.list);
@@ -2819,7 +2844,7 @@ static int det_cred_y, det_cast_y;              /* the credits' first baseline; 
 static int det_wd = 1000, art_w, art_h;         /* the width laid out for; the backdrop's box */
 static int art_fw, art_fh, art_due;             /* the size fetched; when to fetch it at the new size (0: not) */
 static int det_pw, det_ph, det_pfw;             /* the poster's box (OS units), the width fetched */
-static int det_tx, det_title_y, det_bx;         /* the text column's left; the title's baseline; buttons' left */
+static int det_tx, det_title_y, det_bx, det_stars_x, det_stars_y;       /* the text column's left; the title's baseline; buttons' left */
 static int det_cred_x;                          /* the credits' labels' left */
 
 static const plex_item *det_item(void)
@@ -3265,6 +3290,23 @@ static void det_layout(void)
     if (it->part_key && it->part_size <= FILE_MAX)
         det_button(D_SAVE, "Save file", &x, &y);
     y -= BTN + 20;
+    /* your rating: five stars (click one to rate; the one you gave, to take it away) */
+    if (it->rating_key && S.nbtn + 5 <= DET_BTN_MAX) {
+        det_stars_y = y - 8;
+        det_stars_x = det_tx + draw_width(D_BODY, "Your rating") + 24;
+        for (int k = 0; k < 5; k++) {
+            S.btn[S.nbtn].id = D_STAR + k;
+            S.btn[S.nbtn].x0 = det_stars_x + k * 56;
+            S.btn[S.nbtn].x1 = det_stars_x + k * 56 + 48;
+            S.btn[S.nbtn].y1 = det_stars_y;
+            S.btn[S.nbtn].y0 = det_stars_y - 48;
+            snprintf(S.btn[S.nbtn].label, sizeof(S.btn[0].label), "%s",
+                     it->user_rating >= 2 * (k + 1) - 0.5 ? "*" : "-");
+            S.nbtn++;
+        }
+        y -= 48 + 44;
+    } else
+        det_stars_y = 0;
     /* how it will play (and that it has no subtitles) */
     caps_for(S.quality, &k);
     k.own_subs = S.player == PLAYER_BUILTIN;
@@ -3316,6 +3358,12 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
         int x0 = ox + S.btn[i].x0, y0 = oy + S.btn[i].y0, x1 = ox + S.btn[i].x1, y1 = oy + S.btn[i].y1;
         unsigned bg = S.btn[i].id == D_PLAY ? C_ACCENT : C_CARD;
         int tx = x0 + 32;
+        if (S.btn[i].id >= D_STAR && S.btn[i].id < D_STAR + 5) {      /* a star: lit, or grey */
+            if (S.btn[i].id == D_STAR)
+                draw_text_over(D_BODY, ox + det_tx, y0 + 12, "Your rating", C_SUB);
+            draw_glyph(G_STAR, x0, y0, x1, y1, S.btn[i].label[0] == '*' ? C_GOLD : C_CARD, DRAW_NONE);
+            continue;
+        }
         draw_round(x0, y0, x1, y1, BTN / 2, bg, DRAW_NONE);
         if (S.btn[i].id == D_PLAY) {            /* a play triangle */
             draw_glyph(G_PLAY, tx - 4, y0 + 16, tx + 28, y1 - 16, C_TEXT, bg);
@@ -3752,6 +3800,8 @@ static void sign_out(void)
         plex_list_free(&S.libs);    /* no tabs until signed in again */
     c->account_token[0] = c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
     S.nservers = 0;
+    S.nusers = -1;
+    S.user_uuid[0] = S.user_title[0] = 0;
     if (S.browser_open)
         close_window(S.browser_w);
     S.browser_open = 0;
@@ -4714,7 +4764,7 @@ typedef struct {
 typedef struct { wmenu_t m; char text[16][80]; int n; } menu_t;
 
 static menu_t m_bar, m_servers, m_player, m_quality, m_size, m_item, m_subs;
-static menu_t m_play, m_audio, m_vol, m_pic, m_psubs, m_chap;
+static menu_t m_play, m_audio, m_vol, m_pic, m_psubs, m_chap, m_users, m_pin, m_rate;
 
 static void menu_begin(menu_t *m, const char *title)
 {
@@ -4768,6 +4818,25 @@ static void bar_menu_build(void)
     if (!S.nservers)
         menu_add(&m_servers, "(none found)", 0, 1, -1, 0);
     menu_end(&m_servers);
+    /* Plex Home: its people; one with a PIN has a writable PIN item to its right */
+    menu_begin(&m_pin, "PIN");
+    menu_add(&m_pin, "", 0, 0, -1, 0);
+    m_pin.m.item[0].flags |= 4;                 /* writable */
+    m_pin.m.item[0].data[1] = (int)(intptr_t)"A0-9;D*";
+    m_pin.m.item[0].iflags |= 0x07000000u;
+    m_pin.m.width = 200;
+    m_pin.text[0][0] = 0;
+    menu_end(&m_pin);
+    menu_begin(&m_users, "Who's watching");
+    for (int i = 0; i < S.nusers && i < 15; i++) {
+        char t[80];
+        int cur = !strcmp(S.users[i].uuid, S.user_uuid);
+        snprintf(t, sizeof(t), "%s%s", S.users[i].title, S.users[i].protected_ && !cur ? " (PIN)" : "");
+        menu_add(&m_users, t, cur, 0, S.users[i].protected_ && !cur ? (int)(intptr_t)&m_pin.m : -1, 0);
+    }
+    if (S.nusers <= 0)
+        menu_add(&m_users, "(no Plex Home)", 0, 1, -1, 0);
+    menu_end(&m_users);
     menu_begin(&m_player, "Player");
     for (int i = 0; i < PLAYER_COUNT; i++)
         menu_add(&m_player, player_names[i], S.player == i, 0, -1, i == PLAYER_BUILTIN);
@@ -4785,6 +4854,7 @@ static void bar_menu_build(void)
     menu_add(&m_bar, "Info", 0, 0, S.proginfo, 0);
     menu_add(&m_bar, "Sign in...", 0, 0, -1, 0);
     menu_add(&m_bar, "Servers", 0, !signed_in, signed_in ? (int)(intptr_t)&m_servers.m : -1, 0);
+    menu_add(&m_bar, "Switch user", 0, S.nusers < 2, S.nusers >= 2 ? (int)(intptr_t)&m_users.m : -1, 0);
     menu_add(&m_bar, "Player", 0, 0, (int)(intptr_t)&m_player.m, 0);
     menu_add(&m_bar, "Quality", 0, 0, (int)(intptr_t)&m_quality.m, 0);
     menu_add(&m_bar, "Poster size", 0, 0, (int)(intptr_t)&m_size.m, 0);
@@ -4805,6 +4875,8 @@ static void bar_menu_open(int x)
 {
     if (*S.px.account_token && !S.nservers)
         servers_get();              /* for the Servers submenu */
+    if (*S.px.account_token && S.nusers < 0)
+        users_get();                /* and Switch user */
     bar_menu_build();
     S.menu_kind = 1;
     S.menu_x = x;
@@ -4900,6 +4972,22 @@ static void item_menu_build(void)
     menu_add(&m_item, "Test speed", 0, !S.sv_ok || S.save.active || S.speed.active, -1, 1);
     menu_add(&m_item, "Mark watched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 0);
     menu_add(&m_item, "Mark unwatched", 0, !it || !it->rating_key || it->kind == PI_OTHER, -1, 0);
+    {
+        /* yours: the details' if they're this one's (lists may leave it out) */
+        double ur = it && det_is(it) ? det_item()->user_rating : it ? it->user_rating : 0;
+        int can = it && it->rating_key && it->type &&
+                  (!strcmp(it->type, "movie") || !strcmp(it->type, "episode") || !strcmp(it->type, "show") ||
+                   !strcmp(it->type, "season"));
+        menu_begin(&m_rate, "Rate");
+        menu_add(&m_rate, "No rating", ur <= 0, 0, -1, 1);
+        for (int k = 1; k <= 5; k++) {
+            char t[16];
+            snprintf(t, sizeof(t), "%d star%s", k, k == 1 ? "" : "s");
+            menu_add(&m_rate, t, ur > 2 * k - 1 && ur < 2 * k + 1, 0, -1, 0);
+        }
+        menu_end(&m_rate);
+        menu_add(&m_item, "Rate", 0, !can, can ? (int)(intptr_t)&m_rate.m : -1, 0);
+    }
     menu_add(&m_item, "Remove from Continue watching", 0, !it || !it->rating_key || it->kind != PI_VIDEO || !in_continue(it),
              -1, 1);
     menu_add(&m_item, "Back", 0, S.nhist == 0, -1, 0);
@@ -5267,6 +5355,107 @@ static void mark(const plex_item *it, int watched)
     set_status(watched ? "Marked as watched." : "Marked as not watched.");
 }
 
+/* Your rating (0..10, 2 a star; -1 none), on the server, and wherever it's shown */
+static void rate(const plex_item *it, int r)
+{
+    char key[64];
+    if (!it->rating_key)
+        return;
+    snprintf(key, sizeof(key), "%s", it->rating_key);     /* it may be in a list redrawn below */
+    hourglass(1);
+    if (plex_rate(&S.px, it, r) != 0) {
+        hourglass(0);
+        report("Can't rate it: %s", S.px.err);
+        return;
+    }
+    hourglass(0);
+    for (int i = 0; S.have_list && i < S.list.n; i++)
+        if (S.list.v[i].rating_key && !strcmp(S.list.v[i].rating_key, key))
+            S.list.v[i].user_rating = r > 0 ? r : 0;
+    if (S.have_det && S.det.n && S.det.v[0].rating_key && !strcmp(S.det.v[0].rating_key, key)) {
+        S.det.v[0].user_rating = r > 0 ? r : 0;
+        det_repaint();
+    }
+    if (r > 0)
+        set_status("Rated %d star%s.", r / 2, r == 2 ? "" : "s");
+    else
+        set_status("Rating taken away.");
+}
+
+/* ---- Plex Home: who's watching ------------------------------------------------- */
+
+/* The account's people (once; again after a switch). -1: not a Plex Home, or plex.tv didn't answer */
+static int users_get(void)
+{
+    int n;
+    if (!*S.px.account_token)
+        return S.nusers = 0;
+    hourglass(1);
+    n = plex_home_users(&S.px, S.users, PLEX_USERS);
+    hourglass(0);
+    S.nusers = n < 0 ? 0 : n;
+    if (n > 0 && !*S.user_uuid)                 /* signed in as the account's owner */
+        for (int i = 0; i < n; i++)
+            if (S.users[i].admin) {
+                snprintf(S.user_uuid, sizeof(S.user_uuid), "%s", S.users[i].uuid);
+                snprintf(S.user_title, sizeof(S.user_title), "%s", S.users[i].title);
+            }
+    return n;
+}
+
+/* Switches to user i (pin: theirs, or ""): their account token, then the
+   same server with their token for it (or another of theirs), and the
+   home page again */
+static void switch_user(int i, const char *pin)
+{
+    plex_ctx c = S.px;
+    char srv[64];
+    int e, k;
+    if (i < 0 || i >= S.nusers)
+        return;
+    if (S.users[i].protected_ && !*pin) {
+        report("%s has a PIN: move to the right of the name and type it, then press Return.", S.users[i].title);
+        return;
+    }
+    builtin_stop(1);
+    hourglass(1);
+    e = plex_switch_user(&c, S.users[i].uuid, pin);
+    hourglass(0);
+    if (e == -2) {
+        report("That isn't %s's PIN.", S.users[i].title);
+        return;
+    }
+    if (e != 0) {
+        report("Can't switch to %s: %s", S.users[i].title, c.err);
+        return;
+    }
+    snprintf(S.px.account_token, sizeof(S.px.account_token), "%s", c.account_token);
+    snprintf(S.user_uuid, sizeof(S.user_uuid), "%s", S.users[i].uuid);
+    snprintf(S.user_title, sizeof(S.user_title), "%s", S.users[i].title);
+    snprintf(srv, sizeof(srv), "%s", S.px.server_id);
+    choices_save();
+    /* the server's token is per user */
+    if (servers_get() <= 0)
+        return;
+    for (k = 0; k < S.nservers && strcmp(S.servers[k].id, srv); k++)
+        ;
+    if (k == S.nservers) {
+        report("%s can't use %s: choose one of their servers on the Servers menu.", S.user_title,
+               S.px.server_name);
+        S.px.base[0] = S.px.token[0] = 0;
+        choose_server();
+        return;
+    }
+    if (use_server(k) != 0)
+        return;
+    if (S.libs.n || S.libs.v)
+        plex_list_free(&S.libs);    /* their libraries */
+    cache_free_all();
+    S.nhist = 0;
+    browser_top();
+    set_status("Now watching as %s.", S.user_title);
+}
+
 /* 1 if it's time to stop */
 static int menu_select(const int *sel)
 {
@@ -5280,6 +5469,15 @@ static int menu_select(const int *sel)
         case MB_SERVERS:
             if (sel[1] >= 0 && sel[1] < S.nservers && use_server(sel[1]) == 0)
                 browser_top();
+            break;
+        case MB_USERS:
+            if (sel[1] >= 0 && sel[1] < S.nusers && strcmp(S.users[sel[1]].uuid, S.user_uuid)) {
+                char pin[16];
+                snprintf(pin, sizeof(pin), "%s", sel[2] == 0 ? m_pin.text[0] : "");
+                pin[strcspn(pin, "\r\n")] = 0;
+                m_pin.text[0][0] = 0;
+                switch_user(sel[1], pin);
+            }
             break;
         case MB_PLAYER:
             if (sel[1] >= 0 && sel[1] < PLAYER_COUNT) {
@@ -5309,7 +5507,7 @@ static int menu_select(const int *sel)
             break;
         }
         case MB_SIGNOUT:            /* easily chosen by mistake: asked first */
-            if (ask("Sign out? PlexRO forgets the server and your sign-in, and you'll need a new code "
+            if (ask("Sign out? Matinee forgets the server and your sign-in, and you'll need a new code "
                     "from plex.tv/link (or the server's token) to sign in again."))
                 sign_out();
             break;
@@ -5369,6 +5567,10 @@ static int menu_select(const int *sel)
         case MI_UNWATCHED:
             if (it)
                 mark(it, sel[0] == MI_WATCHED);
+            break;
+        case MI_RATE:
+            if (it && sel[1] >= 0 && sel[1] <= 5)
+                rate(det_is(it) ? det_item() : it, sel[1] ? 2 * sel[1] : -1);
             break;
         case MI_BACK:
             go_back();
@@ -5659,6 +5861,11 @@ static void det_action(int id, int x, int y)
     case D_WATCHED:
         mark(it, !it->watched);
         break;
+    case D_STAR: case D_STAR + 1: case D_STAR + 2: case D_STAR + 3: case D_STAR + 4: {
+        int r = 2 * (id - D_STAR + 1);
+        rate(it, it->user_rating > r - 1 && it->user_rating < r + 1 ? -1 : r);   /* the same star: none */
+        break;
+    }
     case D_SUBS:
         subs_menu_build();
         S.menu_kind = 3;
@@ -6105,7 +6312,7 @@ static int already_running(void)
     return find_task(APP) != 0;
 }
 
-int plexro_main(int argc, char **argv)
+int matinee_main(int argc, char **argv)
 {
     static const int messages[] = { MSG_DATASAVE, MSG_DATASAVEACK, MSG_DATALOAD, MSG_DATALOADACK,
                                     MSG_DATAOPEN, MSG_PREQUIT, MSG_MODECHANGE, 0 };
@@ -6131,7 +6338,7 @@ int plexro_main(int argc, char **argv)
         swi(Wimp_CloseDown, &r);
         return 0;
     }
-    snprintf(S.agent, sizeof(S.agent), APP "/" PLEXRO_VERSION " (RISC OS)");
+    snprintf(S.agent, sizeof(S.agent), APP "/" MATINEE_VERSION " (RISC OS)");
     net_init(S.agent);
     choices_load();
     choices_save();                 /* the client id is kept from the start */
@@ -6141,10 +6348,10 @@ int plexro_main(int argc, char **argv)
     snprintf(S.title, sizeof(S.title), APP);
     make_windows();
     iconbar_icon();
-    S.proginfo = proginfo_create(APP, PURPOSE, APP_AUTHOR, PLEXRO_VERSION " (" PLEXRO_DATE ")");
+    S.proginfo = proginfo_create(APP, PURPOSE, APP_AUTHOR, MATINEE_VERSION " (" MATINEE_DATE ")");
     player_init(S.task, S.overlay, S.pic_mode, S.volume);
     {
-        /* the image cache: in Choices, or PlexRO$Cache */
+        /* the image cache: in Choices, or Matinee$Cache */
         const char *c = getenv(APP "$Cache"), *d = getenv(APP "$ChoicesDir");
         char dir[300];
         if (c && *c)
@@ -6245,7 +6452,7 @@ int plexro_main(int argc, char **argv)
     }
 }
 
-#ifdef PLEXRO_TEST
+#ifdef MATINEE_TEST
 int ui_test_tile_xy(int i, int *x, int *y)
 {
     int st[9], x0, y0, x1, y1;
@@ -6374,6 +6581,12 @@ int ui_test_lib(int *view, int *sort, int *unwatched)
 }
 int ui_test_tab(int *current) { *current = tab_current(); return strip_h() ? S.libs.n + 1 : 0; }
 int ui_test_show(int *season) { *season = S.show.season; return S.show.on && S.page == PG_GRID; }
+const char *ui_test_user(int *nusers)
+{
+    *nusers = S.nusers;
+    return S.user_title;
+}
+
 const char *ui_test_show_text(int what)
 {
     static char t[400];
@@ -6404,6 +6617,6 @@ const char *ui_test_det(int what)
 int ui_test_psize(void) { return S.psize; }
 #endif
 
-#ifndef PLEXRO_NO_MAIN
-int main(int argc, char **argv) { return plexro_main(argc, argv); }
+#ifndef MATINEE_NO_MAIN
+int main(int argc, char **argv) { return matinee_main(argc, argv); }
 #endif

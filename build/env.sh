@@ -10,4 +10,4 @@ MESADEV=${MESADEV:-$TOP/../devkit/riscos-mesa-devkit-20.3.5-8}
 ELF2AIF=${ELF2AIF:-elf2aif}
 OUT=${OUT:-$TOP/build/out}
 DIST=${DIST:-$TOP/dist}
-VERSION=$(sed -n 's/^#define PLEXRO_VERSION *"\(.*\)"/\1/p' "$TOP/src/version.h")
+VERSION=$(sed -n 's/^#define MATINEE_VERSION *"\(.*\)"/\1/p' "$TOP/src/version.h")

@@ -1,5 +1,5 @@
 /*
- * plex.h - the parts of the Plex API PlexRO uses.
+ * plex.h - the parts of the Plex API Matinee uses.
  *
  *   sign in:  POST plex.tv/api/v2/pins (a 4-letter code the user types at
  *             plex.tv/link), then GET plex.tv/api/v2/pins/<id> until it
@@ -12,10 +12,10 @@
  *
  * All requests carry the X-Plex-* headers that say who the client is, and
  * ask for JSON. What to play, and how, is in caps.h.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_PLEX_H
-#define PLEXRO_PLEX_H
+#ifndef MATINEE_PLEX_H
+#define MATINEE_PLEX_H
 #include <stddef.h>
 #include <stdint.h>
 
@@ -23,7 +23,7 @@
 
 typedef struct {
     char client_id[48];     /* made once, kept in Choices */
-    char product[32];       /* "PlexRO" */
+    char product[32];       /* "Matinee" */
     char version[16];
     char platform[32];      /* what the server picks its profile by */
     char device[32];
@@ -127,6 +127,7 @@ typedef struct {
     char *released;         /* originallyAvailableAt: "2008-04-10" (an episode's air date) */
     char *guid;             /* plex://movie/..., for the timeline */
     double audience_rating; /* out of 10; 0 = none */
+    double user_rating;     /* yours, out of 10 (2 a star); 0 = not rated */
     plex_person *cast;
     int ncast;
     /* subtitle tracks: only in an item from plex_details() (lists leave
@@ -259,6 +260,25 @@ int plex_transcode_ping(plex_ctx *c, const char *session);
 /* The episode after it (the next in the show, across seasons), as a list
    of one; n = 0 if it was the last. 0 = ok. */
 int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out);
+
+/* Rates it on the server: 0..10 (2 a star), or -1 to take the rating
+   away. 0 = ok. */
+int plex_rate(plex_ctx *c, const plex_item *it, int rating);
+
+/* Plex Home: the people on the account (plex.tv/api/v2/home/users), and
+   switching to one (with their PIN if they have one: the account token
+   becomes theirs; the server's token must then be fetched again,
+   plex_servers). */
+typedef struct {
+    char uuid[64];
+    char title[64];         /* the name shown */
+    int admin, protected_, restricted, guest;
+} plex_user;
+#define PLEX_USERS 16
+/* the users (at most max), or -1 (c->err) */
+int plex_home_users(plex_ctx *c, plex_user *out, int max);
+/* 0 = switched; -1 = error (c->err); -2 = wrong PIN */
+int plex_switch_user(plex_ctx *c, const char *uuid, const char *pin);
 
 /* Tells the server an item was watched (1) or not (0). 0 = ok. */
 int plex_mark(plex_ctx *c, const plex_item *it, int watched);

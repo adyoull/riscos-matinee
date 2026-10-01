@@ -1,20 +1,20 @@
-| !Run for !PlexRO (a Plex client with a built-in player)
-| Puts PlexRO on the icon bar: Select on it to sign in, or to browse your
-| Plex server. Videos play in PlexRO's own window (riscos-ffmpeg's player
+| !Run for !Matinee (a Plex client with a built-in player)
+| Puts Matinee on the icon bar: Select on it to sign in, or to browse your
+| Plex server. Videos play in Matinee's own window (riscos-ffmpeg's player
 | core), or in ReelEGL or Reel if chosen on the Player menu.
-Set PlexRO$Dir <Obey$Dir>
-IconSprites <PlexRO$Dir>.!Sprites
+Set Matinee$Dir <Obey$Dir>
+IconSprites <Matinee$Dir>.!Sprites
 
 RMEnsure SharedUnixLibrary 1.16 IfThere System:Modules.SharedULib Then RMLoad System:Modules.SharedULib
-RMEnsure SharedUnixLibrary 1.16 Error PlexRO needs SharedUnixLibrary 1.16 or later. Install it with PackMan.
+RMEnsure SharedUnixLibrary 1.16 Error Matinee needs SharedUnixLibrary 1.16 or later. Install it with PackMan.
 RMEnsure ARMEABISupport 0 IfThere System:Modules.ARMEABISupport Then RMLoad System:Modules.ARMEABISupport
-RMEnsure ARMEABISupport 0 Error PlexRO needs the ARMEABISupport module. Install it with PackMan.
-| Threads: the thread timer of UnixLib 5.0.1 and later (PlexRO is built with 5.0.3.1)
+RMEnsure ARMEABISupport 0 Error Matinee needs the ARMEABISupport module. Install it with PackMan.
+| Threads: the thread timer of UnixLib 5.0.1 and later (Matinee is built with 5.0.3.1)
 | runs from the PThreadTicker module when it's loaded: a copy merged into
 | !System first, else the one in here. Without it UnixLib uses a copy in
 | the RMA, which also works.
 RMEnsure PThreadTicker 0.01 IfThere System:Modules.PThrTicker Then RMLoad System:Modules.PThrTicker
-RMEnsure PThreadTicker 0.01 IfThere <PlexRO$Dir>.PThrTicker Then RMLoad <PlexRO$Dir>.PThrTicker
+RMEnsure PThreadTicker 0.01 IfThere <Matinee$Dir>.PThrTicker Then RMLoad <Matinee$Dir>.PThrTicker
 | https (plex.tv, and servers' plex.direct addresses): RISC OS's AcornSSL
 | module (RISC OS 5.28 or later); quiet if it's missing (then signing in
 | with a code says so, and only a server's own http address works)
@@ -31,6 +31,6 @@ RMEnsure StreamManager 0.03 IfThere System:Modules.StreamMan Then RMLoad System:
 RMEnsure SharedSoundBuffer 0.07 IfThere System:Modules.SSBuffer Then RMLoad System:Modules.SSBuffer
 
 | The program is about 32MB (the player, and FFmpeg's format and codec
-| lists); the posters, pictures and sound are in a dynamic area ("PlexRO Heap").
+| lists); the posters, pictures and sound are in a dynamic area ("Matinee Heap").
 WimpSlot -min 40960K -max 40960K
-Run <PlexRO$Dir>.!RunImage %*0
+Run <Matinee$Dir>.!RunImage %*0

@@ -4,10 +4,10 @@
  * reelcore plays sound through SharedSoundBuffer/StreamManager on RISC OS,
  * and only opens SDL's audio when REELCORE_AUDIO=sdl or SharedSoundBuffer
  * is missing. Linking riscos-mesa's libSDL2.a for that would bring its
- * video and OpenGL parts (and OSMesa) too, so PlexRO answers those calls
+ * video and OpenGL parts (and OSMesa) too, so Matinee answers those calls
  * here: SDL's audio can't be opened ("no sound", with the reason), and
  * SDL_MixAudioFormat mixes at a volume as SDL's does.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <stdint.h>
 #include <stdlib.h>

@@ -1,8 +1,8 @@
 # PThreadTicker 0.03 (UnixLib's thread timer module)
 
 The module that UnixLib 5.0.1 and later programs use for their thread timer
-when it is loaded (without it UnixLib runs a copy from the RMA). PlexRO is
-linked with UnixLib 5.0.3.1, so !PlexRO carries the module and its !Run loads
+when it is loaded (without it UnixLib runs a copy from the RMA). Matinee is
+linked with UnixLib 5.0.3.1, so !Matinee carries the module and its !Run loads
 it (a copy merged into !System is used first if there is one), as Reel's
 and ReelEGL's do.
 

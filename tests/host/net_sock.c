@@ -4,7 +4,7 @@
  * only, one request a connection, Content-Length bodies: what fakeplex.py
  * sends. core_test tests the real net.c (FFmpeg's avio); this stands in
  * for it so ui.c can talk to the same fake server.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include "net.h"
 
@@ -17,7 +17,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-static char agent[64] = "PlexRO";
+static char agent[64] = "Matinee";
 
 struct net_stream {
     int fd;

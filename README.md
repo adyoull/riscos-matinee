@@ -1,4 +1,4 @@
-# riscos-plex (working name: PlexRO)
+# Matinee
 
 A Plex client for RISC OS, built natively in C. It browses a Plex Media Server and plays
 the videos in its own window with a **built-in player** (riscos-ffmpeg's reelcore, the core
@@ -7,7 +7,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test18).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test19).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -23,7 +23,9 @@ watching; test15 adds a library's bar (Collections, Playlists, Sort, Unwatched, 
 like this and trailers on the details page; test16 adds Skip intro and Skip credits (the
 server's markers) and chapters while playing; test17 is test16 linked with UnixLib
 5.0.3.1-rc8 (and PThreadTicker 0.02); test18 is linked with the UnixLib 5.0.3.1 release
-(and PThreadTicker 0.03).
+(and PThreadTicker 0.03). test19 is the name Matinee (it was PlexRO),
+Plex Home users (Switch user, with PINs), your star rating, and the picture's box blacked
+out under the hardware overlay.
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
@@ -48,8 +50,8 @@ against a scripted fake Wimp under qemu.
 - Save original file: the file itself, up to 4GB−1, with its speed shown.
 - Test speed: how fast the server sends a video, against what it needs to play directly.
 
-"PlexRO" is a working name. Plex is a trademark of Plex, Inc.; this project isn't made
-by Plex or connected with it.
+Matinee was called PlexRO (a working name) up to test18. Plex is a trademark of Plex,
+Inc.; Matinee isn't made by Plex or connected with it.
 
 Licence: GPL v2 or later (the own files; see COPYING). `third_party/cjson` is MIT (see
 its LICENSE), and `third_party/pthreadticker` is revised BSD.
@@ -68,7 +70,7 @@ its LICENSE), and `third_party/pthreadticker` is revised BSD.
 | `src/sdlstub.c` | The SDL audio calls reelcore makes, answered without SDL (sound goes through SharedSoundBuffer) |
 | `src/draw.[ch]` | Drawing: true-colour shapes and outline-font text for the dark windows |
 | `src/version.h`, `src/proginfo.h` | The version; the Info window (from riscos-ffmpeg) |
-| `app/!PlexRO` | `!Boot`, `!Run`, `!Help` |
+| `app/!Matinee` | `!Boot`, `!Run`, `!Help` |
 | `build/` | `build.sh` (compile, link, AIF, checks), `package.sh` (the RISC OS zip), `env.sh` |
 | `tools/` | `mksprites.py` (the icon), `mkrozip.py`, `check-stack-probes.py`, `check-unixlib.sh` |
 | `third_party/cjson` | cJSON 1.7.18 (MIT) |

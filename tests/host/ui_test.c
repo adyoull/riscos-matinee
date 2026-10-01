@@ -1,5 +1,5 @@
 /*
- * ui_test.c - PlexRO's front end (src/ui.c) against a scripted fake Wimp
+ * ui_test.c - Matinee's front end (src/ui.c) against a scripted fake Wimp
  * and fakeplex.py, with the real plex.c, caps.c and handoff.c (net_sock.c
  * stands in for FFmpeg's avio). Built for arm-linux and run under qemu
  * (Wimp blocks hold 32-bit pointers), by tests/host/run.sh:
@@ -15,7 +15,7 @@
  * start; Mark watched; Save original file with the DataSave protocol, 256KB
  * a null event, and Stop saving; the 4.7GB DVD rip refused; the Choices
  * file; a server typed by hand; Sign out; one copy only; Quit.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -140,6 +140,12 @@ static void px_set(int x, int y, unsigned c)            /* OS units */
         return;
     if (X >= 0 && X < FB_W && Y >= 0 && Y < FB_H)
         fb[Y * FB_W + X] = c;
+}
+
+static unsigned fb_at(int x, int y)                     /* OS units */
+{
+    int X = x >> 1, Y = FB_H - 1 - (y >> 1);
+    return X >= 0 && X < FB_W && Y >= 0 && Y < FB_H ? fb[Y * FB_W + X] : 0xFFFFFFFF;
 }
 
 static void fill_rect(int x0, int y0, int x1, int y1)
@@ -294,7 +300,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
     static _kernel_oserror err = { 1, "fake: not handled" };
     switch (swi) {
     case 0x400C0:                                   /* Wimp_Initialise */
-        SCHECK(!strcmp((const char *)(intptr_t)in->r[2], "PlexRO"), "task name");
+        SCHECK(!strcmp((const char *)(intptr_t)in->r[2], "Matinee"), "task name");
         out->r[1] = task;
         return NULL;
     case 0x42681: {                                 /* TaskManager_EnumerateTasks */
@@ -763,6 +769,12 @@ static int ev_menu(int *b, int a, int c)
     return 9;
 }
 
+static int ev_menu3(int *b, int a, int c, int d)
+{
+    b[0] = a; b[1] = c; b[2] = d; b[3] = -1;
+    return 9;
+}
+
 static int ev_key(int *b, int w, int i, int k)
 {
     memset(b, 0, 28);
@@ -907,9 +919,9 @@ static int script(int *b, int mask)
         /* ---- start-up: sign in with a code */
         case 0:
             ui_test_windows(&w_browser, &w_save);
-            CHECK(bar_icon_made == 1 && !strcmp(bar_sprite, "!plexro"), "icon bar icon '%s'", bar_sprite);
+            CHECK(bar_icon_made == 1 && !strcmp(bar_sprite, "!matinee"), "icon bar icon '%s'", bar_sprite);
             CHECK(proginfo_made == 1, "Info window");
-            CHECK(strstr(read_file(choices), "client_id plexro-") != NULL, "a client id kept from the start");
+            CHECK(strstr(read_file(choices), "client_id matinee-") != NULL, "a client id kept from the start");
             CHECK(mask & 1, "no null events while there's nothing to do");
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);             /* Select on the icon */
@@ -1223,7 +1235,7 @@ static int script(int *b, int mask)
             if (nstarted == prev_started && ev_button(b, w_browser, D_PLAY, 4))
                 return 6;                                       /* Play (after the scroll back) */
             k = (nstarted - 1) & 7;
-            snprintf(want, sizeof(want), "Run <ReelEGL$Dir>.!Run %s/PlexRO/Play0", scrap);
+            snprintf(want, sizeof(want), "Run <ReelEGL$Dir>.!Run %s/Matinee/Play0", scrap);
             CHECK(nstarted == prev_started + 1 && !strcmp(started[k], want), "Play: started %s", started[k]);
             CHECK(strstr(started_url(), "/video/:/transcode/universal/start.m3u8?") &&
                   strstr(started_url(), "&offset=2530&") && strstr(started_url(), "videoResolution=1280x720"),
@@ -1232,7 +1244,7 @@ static int script(int *b, int mask)
                   started_src[k].headers && strstr(started_src[k].headers, "X-Plex-Token: SRV-TOKEN"),
                   "title and headers for Reel");
             CHECK(ntyped && typed_type[(ntyped - 1) & 7] == 0xBF4, "typed as video/mp4");
-            snprintf(want, sizeof(want), "%s/PlexRO/Play0", scrap);
+            snprintf(want, sizeof(want), "%s/Matinee/Play0", scrap);
             CHECK(!file_exists(want), "the file deleted once the player has started");
             CHECK(strstr(ui_test_status(), "Transcoded (") && strstr(ui_test_status(), "bigger"), "status: %s",
                   ui_test_status());
@@ -1251,7 +1263,7 @@ static int script(int *b, int mask)
             CHECK(strstr(ui_test_det(2), "Direct Play:"), "the details say so: %s", ui_test_det(2));
             tasks[0].handle = 0x777; tasks[0].name = "ReelEGL\r";
             tasks[1].handle = 0x778; tasks[1].name = "Reel\r";
-            tasks[2].handle = task; tasks[2].name = "PlexRO\r";
+            tasks[2].handle = task; tasks[2].name = "Matinee\r";
             ntasks = 3;
             prev_nsent = nsent;
             prev_started = nstarted;
@@ -1270,7 +1282,7 @@ static int script(int *b, int mask)
             return ev_msg(b, 4, s ? s->b[2] : 0, 0x777);        /* DataLoadAck */
         }
         case 20:
-            snprintf(want, sizeof(want), "%s/PlexRO/Play1", scrap);
+            snprintf(want, sizeof(want), "%s/Matinee/Play1", scrap);
             CHECK(!file_exists(want), "deleted on DataLoadAck");
             CHECK(strstr(ui_test_status(), "in ReelEGL") && strstr(ui_test_status(), "Direct Play"),
                   "status: %s", ui_test_status());
@@ -1304,7 +1316,7 @@ static int script(int *b, int mask)
                   "unclaimed: Reel started: %s", started[k]);
             CHECK(strstr(started_url(), "start.m3u8"), "Reel reads the same file");
             ntasks = 1;
-            tasks[0].handle = task; tasks[0].name = "PlexRO\r";
+            tasks[0].handle = task; tasks[0].name = "Matinee\r";
             unsetenv("Reel$Dir");
             prev_reports = reports;
             prev_started = nstarted;
@@ -1403,8 +1415,58 @@ static int script(int *b, int mask)
             CHECK(log_count("/:/scrobble", "key", "101") == 1, "marked watched on the server");
             CHECK(!strcmp(ui_test_button(D_WATCHED), "Mark unwatched"), "the button turns round");
             CHECK(strstr(ui_test_status(), "watched"), "status: %s", ui_test_status());
-            /* ---- Save original file, from the details */
+            /* ---- your rating: the stars */
+            CHECK(ui_test_button(D_STAR) && !strcmp(ui_test_button(D_STAR), "-") && !strcmp(ui_test_button(D_STAR + 4), "-"),
+                  "five stars, none lit");
+            pc = 3801;
+            return ev_button(b, w_browser, D_STAR + 3, 4);
+        case 3801:
+            CHECK(log_count("/:/rate", "rating", "8") == 1 && log_count("/:/rate", "key", "101") == 1 &&
+                  log_count("/:/rate", "identifier", "com.plexapp.plugins.library") == 1, "the fourth star: rated 8 (of 10)");
+            CHECK(!strcmp(ui_test_button(D_STAR + 3), "*") && !strcmp(ui_test_button(D_STAR), "*") &&
+                  !strcmp(ui_test_button(D_STAR + 4), "-"), "four stars lit");
+            CHECK(strstr(ui_test_status(), "Rated 4 stars"), "status: %s", ui_test_status());
             pc++;
+            return ev_button(b, w_browser, D_STAR + 3, 4);
+        case 3802:
+            CHECK(log_count("/:/rate", "rating", "-1") == 1 && !strcmp(ui_test_button(D_STAR), "-"),
+                  "the same star again: the rating taken away");
+            pc++;
+            return ev_tile(b, find_tile("Big Buck Bunny"), 2);
+        case 3803:
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MI_RATE), "Rate") && !menu_shaded(menu_open, MI_RATE) &&
+                  menu_sub(menu_open, MI_RATE) > 0x10000, "the poster's menu: Rate");
+            {
+                const int *rm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MI_RATE) : NULL;
+                CHECK(rm && !strcmp(menu_text(rm, 0), "No rating") && (menu_flags(rm, 0) & 1) &&
+                      !strcmp(menu_text(rm, 2), "2 stars"), "No rating (ticked), 1 star... 5 stars");
+            }
+            pc++;
+            return ev_menu(b, MI_RATE, 2);
+        case 3804:
+            CHECK(log_count("/:/rate", "rating", "4") == 1 && !strcmp(ui_test_button(D_STAR + 1), "*") &&
+                  !strcmp(ui_test_button(D_STAR + 2), "-"), "2 stars from the menu: rated 4, shown on the page");
+            pc = 3805;
+            return ev_redraw(b, w_browser);
+        case 3805:                                          /* scrolled to the stars, for a picture */
+            memset(b, 0, 32);
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[5] = 0; b[6] = -360; b[7] = -1;
+            pc++;
+            return 2;
+        case 3806:
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 3807:
+            save_picture("rating.ppm", w_browser);
+            memset(b, 0, 32);
+            memcpy(b + 1, win(w_browser)->vis, 16);
+            b[0] = w_browser; b[5] = 0; b[6] = 0; b[7] = -1;
+            pc++;
+            return 2;
+        case 3808:
+            /* ---- Save original file, from the details */
+            pc = 39;
             return ev_button(b, w_browser, D_SAVE, 4);
         case 39:
             CHECK(menu_window == w_save, "Save file: the save box, as a menu");
@@ -1909,10 +1971,19 @@ static int script(int *b, int mask)
             CHECK(strstr(player_test_time(), "42:1") && strstr(player_test_time(), "/ 1:30:00"), "the time: %s",
                   player_test_time());
             CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 4, "asleep between pictures (PollIdle %d)", idle_time - fake_cs);
+            for (int i = 0; i < FB_W * FB_H; i++)   /* what was there before: the details page */
+                fb[i] = 0x123456;
             pc++;
             return ev_redraw(b, w_browser);
         }
         case 909:
+            {   /* the picture box outside the overlay (above and below a 16:9 picture) */
+                win_t *x = win(w_browser);
+                CHECK(fb_at(x->vis[0] + 20, x->vis[3] - 6) == 0 && fb_at(x->vis[2] - 20, x->vis[1] + 168 + 6) == 0 &&
+                      fb_at((x->vis[0] + x->vis[2]) / 2, x->vis[3] - 6) == 0,
+                      "the picture's box blacked out under the overlay (no page left showing): %06x",
+                      fb_at(x->vis[0] + 20, x->vis[3] - 6));
+            }
             CHECK(ovl_redraws > 0 && strstr(plotted_text, "Big Buck Bunny") && strstr(plotted_text, "-10 s") &&
                   strstr(plotted_text, "Stats") && strstr(plotted_text, "Subtitles|"),
                   "the redraw: the overlay's part, and the bar: %s", plotted_text);
@@ -2498,8 +2569,62 @@ static int script(int *b, int mask)
             }
             CHECK(!ui_test_player() && ui_test_page() == PG_DETAILS && log_count("/:/scrobble", "key", "216") == 1,
                   "the last episode: watched, and back to the details");
-            pc = 952;
+            pc = 9520;
             return ev_key(b, w_browser, -1, 0x1B);
+        /* ---- Plex Home: who's watching */
+        case 9520: {
+            int nu = 0;
+            CHECK(!strcmp(ui_test_user(&nu), "Andrew") && nu == 2 && log_count("/api/v2/home/users", NULL, NULL) >= 1,
+                  "Plex Home: two people; watching as the owner, Andrew (%s, %d)", ui_test_user(&nu), nu);
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 9521: {
+            const int *um = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_USERS) : NULL;
+            CHECK(menu_open && !strcmp(menu_text(menu_open, MB_USERS), "Switch user") && !menu_shaded(menu_open, MB_USERS) && um,
+                  "the icon bar menu: Switch user");
+            CHECK(um && !strcmp(menu_text(um, 0), "Andrew") && (menu_flags(um, 0) & 1) && !strcmp(menu_text(um, 1), "Kids") &&
+                  menu_sub(um, 1) == -1, "Andrew ticked; Kids (no PIN)");
+            count0 = log_count("/api/v2/home/users/u-kids/switch", NULL, NULL);
+            pc++;
+            return ev_menu3(b, MB_USERS, 1, -1);
+        }
+        case 9522: {
+            int nu = 0;
+            CHECK(log_count("/api/v2/home/users/u-kids/switch", NULL, NULL) == count0 + 1 && !strcmp(ui_test_user(&nu), "Kids"),
+                  "switched to Kids (%s)", ui_test_user(&nu));
+            CHECK(strstr(read_file(choices), "account_token KID-ACCT\n") && strstr(read_file(choices), "server_token KID-SRV\n") &&
+                  strstr(read_file(choices), "user_title Kids\n"), "their account token, and the server's token for them, kept");
+            int hr = 0, hp = 0;
+            CHECK(ui_test_home(&hr, &hp) && strstr(ui_test_status(), "Kids"), "the home page again, as Kids: %s", ui_test_status());
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 9523: case 9525: {
+            const int *um = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_USERS) : NULL;
+            const int *pm = um ? (const int *)(intptr_t)menu_sub(um, 0) : NULL;
+            CHECK(um && !strcmp(menu_text(um, 0), "Andrew (PIN)") && pm && (menu_flags(pm, 0) & 4) && (menu_flags(um, 1) & 1),
+                  "Kids ticked; Andrew has a PIN: a writable item to type it in");
+            if (pm)
+                strcpy((char *)menu_text(pm, 0), pc == 9523 ? "1111" : "1234\r");
+            prev_reports = reports;
+            pc++;
+            return ev_menu3(b, MB_USERS, 0, 0);
+        }
+        case 9524: {
+            int nu = 0;
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "isn't Andrew's PIN") && !strcmp(ui_test_user(&nu), "Kids"),
+                  "a wrong PIN: said so, still Kids (%s)", last_report);
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 9526: {
+            int nu = 0;
+            CHECK(log_count("/api/v2/home/users/u-admin/switch", "pin", "1234") == 1 && !strcmp(ui_test_user(&nu), "Andrew") &&
+                  strstr(read_file(choices), "server_token SRV-TOKEN\n"), "the right PIN: Andrew again, with his tokens");
+            pc = 952;
+            continue;
+        }
         case 952:
             CHECK(ui_test_page() == PG_GRID, "the grid");
             items0 = ui_test_items();
@@ -2734,8 +2859,8 @@ int main(int argc, char **argv)
     snprintf(choices, sizeof(choices), "%s/choices/Choices", outdir);
     setenv("Wimp$ScrapDir", scrap, 1);
     snprintf(cmd, sizeof(cmd), "%s/choices", outdir);
-    setenv("PlexRO$ChoicesDir", cmd, 1);
-    setenv("PlexRO$PlexTV", base, 1);
+    setenv("Matinee$ChoicesDir", cmd, 1);
+    setenv("Matinee$PlexTV", base, 1);
     {
         FILE *f = fopen(choices, "w");      /* the hand-off first: ReelEGL chosen */
         if (f) {
@@ -2751,7 +2876,7 @@ int main(int argc, char **argv)
             net_buf_free(&nb);
     }
 
-    CHECK(plexro_main(1, argv) == 0, "first run ends cleanly");
+    CHECK(matinee_main(1, argv) == 0, "first run ends cleanly");
     printf("  first run: %d checks so far\n", checks);
 
     /* second run: the Choices from the first, made to look like test4's
@@ -2778,13 +2903,13 @@ int main(int argc, char **argv)
     prev_count = log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000");    /* a poster seen in the first run */
     nwins = 0; pc = 100; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
-    CHECK(plexro_main(1, argv) == 0, "second run ends cleanly");
+    CHECK(matinee_main(1, argv) == 0, "second run ends cleanly");
 
-    /* a second copy: another PlexRO task is running */
+    /* a second copy: another Matinee task is running */
     nwins = 0; bar_icon_made = 0;
-    tasks[0].handle = 0x999; tasks[0].name = "PlexRO\r";
+    tasks[0].handle = 0x999; tasks[0].name = "Matinee\r";
     ntasks = 1;
-    CHECK(plexro_main(1, argv) == 0 && bar_icon_made == 0, "one copy only");
+    CHECK(matinee_main(1, argv) == 0 && bar_icon_made == 0, "one copy only");
 
     {
         /* the image cache held to its size: the oldest go first */

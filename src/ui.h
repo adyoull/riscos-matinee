@@ -1,10 +1,10 @@
 /*
- * ui.h - PlexRO's desktop front end (ui.c): the icon numbers of its
+ * ui.h - Matinee's desktop front end (ui.c): the icon numbers of its
  * windows, and what the host test (tests/host/ui_test.c) looks at.
- * Part of riscos-plex. GPL v2 or later.
+ * Part of riscos-matinee. GPL v2 or later.
  */
-#ifndef PLEXRO_UI_H
-#define PLEXRO_UI_H
+#ifndef MATINEE_UI_H
+#define MATINEE_UI_H
 
 /* What the window shows */
 enum { PG_GRID, PG_DETAILS, PG_SIGNIN, PG_PLAYER };
@@ -14,6 +14,8 @@ enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK };
 
 /* The browser's and details window's buttons (drawn, not icons) */
 enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS, B_SEARCH };
+/* the details page's stars (your rating): D_STAR + 0..4 */
+enum { D_STAR = 140 };
 /* the show page's buttons, and its series' tabs (SH_TAB + n) */
 enum { SH_PLAY = 120, SH_WATCHED, SH_TAB = 200 };
 /* the home page's featured part (Resume or Play, Details, its dots: HB_DOT + n)
@@ -28,9 +30,9 @@ enum { LB_VIEW = 400, LB_SORT = 410, LB_UNWATCHED = 411, LB_AZ = 420 };
 enum { SV_FILE, SV_NAME, SV_OK, SV_COUNT };
 
 /* The icon bar menu's items, and the item menu's */
-enum { MB_INFO, MB_SIGNIN, MB_SERVERS, MB_PLAYER, MB_QUALITY, MB_SIZE, MB_DIRECT, MB_CACHE, MB_SIGNOUT, MB_QUIT,
+enum { MB_INFO, MB_SIGNIN, MB_SERVERS, MB_USERS, MB_PLAYER, MB_QUALITY, MB_SIZE, MB_DIRECT, MB_CACHE, MB_SIGNOUT, MB_QUIT,
        MB_COUNT };
-enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_SPEED, MI_WATCHED, MI_UNWATCHED, MI_REMOVE,
+enum { MI_PLAY, MI_DETAILS, MI_RESUME, MI_START, MI_SUBS, MI_SAVE, MI_SPEED, MI_WATCHED, MI_UNWATCHED, MI_RATE, MI_REMOVE,
        MI_BACK, MI_REFRESH, MI_COUNT };
 
 /* Players */
@@ -39,9 +41,9 @@ enum { PLAYER_BUILTIN, PLAYER_REELEGL, PLAYER_REEL, PLAYER_COUNT };
 /* The built-in player's menu (Menu over the picture) */
 enum { MP_AUDIO, MP_SUBS, MP_CHAPTERS, MP_VOLUME, MP_PICTURE, MP_STATS, MP_FULL, MP_MINI, MP_ONTOP, MP_OVERLAY, MP_STOP, MP_COUNT };
 
-int plexro_main(int argc, char **argv);
+int matinee_main(int argc, char **argv);
 
-#ifdef PLEXRO_TEST
+#ifdef MATINEE_TEST
 /* The host test's view of the state */
 int ui_test_tile_xy(int i, int *x, int *y);     /* a tile's middle, screen OS units; 0 = ok */
 int ui_test_items(void);                        /* items in the list shown */
@@ -70,7 +72,8 @@ int ui_test_tab(int *current);
 int ui_test_lib(int *view, int *sort, int *unwatched);   /* a library's bar shows; what it says */                  /* how many tabs (Home and the libraries); the current one */
 int ui_test_home(int *rows, int *pick);         /* the home page is shown: its rows, the one featured */
 const char *ui_test_home_row(int r, int *start, int *n, int *vis);   /* a row's title, items, shown */                  /* the show page is shown, and which series */
-const char *ui_test_show_text(int what);        /* 0 the title, 1 the episodes' count, 2 the buttons */
+const char *ui_test_show_text(int what);
+const char *ui_test_user(int *nusers);          /* who's watching (Plex Home), and how many there are */        /* 0 the title, 1 the episodes' count, 2 the buttons */
 #endif
 
 #endif
