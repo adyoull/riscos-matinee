@@ -35,7 +35,7 @@ cat > "$A/docs/source/ReadMe,fff" <<EOT
 PlexRO $VERSION's own source (c and h), with cJSON 1.7.18. It is built
 by build/build.sh in the riscos-plex repository, against riscos-ffmpeg's
 devkit (5.1.10-riscos14: FFmpeg's libraries, and reelcore for the built-in
-player) and UnixLib 5.0.2.
+player) and UnixLib 5.0.3.1-rc8.
 EOT
 # RISC OS names ignore case: two files that differ only in case would
 # overwrite each other when unzipped

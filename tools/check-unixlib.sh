@@ -11,9 +11,13 @@
 # library would still run, but without the fixes the apps' !Run files load
 # PThreadTicker for. Same test as riscos-unixlib's tools/check-lib.sh:
 # the "mov r3, #<size>" before OS_Module 6 in no_dynamic_area.
-# Run by build/package.sh on every program it packages.
+# And (REQUIRE, default __exit_status) a symbol the UnixLib wanted has:
+# __exit_status came with 5.0.3.1-rc7 (_exit(n) exits with n; rc8's
+# library is the same). Run by build/build.sh.
 CROSS=${CROSS:-/root/gccsdk/env/bin/arm-riscos-gnueabihf-}
 EXPECTED=${EXPECTED:-472}
+REQUIRE=${REQUIRE:-__exit_status}
+WANT=${WANT:-UnixLib 5.0.3.1-rc8}
 bad=0
 for f in "$@"; do
   if ! ${CROSS}nm "$f" 2>/dev/null | grep -q ' __pthread_call_every_code$'; then
@@ -25,10 +29,13 @@ for f in "$@"; do
   if echo "$syms" | grep -q ' ff_file_protocol$' && ! echo "$syms" | grep -q ' __unixlib_fstat64$'; then
     echo "$f: FFmpeg's file protocol without UnixLib 5.0.2's large files: rebuild libavformat against 5.0.2" >&2; bad=1; continue
   fi
+  if [ -n "$REQUIRE" ] && ! echo "$syms" | grep -q " $REQUIRE\$"; then
+    echo "$f: no $REQUIRE: relink with $WANT" >&2; bad=1; continue
+  fi
   if [ "$size" = "$EXPECTED" ]; then
-    echo "  $(basename "$f"): UnixLib 5.0.2 (the $EXPECTED-byte pthread block$(echo "$syms" | grep -q ' __unixlib_fstat64$' && echo ', files over 2GB'))"
+    echo "  $(basename "$f"): $WANT (the $EXPECTED-byte pthread block$(echo "$syms" | grep -q ' __unixlib_fstat64$' && echo ', files over 2GB'))"
   else
-    echo "$f: claims a ${size:-?}-byte pthread block, not $EXPECTED: relink with UnixLib 5.0.2" >&2; bad=1
+    echo "$f: claims a ${size:-?}-byte pthread block, not $EXPECTED: relink with $WANT" >&2; bad=1
   fi
 done
 exit $bad

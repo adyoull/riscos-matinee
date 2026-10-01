@@ -1,39 +1,43 @@
 # Toolchain, dependencies and building
 
-## The toolchain: GCCSDK GCC 10.2 with UnixLib 5.0.2
+## The toolchain: GCCSDK GCC 10.2 with UnixLib 5.0.3.1-rc8
 
 PlexRO is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`) in
-`~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.2** (riscos-unixlib release
-v5.0.2), so programs built with `-D_FILE_OFFSET_BITS=64` handle files over 2GB (up to
-4GB−1). It's the same set-up riscos-ffmpeg's 5.1.10-riscos14 and Reel 0.1.21 use.
+`~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.3.1-rc8** (riscos-unixlib
+pre-release v5.0.3.1-rc8; test1 to test16 used release v5.0.2), so programs built with
+`-D_FILE_OFFSET_BITS=64` handle files over 2GB (up to 4GB−1), and fork, `_exit` and the
+review's fixes are in. riscos-ffmpeg's devkit (5.1.10-riscos14) was built against 5.0.2:
+its libraries link with rc8 unchanged (no header or layout changes; rc8's headers differ
+from 5.0.2's only in a comment in `sched.h`).
 
 ### Quickest: the prebuilt toolchain
 
 1. Unpack riscos-warzone2100's `gccsdk-gcc10.2-x86_64-linux-env.tgz` into your home
    directory. It gives `~/gccsdk/env`.
-2. Put UnixLib 5.0.2 into it:
-   - `libunixlib.a` from the v5.0.2 release goes to
+2. Put UnixLib 5.0.3.1-rc8 into it:
+   - `libunixlib.a` from the v5.0.3.1-rc8 pre-release goes to
      `~/gccsdk/env/arm-riscos-gnueabihf/lib/`. Its sha256 is
-     `bcd012806ec2b28e33633f1badf3b6946a583bad3ffefba672d67873ba812254`.
-   - The headers that changed come from the v5.0.2 tag (`libunixlib/include/`):
-     `sys/stat.h`, `sys/mman.h`, `unistd.h` and `sched.h`. They go to
-     `~/gccsdk/env/arm-riscos-gnueabihf/include/`.
+     `44cb5481ec4f1c6784ec81b2d2ddd6f2de72b063bcde2b13725a9443b1de8078`.
+   - The headers that changed since GCCSDK come from the v5.0.3.1-rc8 tag
+     (`libunixlib/include/`): `sys/stat.h`, `sys/mman.h`, `unistd.h` and `sched.h`.
+     They go to `~/gccsdk/env/arm-riscos-gnueabihf/include/`.
 3. elf2aif (with the large-image fix): riscos-crossdev's toolchain has a Linux build in
    `bin/elf2aif`. riscos-ffmpeg's `tools/elf2aif` also builds one from source.
 
 `build/build.sh` checks the result: `tools/check-unixlib.sh` fails if the program
-wasn't linked with UnixLib 5.0.2.
+wasn't linked with UnixLib 5.0.3.1-rc8 (rc7's `__exit_status`, and the 472-byte
+pthread block).
 
 ### From source
 
 No prebuilt GCCSDK toolchain is published as a GitHub release asset, so it can also be
 built from source. Use riscos-warzone2100's `build/build-toolchain.sh`, with one change:
-the UnixLib patch is riscos-unixlib **v5.0.2**'s `unixlib-riscos.diff`.
+the UnixLib patch is riscos-unixlib **v5.0.3.1-rc8**'s `unixlib-riscos.diff`.
 
 ```
 git clone --depth 1 https://github.com/adyoull/riscos-warzone2100.git wz
 mkdir dl && cd dl
-curl -LO https://github.com/adyoull/riscos-unixlib/releases/download/v5.0.2/unixlib-riscos.diff
+curl -LO https://github.com/adyoull/riscos-unixlib/releases/download/v5.0.3.1-rc8/unixlib-riscos.diff
 curl -L -o gccsdk-64c6f81.tar.gz https://codeload.github.com/jhamby/riscos-gccsdk/tar.gz/64c6f81
 curl -L -o gcc-10.2.0.tar.gz https://codeload.github.com/gcc-mirror/gcc/tar.gz/refs/tags/releases/gcc-10.2.0
 U=http://archive.ubuntu.com/ubuntu/pool
@@ -63,8 +67,9 @@ It takes well over an hour on one core.
 | mpfr4_4.1.0.orig.tar.xz | 0c98a3f1732ff6ca4ea690552079da9c597872d30e96ec28414ee23c95558a7f |
 | mpclib3_1.2.1.orig.tar.gz | 17503d2c395dfcf106b622dc142683c1199431d095367c6aacba6eec30340459 |
 | cJSON-1.7.18 tarball (codeload v1.7.18) | 3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5 |
-| UnixLib 5.0.2 `libunixlib.a` | bcd012806ec2b28e33633f1badf3b6946a583bad3ffefba672d67873ba812254 |
-| UnixLib 5.0.2 `unixlib-riscos.diff` | cabf419e8d55dba55bbd4ee2df81a6c773321f79fb5ad10f38c0da31f04433cc |
+| UnixLib 5.0.3.1-rc8 `libunixlib.a` | 44cb5481ec4f1c6784ec81b2d2ddd6f2de72b063bcde2b13725a9443b1de8078 |
+| UnixLib 5.0.3.1-rc8 `unixlib-riscos.diff` | d2228a59aa11b045f91b1255214035ac9dc0b6a740fa3370b04d68bf35276363 |
+| UnixLib 5.0.3.1-rc8 `PThreadTicker-0.02.zip` | 5009d401f2ffc5f07b8c7035affb1a182bc0507205bbd6d6dadeb3504e49310e |
 
 ## Devkits (release assets)
 
@@ -98,14 +103,14 @@ calls to SDL's audio are answered by `src/sdlstub.c`.
 The results, in `build/out/`:
 
 - `plexro_g`: the ELF with debug information. Keep it for `addr2line` on crash
-  addresses, and don't ship it. UnixLib 5.0.2's debug information holds its build
+  addresses, and don't ship it. UnixLib's debug information holds its build
   path.
 - `!RunImage,ff8`: the AIF.
 
 Then it checks three things:
 
 - no big stack frame goes unprobed;
-- UnixLib 5.0.2 was linked;
+- UnixLib 5.0.3.1-rc8 was linked;
 - no build path or unwanted name is in `!RunImage`.
 
 `build/package.sh` makes `dist/PlexRO-<version>.zip`, with RISC OS filetypes. It holds

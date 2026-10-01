@@ -4,9 +4,10 @@
 #                   crash addresses with addr2line; don't ship it)
 #   $OUT/plexro     stripped, then !RunImage,ff8 (AIF)
 # Checks: every big stack frame is probed, the program was linked with
-# UnixLib 5.0.2 (the 472-byte pthread block, 64-bit fstat), and no build
+# UnixLib 5.0.3.1-rc8 (the 472-byte pthread block, 64-bit fstat, the
+# rc7 _exit), and no build
 # path or unwanted name is left in the shipped image.
-# Needs the GCCSDK GCC 10.2 toolchain with UnixLib 5.0.2 (docs/TOOLCHAIN.md)
+# Needs the GCCSDK GCC 10.2 toolchain with UnixLib 5.0.3.1-rc8 (docs/TOOLCHAIN.md)
 # and the two devkits (build/env.sh).
 set -e
 . "$(dirname "$0")/env.sh"
