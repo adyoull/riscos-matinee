@@ -75,9 +75,14 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
-- `riscos-ffmpeg-devkit-5.1.10-riscos15-vc4.tgz` (sha256
-  `dd2d7cd3d6a90e2b0495423784dd8f0fc3b5dee27c454dd9ce06656c15122b0b`): not a published
-  release yet. Built from riscos-ffmpeg's main at `8a828f4` (riscos15, Reel 0.1.22,
+- `riscos-ffmpeg/releases/download/v5.1.10-riscos16/riscos-ffmpeg-devkit-5.1.10-riscos16.tgz`
+  (sha256 `6d7ab4fb886e3dc42646678476ac530beaaa9972025f0f61365479a7095be8b9`): FFmpeg
+  5.1.10-riscos16 with `h264_vchiq`, ReelHWAccel's `libvcdec.a` (devkit 0.2.1, vcdec
+  0.4.1; GPL version 2: its licence is `Licences/ReelHWAccel`, packaged with Matinee),
+  and Reel 0.1.23's `libreelcore.a`. Link `-lvcdec` after `-lavcodec`. Used from test23.
+- test22 used `riscos-ffmpeg-devkit-5.1.10-riscos15-vc4.tgz` (sha256
+  `dd2d7cd3d6a90e2b0495423784dd8f0fc3b5dee27c454dd9ce06656c15122b0b`), the same code
+  before the release: built from riscos-ffmpeg's main at `8a828f4` (riscos15, Reel 0.1.22,
   riscos-reelhwaccel devkit 0.2.1 in its `third_party/reelhwaccel`) with its own
   scripts: `build/build-deps.sh`, `build/build-ffmpeg.sh`, `build/build-apps.sh`, then
   `REEL_VERSION=0.1.22-vc4 build/package.sh 5.1.10-riscos15-vc4` (GCCSDK GCC 10.2 with

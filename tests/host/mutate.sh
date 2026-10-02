@@ -6,7 +6,7 @@
 set -e
 TOP=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=${WORK:-/tmp/matinee-mutate}
-REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at 8a828f4 (riscos15)
+REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at v5.1.10-riscos16
 export REEL_SRC
 survived=0
 n=0

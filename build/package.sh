@@ -22,15 +22,9 @@ cp "$TOP/COPYING" "$L/Matinee,fff"
 cp "$TOP/third_party/cjson/LICENSE" "$L/cJSON,fff"
 cp "$TOP/third_party/pthreadticker/Licence" "$L/PThreadTicker,fff"
 # what's linked in from riscos-ffmpeg's devkit
-for f in FFmpeg GPLv2 LGPLv21 x264 dav1d LAME Opus Ogg Vorbis; do
+for f in FFmpeg GPLv2 LGPLv21 x264 dav1d LAME Opus Ogg Vorbis ReelHWAccel; do
   cp "$FFDEV/Licences/$f,fff" "$L/$f,fff"
 done
-cat > "$L/vcdec,fff" <<EOT
-vcdec (H.264 decoded by the Raspberry Pi's VideoCore, through RISC OS's
-VCHIQ module) and FFmpeg's h264_vchiq decoder come from riscos-reelhwaccel
-(https://github.com/adyoull/riscos-reelhwaccel). GNU General Public
-License, version 2 or later: see GPLv2.
-EOT
 for f in "$TOP"/src/*.c "$TOP/third_party/cjson/cJSON.c"; do
   b=$(basename "$f" .c); cp "$f" "$A/docs/source/c/$b,fff"
 done
@@ -40,8 +34,8 @@ done
 cat > "$A/docs/source/ReadMe,fff" <<EOT
 Matinee $VERSION's own source (c and h), with cJSON 1.7.18. It is built
 by build/build.sh in the riscos-matinee repository, against riscos-ffmpeg's
-devkit (5.1.10-riscos15-vc4: FFmpeg's libraries with h264_vchiq, reelcore
-for the built-in player, and riscos-reelhwaccel's vcdec) and UnixLib 5.0.3.1.
+devkit (5.1.10-riscos16: FFmpeg's libraries with h264_vchiq, Reel 0.1.23's
+reelcore for the built-in player, and ReelHWAccel's vcdec) and UnixLib 5.0.3.1.
 EOT
 # RISC OS names ignore case: two files that differ only in case would
 # overwrite each other when unzipped

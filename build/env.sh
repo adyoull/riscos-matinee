@@ -3,9 +3,9 @@
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 GCCSDK_ENV=${GCCSDK_ENV:-$HOME/gccsdk/env}
 CROSS=${CROSS:-$GCCSDK_ENV/bin/arm-riscos-gnueabihf-}
-# riscos-ffmpeg's devkit (5.1.10-riscos15-vc4, its main at 8a828f4: Reel 0.1.22's
-# reelcore and h264_vchiq on riscos-reelhwaccel's vcdec 0.4.1): libavformat and the rest
-FFDEV=${FFDEV:-$TOP/../devkit/riscos-ffmpeg-devkit-5.1.10-riscos15-vc4}
+# riscos-ffmpeg's devkit (release v5.1.10-riscos16, with Reel 0.1.23's reelcore and
+# h264_vchiq on ReelHWAccel's vcdec, devkit 0.2.1): libavformat and the rest
+FFDEV=${FFDEV:-$TOP/../devkit/riscos-ffmpeg-devkit-5.1.10-riscos16}
 # riscos-mesa's devkit (release v20.3.5-8): libz
 MESADEV=${MESADEV:-$TOP/../devkit/riscos-mesa-devkit-20.3.5-8}
 ELF2AIF=${ELF2AIF:-elf2aif}

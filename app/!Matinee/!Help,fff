@@ -1,4 +1,4 @@
-!Matinee - a Plex client for RISC OS                  0.1.0-test22
+!Matinee - a Plex client for RISC OS                  0.1.0-test23
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server and
@@ -208,7 +208,7 @@ how much is read ahead (with graphs), the codecs, who decodes the picture
 keep up (Keeping Up), as in ReelEGL.
 
 On a Raspberry Pi, H.264 (most files, and everything the server
-converts) is decoded by the Pi's VideoCore, as in Reel 0.1.22, leaving
+converts) is decoded by the Pi's VideoCore, as in Reel 0.1.23, leaving
 the ARM free: up to 1920x1088, 8-bit 4:2:0; 1080p needs gpu_mem of 128
 MB or more (in config.txt). Anything else, or a machine without the
 VideoCore, is decoded on the ARM as before.
@@ -368,8 +368,10 @@ Licence
 -------
 Matinee is free software under the GNU General Public License, version 2
 or later. It uses cJSON (MIT licence), FFmpeg 5.1 from riscos-ffmpeg
-(GPL v2 or later), riscos-ffmpeg's reelcore (LGPL 2.1 or later) and
-UnixLib (see its licences). The licences are in
+(GPL v2 or later), riscos-ffmpeg's reelcore (LGPL 2.1 or later),
+ReelHWAccel's vcdec (GPL version 2; it decodes H.264 on the Pi's
+VideoCore), so !RunImage as a whole is under GPL version 2, and UnixLib
+(see its licences). The licences are in
 docs.Licences, and Matinee's own source is in docs.source.
 
 Andrew Youll

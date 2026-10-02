@@ -7,7 +7,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test22).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test23).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -28,7 +28,9 @@ Plex Home users (Switch user, with PINs), your star rating, and the picture's bo
 out under the hardware overlay; test20 is quicker in its hot paths (fitting text, big
 libraries, the player's bar, compressed lists); test21 crops tall pictures from the foot
 rather than through the middle, and has a Matinee icon (a little theatre); test22 is built on riscos-ffmpeg's Reel 0.1.22
-reelcore with riscos-reelhwaccel's h264_vchiq: H.264 decoded by the Pi's VideoCore.
+reelcore with riscos-reelhwaccel's h264_vchiq: H.264 decoded by the Pi's VideoCore;
+test23 is the same code built on the published riscos-ffmpeg 5.1.10-riscos16 devkit (Reel
+0.1.23; ReelHWAccel's vcdec under GPL version 2).
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
@@ -57,7 +59,9 @@ Matinee was called PlexRO (a working name) up to test18. Plex is a trademark of 
 Inc.; Matinee isn't made by Plex or connected with it.
 
 Licence: GPL v2 or later (the own files; see COPYING). `third_party/cjson` is MIT (see
-its LICENSE), and `third_party/pthreadticker` is revised BSD.
+its LICENSE), and `third_party/pthreadticker` is revised BSD. The program links riscos-ffmpeg's devkit,
+which includes ReelHWAccel's vcdec under GPL version 2, so a built `!RunImage` is under GPL
+version 2.
 
 ## Layout
 
