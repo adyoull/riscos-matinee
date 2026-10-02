@@ -6,7 +6,7 @@
 set -e
 TOP=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=${WORK:-/tmp/matinee-mutate}
-REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at reel-0.1.21 (riscos14)
+REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at 8a828f4 (riscos15)
 export REEL_SRC
 survived=0
 n=0
@@ -238,6 +238,10 @@ mutate "lists not asked for compressed" src/plex.c \
 # test21: crops
 mutate "tall pictures cut through the middle" src/ui.c \
   'r.r[2] = (th > h ? (h - th) * 4 / 5 : (h - th) / 2) << S.yeig;' 'r.r[2] = ((h - th) / 2) << S.yeig;'
+
+# test22: the decoder in the stats
+mutate "the Decoder row says ARM always" src/player.c \
+  'st.decoder == REELCORE_DECODER_VIDEOCORE ? "VideoCore (hardware)" :' '0 ? "VideoCore (hardware)" :'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

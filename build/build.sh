@@ -17,7 +17,9 @@ CFLAGS="-O2 -Wall -march=armv7-a -mfpu=neon-vfpv3 -mfloat-abi=hard -fstack-clash
 # its format and codec lists (its file protocol reaches them), so the codec
 # libraries are linked too. reelcore's calls to SDL's audio (its other sound
 # output) are answered by src/sdlstub.c.
-LIBS="-L$FFDEV/lib -lreelcore -lavfilter -lpostproc -lavformat -lavcodec -lswresample -lswscale -lavutil \
+# -lvcdec after -lavcodec: h264_vchiq, H.264 decoded by the Pi's VideoCore
+# (riscos-reelhwaccel); reelcore tries it first and falls back to the ARM.
+LIBS="-L$FFDEV/lib -lreelcore -lavfilter -lpostproc -lavformat -lavcodec -lvcdec -lswresample -lswscale -lavutil \
   -ldav1d -lx264 -lmp3lame -lopus -lvorbisenc -lvorbis -logg -L$MESADEV/lib -lz -lm"
 "${CROSS}gcc" $CFLAGS -Wno-format-truncation -I"$TOP/src" -I"$TOP/third_party/cjson" -I"$FFDEV/include" \
   "$TOP"/src/*.c "$TOP/third_party/cjson/cJSON.c" -static $LIBS -o "$OUT/matinee_g"

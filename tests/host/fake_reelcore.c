@@ -197,6 +197,9 @@ int reelcore_media_info(const ReelCore *v, char *buf, int size)
 void reelcore_stats(const ReelCore *v, ReelCoreStats *st)
 {
     memset(st, 0, sizeof(*st));
+    /* the server's H.264 (a converted stream): the Pi's VideoCore; a file
+       of its own: the ARM (as Big Buck Bunny's fake) */
+    st->decoder = strstr(fake_rc.url, ".m3u8") ? REELCORE_DECODER_VIDEOCORE : REELCORE_DECODER_ARM;
     st->position = v->pos;
     st->clock = v->pos + fake_rc.clock_start;
     st->fps = 25;

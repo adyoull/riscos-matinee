@@ -1,4 +1,4 @@
-!Matinee - a Plex client for RISC OS                  0.1.0-test21
+!Matinee - a Plex client for RISC OS                  0.1.0-test22
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server and
@@ -203,8 +203,15 @@ Matinee$NoHidePointer 1 to keep it).
 
 The stats (S) are drawn in the picture at a size you can read, in a
 window or full screen: the connection's speed, how much has come in and
-how much is read ahead (with graphs), the codecs, the timing, and what's
-left out to keep up (Keeping Up), as in ReelEGL.
+how much is read ahead (with graphs), the codecs, who decodes the picture
+(Decoder: the VideoCore or the ARM), the timing, and what's left out to
+keep up (Keeping Up), as in ReelEGL.
+
+On a Raspberry Pi, H.264 (most files, and everything the server
+converts) is decoded by the Pi's VideoCore, as in Reel 0.1.22, leaving
+the ARM free: up to 1920x1088, 8-bit 4:2:0; 1080p needs gpu_mem of 128
+MB or more (in config.txt). Anything else, or a machine without the
+VideoCore, is decoded on the ARM as before.
 
 Menu over the picture: Sound track, Subtitles, Chapters, Volume, Picture
 (Fit, Fill (crop) or Stretch), Stats, Full screen, Mini player, Keep on
@@ -343,6 +350,8 @@ Needs
 - AcornSSL (RISC OS 5.28 or later) for signing in with a code, and for
   servers reached through their plex.direct addresses.
 - VideoOverlay (in !System on RISC OS 5), for the hardware overlay.
+- On a Raspberry Pi, the VCHIQ module (in RISC OS 5's ROM) for decoding
+  on the VideoCore.
 - ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), only to play in them.
 
 !Run loads the modules it needs. PThreadTicker 0.03 (UnixLib's thread

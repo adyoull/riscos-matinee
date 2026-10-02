@@ -7,7 +7,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test21).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test22).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -27,7 +27,8 @@ server's markers) and chapters while playing; test17 is test16 linked with UnixL
 Plex Home users (Switch user, with PINs), your star rating, and the picture's box blacked
 out under the hardware overlay; test20 is quicker in its hot paths (fitting text, big
 libraries, the player's bar, compressed lists); test21 crops tall pictures from the foot
-rather than through the middle, and has a Matinee icon (a little theatre).
+rather than through the middle, and has a Matinee icon (a little theatre); test22 is built on riscos-ffmpeg's Reel 0.1.22
+reelcore with riscos-reelhwaccel's h264_vchiq: H.264 decoded by the Pi's VideoCore.
 It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 

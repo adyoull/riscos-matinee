@@ -75,11 +75,18 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
-- `riscos-ffmpeg/releases/download/v5.1.10-riscos14/riscos-ffmpeg-devkit-5.1.10-riscos14.tgz`
-  (sha256 `074585cd111b1156d8b6c96bbd491ac33ee427b90079fa9474fcaaa02e330847`):
-  libavformat and the rest, built against UnixLib 5.0.2, with AcornSSL https
-  (patch 0018), and `libreelcore.a` with `reelcore.h`: the built-in player's core (Reel
-  0.1.21's: the stats panel drawn at the size it's seen, 4K halved into the overlay).
+- `riscos-ffmpeg-devkit-5.1.10-riscos15-vc4.tgz` (sha256
+  `dd2d7cd3d6a90e2b0495423784dd8f0fc3b5dee27c454dd9ce06656c15122b0b`): not a published
+  release yet. Built from riscos-ffmpeg's main at `8a828f4` (riscos15, Reel 0.1.22,
+  riscos-reelhwaccel devkit 0.2.1 in its `third_party/reelhwaccel`) with its own
+  scripts: `build/build-deps.sh`, `build/build-ffmpeg.sh`, `build/build-apps.sh`, then
+  `REEL_VERSION=0.1.22-vc4 build/package.sh 5.1.10-riscos15-vc4` (GCCSDK GCC 10.2 with
+  UnixLib 5.0.3.1; `DEVKIT` = riscos-mesa's 20.3.5-8 devkit; meson for dav1d). It has
+  libavformat and the rest with AcornSSL https and `h264_vchiq`, `libvcdec.a` (H.264
+  on the Pi's VideoCore: link `-lvcdec` after `-lavcodec`), and `libreelcore.a` with
+  `reelcore.h` (Reel 0.1.22's: the VideoCore first for H.264, `REELCORE_NO_VIDEOCORE`,
+  `ReelCoreStats.decoder`). When riscos-ffmpeg publishes its riscos15 devkit, use that.
+  test21 and earlier used the v5.1.10-riscos14 release (sha256 `074585cd…`).
 - `riscos-mesa/releases/download/v20.3.5-8/riscos-mesa-devkit-20.3.5-8.tgz`: libz now,
   and libEGL and libOSMesa for a later embedded ReelEGL.
 - `riscos-ffmpeg/releases/download/reel-0.1.20/Reel-0.1.20.zip`: the players, for testing

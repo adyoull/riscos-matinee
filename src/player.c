@@ -1169,6 +1169,12 @@ static void panel_update(int sample)
              b[0] ? " (" : "", b, b[0] ? ")" : "", c[0] ? panel_short(c, 1) : "none", d[0] ? " (" : "", d, d[0] ? ")" : "");
     G.pp.label[i] = "Codecs"; G.pp.value[i] = G.val[i]; i++;
 
+    /* who decodes the picture: the Pi's VideoCore (h264_vchiq) or the ARM */
+    snprintf(G.val[i], sizeof(G.val[i]), "%s",
+             st.decoder == REELCORE_DECODER_VIDEOCORE ? "VideoCore (hardware)" :
+             st.decoder == REELCORE_DECODER_ARM_AFTER ? "ARM (software: the VideoCore failed part way)" : "ARM (software)");
+    G.pp.label[i] = "Decoder"; G.pp.value[i] = G.val[i]; i++;
+
     media_value("Video", "Colours", a, sizeof(a));
     snprintf(G.val[i], sizeof(G.val[i]), "%.100s", a[0] ? a : "?");
     G.pp.label[i] = "Color"; G.pp.value[i] = G.val[i]; i++;

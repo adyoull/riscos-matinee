@@ -2463,6 +2463,11 @@ static int script(int *b, int mask)
                 ok |= (!strcmp(player_test_panel(i, 0), "Network Activity")) | (!strcmp(player_test_panel(i, 0), "Date")) << 1 |
                       (!strcmp(player_test_panel(i, 0), "Codecs")) << 2;
             CHECK(ok == 7, "ReelEGL's rows: Network Activity, Codecs, Date");
+            ok = 0;
+            for (int i = 0; i < player_test_panel_rows(); i++)
+                if (!strcmp(player_test_panel(i, 0), "Decoder") && !strcmp(player_test_panel(i, 1), "VideoCore (hardware)"))
+                    ok = 1;
+            CHECK(ok, "Decoder: the VideoCore (h264_vchiq), from reelcore's stats");
             CHECK(strstr(player_test_panel(0, 1), " / Transcoded"), "Source: Transcoded (%s)", player_test_panel(0, 1));
             CHECK(strstr(player_test_time(), "0:13"), "the time: %s", player_test_time());
             pc++;
