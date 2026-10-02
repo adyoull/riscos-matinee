@@ -7,23 +7,23 @@ as riscos-ffmpeg's mksprites.py makes Reel's.
   mksprites.py --hi OUT   !Sprites11: 68 x 68 and 34 x 34 at 180 dpi (RISC OS
                           5 uses these in high-resolution modes)
 
-The picture is our own, drawn from shapes, in the browser's colours: a
-dark rounded screen with three posters on it (the middle one in front),
-and a blue play button. Each pixel is the average of 6 x 6 samples, so
+The picture is our own, drawn from shapes: a little theatre for a
+matinee, red curtains drawn back and tied with gold from a lit screen
+under a scalloped pelmet, in a gold-edged frame, with a play triangle on
+the screen. Each pixel is the average of 6 x 6 samples, so
 the edges inside it are smooth; the mask keeps the pixels more than half
 covered, and those on the outer edge are blended with the icon bar's grey.
 """
 import struct
 import sys
 
-SCREEN = (30, 33, 40)
-SCREEN_EDGE = (14, 15, 19)
-POSTERS = [((70, 110, 190), (40, 60, 120)),      # top and bottom colours
-           ((236, 190, 90), (190, 110, 50)),
-           ((90, 190, 150), (40, 110, 90))]
-SHADOW = (10, 10, 12)
-ACCENT = (70, 150, 235)
-WHITE = (250, 250, 250)
+FRAME = (52, 30, 18)                    # the proscenium: dark wood
+GOLD = (226, 178, 72)
+GOLD_DARK = (150, 104, 36)
+RED = (176, 26, 36)
+RED_DARK = (92, 10, 18)
+SCREEN_TOP = (255, 246, 214)            # the screen, lit by the projector
+SCREEN_FOOT = (236, 206, 150)
 ICONBAR = (221, 221, 221)
 SS = 6
 
@@ -38,42 +38,66 @@ def rounded(fx, fy, x0, y0, x1, y1, r):
 
 
 def mix(a, b, t):
+    t = max(0.0, min(1.0, t))
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
-def sample(fx, fy):
-    """The colour at a point in 34-unit space (y down), or None."""
-    px = None
-    if rounded(fx, fy, 1, 3.5, 33, 30.5, 5):
-        px = SCREEN_EDGE
-        if rounded(fx, fy, 2, 4.5, 32, 29.5, 4):
-            px = mix(SCREEN, SCREEN_EDGE, max(0.0, (fy - 5) / 40))
-    # the stand
-    if 13 <= fx <= 21 and 30 <= fy <= 32.5:
-        px = SCREEN_EDGE
-    if px is None:
+def curtain(fx, fy, left):
+    """A red curtain, drawn back and tied at about two thirds of the way
+    down: its inner edge curves in to the tie and out again below it.
+    The folds are bands of light and shade down it."""
+    import math
+    top, tie, foot = 7.0, 20.0, 29.5
+    if not (top <= fy <= foot):
         return None
-    # three posters: the outer two behind, the middle one in front
-    boxes = [(4.5, 8, 11.5, 19, 0), (22.5, 8, 29.5, 19, 2), (11, 6.5, 20, 20.5, 1)]
-    for x0, y0, x1, y1, k in boxes:
-        if rounded(fx, fy, x0 + 0.8, y0 + 0.8, x1 + 0.8, y1 + 0.8, 1.2):
-            px = SHADOW
-        if rounded(fx, fy, x0, y0, x1, y1, 1.2):
-            top, bottom = POSTERS[k]
-            px = mix(top, bottom, (fy - y0) / (y1 - y0))
-    # a progress bar under them
-    if 5 <= fx <= 20 and 23 <= fy <= 24.5:
-        px = ACCENT if fx <= 13 else (70, 76, 90)
-    # the play button, bottom right, over everything
-    cx, cy, r = 25.5, 24.5, 6.8
-    d2 = (fx - cx) ** 2 + (fy - cy) ** 2
-    if d2 <= (r + 1.0) ** 2:
-        px = SCREEN_EDGE
-    if d2 <= r * r:
-        px = ACCENT
-        tx, ty = fx - (cx - 2.4), fy - cy
-        if 0 <= tx <= 6.2 and abs(ty) <= (6.2 - tx) * 0.6:
-            px = WHITE
+    # the inner edge's distance from the side, in 34ths
+    if fy <= tie:
+        t = (fy - top) / (tie - top)
+        reach = 9.0 - 5.2 * math.sin(t * math.pi / 2)
+    else:
+        t = (fy - tie) / (foot - tie)
+        reach = 3.8 + 3.2 * t * t
+    x = fx - 3.0 if left else 31.0 - fx
+    if not (0 <= x <= reach):
+        return None
+    fold = 0.5 + 0.5 * math.cos((x / max(reach, 1.0)) * math.pi * 2.6)
+    c = mix(RED_DARK, RED, 0.35 + 0.65 * fold)
+    if x > reach - 0.9:                 # the edge in shadow
+        c = mix(c, RED_DARK, 0.6)
+    # the gold tie-back
+    if abs(fy - tie) <= 0.9 and x <= reach + 0.2:
+        c = GOLD if abs(fy - tie) <= 0.5 else GOLD_DARK
+    return c
+
+
+def sample(fx, fy):
+    """The colour at a point in 34-unit space (y down), or None: a little
+    theatre: red curtains drawn back from a lit screen under a gold-trimmed
+    pelmet, in a dark frame, with a play triangle on the screen."""
+    import math
+    if not rounded(fx, fy, 1, 2, 33, 32, 4):
+        return None
+    px = FRAME
+    if rounded(fx, fy, 1.8, 2.8, 32.2, 31.2, 3.4):
+        px = mix(GOLD, GOLD_DARK, (fy - 3) / 28)        # the gold border
+    if rounded(fx, fy, 3, 4, 31, 30, 2.4):
+        # the screen: lit from above, darker towards the foot
+        px = mix(SCREEN_TOP, SCREEN_FOOT, (fy - 8) / 22)
+        # the play triangle, soft gold
+        tx, ty = fx - 14.0, fy - 18.5
+        if 0 <= tx <= 7.4 and abs(ty) <= (7.4 - tx) * 0.62:
+            px = mix(GOLD, GOLD_DARK, 0.25)
+        # the curtains, over the screen's sides
+        for left in (True, False):
+            c = curtain(fx, fy, left)
+            if c:
+                px = c
+        # the pelmet across the top: red, scalloped, with a gold fringe
+        scallop = 8.4 + 1.3 * abs(math.sin((fx - 3) * math.pi / 4.0))
+        if fy <= scallop:
+            px = mix(RED, RED_DARK, (fy - 4) / 6)
+            if fy >= scallop - 0.8:
+                px = GOLD
     return px
 
 

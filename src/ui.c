@@ -953,7 +953,10 @@ static int jpeg_into(int *area, int w, int h, const char *jpeg, size_t len, int 
         return -1;
     r.r[0] = (intptr_t)jpeg;
     r.r[1] = ((w - tw) / 2) << S.xeig;
-    r.r[2] = ((h - th) / 2) << S.yeig;
+    /* taller than the box: most of what's cut comes off the foot, a fifth
+       off the head (faces and titles are near the top of posters and
+       backdrops; a cut through the middle took off heads) */
+    r.r[2] = (th > h ? (h - th) * 4 / 5 : (h - th) / 2) << S.yeig;
     r.r[3] = (intptr_t)scale;
     r.r[4] = (int)len;
     r.r[5] = 1;                     /* dithered */

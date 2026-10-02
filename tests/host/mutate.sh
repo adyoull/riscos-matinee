@@ -235,6 +235,10 @@ mutate "grid lines never cut to fit" src/ui.c \
 mutate "lists not asked for compressed" src/plex.c \
   'snprintf(out + n, size - n, "Accept-Encoding: gzip\\r\\n");' '(void)0;'
 
+# test21: crops
+mutate "tall pictures cut through the middle" src/ui.c \
+  'r.r[2] = (th > h ? (h - th) * 4 / 5 : (h - th) / 2) << S.yeig;' 'r.r[2] = ((h - th) / 2) << S.yeig;'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

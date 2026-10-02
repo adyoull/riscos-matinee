@@ -96,6 +96,7 @@ static int *plotted_area;               /* the last poster sprite plotted */
 static int *plotted_wide;               /* the widest one (a backdrop) */
 static int *output_sprite;              /* where output goes (NULL: the screen) */
 static int jpeg_plots, jpeg_scale[4], jpeg_into_sprite = 1;
+static int jpeg_topcut = -1;          /* of pictures cut top and bottom: the most cut off the top, in % of what's cut */
 static int drag_started;
 static int pointer_w = -1, pointer_i = -1, pointer_x = 640, pointer_y = 480;
 static int poll_null_mask_bad;
@@ -723,6 +724,14 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         jpeg_plots++;
         if (!output_sprite) { jpeg_into_sprite = 0; return NULL; }
         memcpy(jpeg_scale, sc, sizeof(jpeg_scale));
+        {
+            int bh = output_sprite[5] + 1, y = (int)in->r[2] >> 1, excess = sc[1] - bh;
+            if (excess > 2) {
+                int top = (y + sc[1] - bh) * 100 / excess;
+                if (top > jpeg_topcut)
+                    jpeg_topcut = top;
+            }
+        }
         for (long i = 0; i < in->r[4]; i++)
             h = (h ^ j[i]) * 16777619u;
         w = output_sprite[4] + 1; ht = output_sprite[5] + 1;
@@ -1091,6 +1100,8 @@ static int script(int *b, int mask)
                   "Continue watching: 16:9 pictures, 200 x 112 pixels");
             CHECK(log_count("/photo/:/transcode", "width", "116") >= 1 && log_count("/photo/:/transcode", "height", "174") >= 1,
                   "posters asked for at the tile's size in pixels");
+            CHECK(jpeg_topcut >= 0 && jpeg_topcut <= 25,
+                  "a tall picture in a wide box: cut mostly from the foot (%d%% off the top)", jpeg_topcut);
             pc = 60100;
             return ev_redraw(b, w_browser);
         case 60100:
