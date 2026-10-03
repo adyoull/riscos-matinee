@@ -31,6 +31,8 @@ typedef struct {
     char sub_text[256];
     int fast;                   /* reelcore_set_fast */
     double clock_start;         /* set by the test: the clock counts from here (a stream's start_time) */
+    int app_page;               /* the physical page at &8000 (the fake OS_Memory 0 gives it) */
+    int move_page_on_open;      /* set by the test: opening moves it (a decoder claiming contiguous memory) */
 } fake_rc_t;
 
 extern fake_rc_t fake_rc;

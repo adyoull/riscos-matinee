@@ -75,6 +75,17 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
+- `riscos-ffmpeg-devkit-5.1.10-riscos16-vcdec042.tgz` (sha256
+  `3afb1bad1d5724c262e65e15b1c0fdcc7ab475859d308b5a2af0861c3dac0f68`), used from test24:
+  riscos-ffmpeg's v5.1.10-riscos16 tree (`21a1046`) with its `third_party/reelhwaccel`
+  `vcdec.h` and `libvcdec.a` replaced by ReelHWAccel devkit 0.2.4's (sha256 `8876f366…`,
+  `ReelHWAccel/dist/r26`: vcdec 0.4.2, whose contiguous pools never include the program's
+  page at &8000; taking it made RISC OS move the program, ARMEABISupport 1.08 kept a stale
+  record, and a later program could stop with "EMT trap, code 6"). h264_vchiq's patch is
+  the same (0.2.4's differs only in its licence header). Built with riscos-ffmpeg's own
+  scripts (`RECONFIGURE=1 build/build-ffmpeg.sh`, `build/build-apps.sh`,
+  `REEL_VERSION=0.1.23-vcdec042 build/package.sh 5.1.10-riscos16-vcdec042`; deps as for
+  test22). Not a riscos-ffmpeg release: switch to theirs once they adopt 0.2.4.
 - `riscos-ffmpeg/releases/download/v5.1.10-riscos16/riscos-ffmpeg-devkit-5.1.10-riscos16.tgz`
   (sha256 `6d7ab4fb886e3dc42646678476ac530beaaa9972025f0f61365479a7095be8b9`): FFmpeg
   5.1.10-riscos16 with `h264_vchiq`, ReelHWAccel's `libvcdec.a` (devkit 0.2.1, vcdec

@@ -20,6 +20,7 @@
 #include "player.h"
 
 #define OS_Byte                0x06
+#define OS_Memory              0x68
 #define OS_WriteN              0x46
 #define OS_ReadModeVariable    0x35
 #define OS_SpriteOp            0x2E
@@ -111,6 +112,7 @@ static struct {
     /* timing */
     int idle_cs;
     int ov_pending;
+    int app_page, page_moves;       /* the physical page at &8000 (0: unknown), and how often it moved */
     unsigned draw_n, draw_cs;
     /* the log */
     FILE *log;
@@ -532,6 +534,36 @@ static int ov_hide(void)
     return 1;
 }
 
+/* The physical page number of our page at &8000 (OS_Memory 0: logical
+   address in, page number out), or 0. ARMEABISupport knows a program by
+   that page and isn't told when RISC OS moves it, which it does when
+   something claims contiguous memory that includes it (the VideoCore's
+   pools, an overlay's buffers): the program's record is then left behind
+   at exit, and a later program can stop with "EMT trap, code 6".
+   ReelHWAccel's vcdec 0.4.2 keeps its own pools clear of it; this checks,
+   around everything that claims such memory, that nothing else moved it. */
+static int app_page(void)
+{
+    int blk[3] = { 0, 0x8000, 0 };
+    _kernel_swi_regs r;
+    r.r[0] = 0 | (1 << 9) | (1 << 11);              /* logical address given; page number wanted */
+    r.r[1] = (intptr_t)blk;
+    r.r[2] = 1;
+    return swi(OS_Memory, &r) ? 0 : blk[0];
+}
+
+static void page_check(const char *after)
+{
+    int p = app_page();
+    if (p && P.app_page && p != P.app_page) {
+        P.page_moves++;
+        lg("the page at &8000 moved (page %d to %d) after %s: ARMEABISupport may keep a stale record "
+           "(*ARMEABISupport_Info)", P.app_page, p, after);
+    }
+    if (p)
+        P.app_page = p;
+}
+
 static int ov_create(int fw, int fh, int colour)
 {
     int sel[12], b = 0, banks;
@@ -565,6 +597,7 @@ static int ov_create(int fw, int fh, int colour)
         ov_call(OV_DESTROY, ov.id, 0);
         ov.id = 0;
     }
+    page_check("making the overlay");
     if (!ov.id)
         return 0;
     ov.banks = banks;
@@ -1549,6 +1582,7 @@ int player_open(const player_src *s, int win)
                                                                or in the mini player */
     close_video(keep);
     log_open();
+    page_check("starting");
     reelcore_set_log(P.log ? ff_log : NULL, 0);
     read_screen();
     P.win = win;
@@ -1614,6 +1648,7 @@ static void close_video(int keep_full)
         full_delete();
     if (P.v)
         reelcore_close(P.v);
+    page_check("closing the video");
     P.v = NULL;
     G.of = NULL;
     P.ready = P.ended = P.failed = 0;
@@ -1703,6 +1738,7 @@ void player_seek(double t)
 static void opened(void)
 {
     P.ready = 1;
+    page_check("opening the video (the decoder's memory)");
     lg("opened in %.1f s: %dx%d, %.1f s", (now_cs() - P.opened_cs) / 100.0, reelcore_width(P.v),
        reelcore_height(P.v), reelcore_duration(P.v));
     {
@@ -2242,4 +2278,5 @@ const char *player_test_panel(int row, int value)
 }
 int player_test_sprite_plots(void) { return (int)P.sprite_plots; }
 int player_test_idle(void) { return P.idle_cs; }
+int player_test_page_moves(void) { return P.page_moves; }
 #endif

@@ -87,6 +87,8 @@ int reelcore_update(ReelCore *v)
             return REELCORE_FAILED;
         v->ready = 1;
         v->last_cs = now;
+        if (fake_rc.move_page_on_open)
+            fake_rc.app_page++;
         return REELCORE_READY;
     }
     if (v->paused || v->ended)

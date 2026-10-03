@@ -243,6 +243,10 @@ mutate "tall pictures cut through the middle" src/ui.c \
 mutate "the Decoder row says ARM always" src/player.c \
   'st.decoder == REELCORE_DECODER_VIDEOCORE ? "VideoCore (hardware)" :' '0 ? "VideoCore (hardware)" :'
 
+# test24: the page at &8000
+mutate "a moved page at &8000 not noticed" src/player.c \
+  'if (p && P.app_page && p != P.app_page) {' 'if (0) {'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

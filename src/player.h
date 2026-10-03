@@ -161,6 +161,7 @@ int player_test_panel_rows(void);
 const char *player_test_panel(int row, int value);
 int player_test_sprite_plots(void);
 int player_test_idle(void);
+int player_test_page_moves(void);   /* times the page at &8000 moved (should be 0) */
 #endif
 
 /* The bar's buttons (player_test_button_xy) */

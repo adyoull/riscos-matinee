@@ -370,6 +370,14 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
             }
         return &err;
     }
+    case 0x68:                                      /* OS_Memory 0: our page at &8000's page number */
+        if ((in->r[0] & 0xFF) == 0 && (in->r[0] & 0x200) && (in->r[0] & 0x800)) {
+            int *blk = (int *)(intptr_t)in->r[1];
+            SCHECK(blk[1] == 0x8000 && in->r[2] == 1, "OS_Memory 0: the page at &8000");
+            blk[0] = fake_rc.app_page ? fake_rc.app_page : (fake_rc.app_page = 4242);
+            return NULL;
+        }
+        return &err;
     case 0x59CC0: {                                 /* VideoOverlay_Create */
         const int *sel = (const int *)(intptr_t)in->r[0];
         for (int i = 5; sel[i] != -1; i += 2) {
@@ -2235,6 +2243,8 @@ static int script(int *b, int mask)
             return ev_key(b, w_browser, -1, 8);                     /* Back, and Play again: */
         case 92181:
             CHECK(ui_test_page() == PG_DETAILS && !ui_test_player(), "back to the details");
+            CHECK(player_test_page_moves() == 0, "the page at &8000 stayed put (open, overlay, close)");
+            fake_rc.move_page_on_open = 1;                      /* as a decoder taking it for its memory would */
             open0 = fake_rc.opens;
             n_null = 0;
             pc++;
@@ -2244,6 +2254,8 @@ static int script(int *b, int mask)
                 fake_cs += 2;
                 return NULL_EVENT;
             }
+            CHECK(player_test_page_moves() == 1, "a decoder moving the page at &8000: noticed (and logged)");
+            fake_rc.move_page_on_open = 0;
             snprintf(want, sizeof(want), "%s/library/parts/11/101/file.mp4", base);
             CHECK(fake_rc.opens == open0 + 1 && !strcmp(fake_rc.url, want) && fake_rc.sub_track == 2 &&
                   fake_rc.sub_files == 2, "subtitles chosen: still the file itself, the player showing them (%s)",
