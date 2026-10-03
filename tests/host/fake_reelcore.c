@@ -42,6 +42,7 @@ ReelCore *reelcore_open_source(const ReelCoreSource *src, int flags)
     snprintf(fake_rc.url, sizeof(fake_rc.url), "%s", src->url);
     snprintf(fake_rc.headers, sizeof(fake_rc.headers), "%s", src->headers ? src->headers : "");
     fake_rc.async = (flags & REELCORE_ASYNC) != 0;
+    fake_rc.open_flags = flags;
     fake_rc.open_now++;
     v->opening = 3;
     v->fail = strstr(src->url, "fail") != NULL;
@@ -201,7 +202,8 @@ void reelcore_stats(const ReelCore *v, ReelCoreStats *st)
     memset(st, 0, sizeof(*st));
     /* the server's H.264 (a converted stream): the Pi's VideoCore; a file
        of its own: the ARM (as Big Buck Bunny's fake) */
-    st->decoder = strstr(fake_rc.url, ".m3u8") ? REELCORE_DECODER_VIDEOCORE : REELCORE_DECODER_ARM;
+    st->decoder = fake_rc.hevc_block ? REELCORE_DECODER_HEVC_BLOCK :
+                  strstr(fake_rc.url, ".m3u8") ? REELCORE_DECODER_VIDEOCORE : REELCORE_DECODER_ARM;
     st->position = v->pos;
     st->clock = v->pos + fake_rc.clock_start;
     st->fps = 25;

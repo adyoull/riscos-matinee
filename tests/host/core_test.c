@@ -793,6 +793,31 @@ int main(int argc, char **argv)
     plex_list_free(&films);
     plex_list_free(&tv);
     plex_list_free(&deck);
+    {   /* HEVC on the Pi 4's HEVC block */
+        plex_item h;
+        caps_t k;
+        char why[160];
+        memset(&h, 0, sizeof(h));
+        h.part_key = "/x";
+        h.container = "mkv";
+        h.vcodec = "hevc";
+        h.vprofile = "main 10";
+        h.acodec = "eac3";
+        h.width = 3840; h.height = 2160; h.bitrate_kbps = 30000; h.fps = 24;
+        caps_for(Q_720, &k);
+        CHECK(!caps_direct_ok(&k, &h, why, sizeof(why)) && strstr(why, "hevc video is converted"), "no HEVC block: converted (%s)", why);
+        k.hevc = 1;
+        CHECK(caps_direct_ok(&k, &h, why, sizeof(why)) && strstr(why, "HEVC block"),
+              "the HEVC block: 4K Main 10 at 30 Mbit/s played as it is, whatever the Quality (%s)", why);
+        h.fps = 60;
+        CHECK(!caps_direct_ok(&k, &h, why, sizeof(why)), "4K at 60 a second: converted (%s)", why);
+        h.fps = 24; h.vprofile = "main 4:4:4";
+        CHECK(!caps_direct_ok(&k, &h, why, sizeof(why)), "4:4:4: converted (%s)", why);
+        h.vprofile = "main"; h.width = 7680; h.height = 4320;
+        CHECK(!caps_direct_ok(&k, &h, why, sizeof(why)), "8K: converted (%s)", why);
+        h.width = 1920; h.height = 1080; h.bitrate_kbps = 50000;
+        CHECK(!caps_direct_ok(&k, &h, why, sizeof(why)), "50 Mbit/s: converted (%s)", why);
+    }
     jellyfin_tests();
     printf("core_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;

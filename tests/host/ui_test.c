@@ -31,6 +31,7 @@
 #include "sources.h"            /* Reel's (riscos-ffmpeg player/sources.c) */
 #include "panel_font.h"         /* Reel's bitmap font (riscos-ffmpeg reelcore/), for the pictures */
 #include "player.h"
+#include "reelcore.h"
 #include "fake_reelcore.h"
 #include "imgcache.h"
 
@@ -998,8 +999,26 @@ static int script(int *b, int mask)
             CHECK(proginfo_made == 1, "Info window");
             CHECK(strstr(read_file(choices), "client_id matinee-") != NULL, "a client id kept from the start");
             CHECK(mask & 1, "no null events while there's nothing to do");
-            pc++;
+            pc = 160;
             return ev_click(b, -2, 3, 1000, 20, 4);             /* Select on the icon */
+        case 160:
+            CHECK(win(w_browser)->open && ui_test_signin_mode() == SI_PICK, "Select, no server yet: Add a server, its choice");
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 161:
+            CHECK(strstr(plotted_text, "Add a server|") && strstr(plotted_text, "Plex|") && strstr(plotted_text, "Jellyfin|") &&
+                  strstr(plotted_text, "Cancel|"), "drawn: %s", plotted_text);
+            save_picture("signin-pick.ppm", w_browser);
+            pc++;
+            return ev_button(b, w_browser, S_CANCEL, 0x400);
+        case 162:
+            CHECK(!win(w_browser)->open && ui_test_page() != PG_SIGNIN, "Cancel with no server: the window closed");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 4);
+        case 163:
+            CHECK(ui_test_signin_mode() == SI_PICK, "Select again: the choice");
+            pc = 1;
+            return ev_button(b, w_browser, S_PICK_PLEX, 0x400);
         case 1:
             CHECK(win(w_browser)->open && ui_test_page() == PG_SIGNIN,
                   "Select before signing in: the window, on its sign-in page");
@@ -1015,7 +1034,7 @@ static int script(int *b, int mask)
             pc = 150;
             return ev_redraw(b, w_browser);
         case 150:
-            CHECK(strstr(plotted_text, "Sign in|") && strstr(plotted_text, "Sign in with a code|") &&
+            CHECK(strstr(plotted_text, "Sign in|") && strstr(plotted_text, "Sign in to Plex with a code|") && strstr(plotted_text, "Back|") &&
                   strstr(plotted_text, "A  B  C  D|") && strstr(plotted_text, "Waiting for the code...|") &&
                   strstr(plotted_text, "Use these|"), "the sign-in page drawn: %s", plotted_text);
             save_picture("signin.ppm", w_browser);
@@ -2837,7 +2856,11 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);
         case 81:
-            CHECK(ui_test_page() == PG_SIGNIN && win(w_browser)->open, "Select: the sign-in page again");
+            CHECK(ui_test_signin_mode() == SI_PICK && win(w_browser)->open, "Select: Add a server again");
+            pc = 8100;
+            return ev_button(b, w_browser, S_PICK_PLEX, 0x400);
+        case 8100:
+            CHECK(ui_test_signin_mode() == SI_PLEX, "Plex's sign-in");
             snprintf(type_str, sizeof(type_str), "127.0.0.1:%sx", base + 17);   /* x: a slip, deleted */
             type_i = 0;
             pc = 810;
@@ -2951,17 +2974,22 @@ static int script(int *b, int mask)
             return ev_click(b, -2, 3, 1000, 20, 2);             /* Menu on the icon */
         case 8001: {
             const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
-            CHECK(sm && !menu_shaded(menu_open, MB_SERVERS) && !strcmp(menu_text(sm, 0), "Add a Jellyfin server...") &&
-                  (menu_flags(sm, 0) & 0x80), "Servers, not signed in to plex.tv: Add a Jellyfin server... only");
+            CHECK(sm && !menu_shaded(menu_open, MB_SERVERS) && !strcmp(menu_text(sm, 0), "Add a server...") &&
+                  (menu_flags(sm, 0) & 0x80), "Servers, not signed in to plex.tv: Add a server... only");
+            CHECK(!strcmp(menu_text(menu_open, MB_SIGNIN), "Add a server..."), "and on the icon's menu");
             pc++;
             return ev_menu(b, MB_SERVERS, 0);
         }
         case 8002:
+            CHECK(ui_test_signin_mode() == SI_PICK, "Add a server: which kind");
+            pc = 8040;
+            return ev_button(b, w_browser, S_PICK_JF, 0x400);
+        case 8040:
             CHECK(ui_test_page() == PG_SIGNIN && ui_test_signin_jf() && win(w_browser)->open && ui_test_field() == 0,
                   "the Jellyfin sign-in page, the caret in the address");
             snprintf(type_str, sizeof(type_str), "127.0.0.1:%s", base + 17);
             type_i = 0;
-            pc++;
+            pc = 8003;
             return ev_button(b, w_browser, S_JADDR, 0x400);
         case 8003:
             if (type_str[type_i])
@@ -2977,7 +3005,8 @@ static int script(int *b, int mask)
             return ev_redraw(b, w_browser);
         case 8005:
             CHECK(strstr(plotted_text, "Sign in to a Jellyfin server|") && strstr(plotted_text, "1  2  3  4  5  6|") &&
-                  strstr(plotted_text, "New code|") && strstr(plotted_text, "Plex instead|"), "drawn: %s", plotted_text);
+                  strstr(plotted_text, "New code|") && strstr(plotted_text, "Back|") &&
+                  strstr(plotted_text, "Cancel|"), "drawn: %s", plotted_text);
             save_picture("signin-jellyfin.ppm", w_browser);
             fake_cs = idle_time;
             pc++;
@@ -3008,7 +3037,7 @@ static int script(int *b, int mask)
         case 8008: {
             const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
             CHECK(sm && !strcmp(menu_text(sm, 0), "Cellar (Jellyfin)") && (menu_flags(sm, 0) & 1) &&
-                  !strcmp(menu_text(sm, 1), "Add a Jellyfin server..."), "Servers: Cellar, ticked");
+                  !strcmp(menu_text(sm, 1), "Add a server..."), "Servers: Cellar, ticked");
             CHECK(menu_shaded(menu_open, MB_USERS) && !strcmp(menu_text(menu_open, MB_SIGNOUT), "Sign out of this server"),
                   "no Plex Home; Sign out of this server");
             pc++;
@@ -3078,6 +3107,7 @@ static int script(int *b, int mask)
             CHECK(ui_test_page() == PG_DETAILS && strstr(ui_test_det(2), "Transcoded"), "HEVC: converted (%s)", ui_test_det(2));
             CHECK(log_count("/Items/jm2/PlaybackInfo", NULL, NULL) == 0, "the details say so without asking the server");
             open0 = fake_rc.opens;
+            setenv("Matinee$NoHEVCBlock", "1", 1);
             pc++;
             return ev_button(b, w_browser, D_PLAY, 0x400);
         case 8032:
@@ -3085,6 +3115,8 @@ static int script(int *b, int mask)
             CHECK(ui_test_page() == PG_PLAYER && fake_rc.opens == open0 + 1 && !strncmp(fake_rc.url, want, strlen(want)) &&
                   strstr(fake_rc.url, "ApiKey=JF-TOKEN") && log_count("/Items/jm2/PlaybackInfo", NULL, NULL) == 1,
                   "converted: the server's HLS playlist, from PlaybackInfo: %s", fake_rc.url);
+            CHECK(fake_rc.open_flags & REELCORE_NO_HEVC_BLOCK, "Matinee$NoHEVCBlock: reelcore told");
+            unsetenv("Matinee$NoHEVCBlock");
             n_null = 0;
             pc++;
             continue;
@@ -3102,11 +3134,74 @@ static int script(int *b, int mask)
         case 8035:
             CHECK(log_count("/Videos/ActiveEncodings", "playSessionId", "0123456789abcdef0123456789abcdef") == 1,
                   "stopped: the conversion ended under Jellyfin's PlaySessionId");
+            player_test_hevc_block = 1;                         /* a Pi 4: the HEVC block */
+            fake_rc.hevc_block = 1;
+            open0 = fake_rc.opens;
+            pc = 8036;
+            return ev_button(b, w_browser, D_PLAY, 0x400);
+        case 8036:
+            snprintf(want, sizeof(want), "%s/Videos/jm2/stream?static=true&mediaSourceId=ms-jm2", base);
+            CHECK(ui_test_page() == PG_PLAYER && fake_rc.opens == open0 + 1 && !strncmp(fake_rc.url, want, strlen(want)) &&
+                  !(fake_rc.open_flags & REELCORE_NO_HEVC_BLOCK), "with the HEVC block: the HEVC file itself (%s)", fake_rc.url);
+            n_null = 0;
+            pc++;
+            continue;
+        case 8037:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 8038:
+            pc++;
+            return ev_menu(b, MP_STOP, -1);
+        case 8039:
+            CHECK(ui_test_page() == PG_DETAILS && strstr(ui_test_det(2), "HEVC block"), "the details say so: %s", ui_test_det(2));
+            player_test_hevc_block = 0;
+            fake_rc.hevc_block = 0;
             pc = 8017;
             return ev_click(b, -2, 3, 1000, 20, 2);
         case 8017:
+            pc = 8050;
+            return ev_menu(b, MB_SERVERS, 1);                   /* Add a server... */
+        case 8050:
+            CHECK(ui_test_signin_mode() == SI_PICK, "the choice");
             pc++;
-            return ev_menu(b, MB_SERVERS, 1);                   /* Add a Jellyfin server...: the same, by password */
+            return ev_button(b, w_browser, S_PICK_JF, 0x400);
+        case 8051:
+            CHECK(ui_test_signin_mode() == SI_JF, "Jellyfin's");
+            pc++;
+            return ev_button(b, w_browser, S_BACK, 0x400);
+        case 8052:
+            CHECK(ui_test_signin_mode() == SI_PICK, "Back: the choice again");
+            pc++;
+            return ev_button(b, w_browser, S_PICK_JF, 0x400);
+        case 8053:
+            pc++;
+            return ev_button(b, w_browser, S_CANCEL, 0x400);
+        case 8054:
+            CHECK(ui_test_page() == PG_DETAILS && win(w_browser)->open && !strcmp(ui_test_path(), "Cellar > Jelly Films > Jelly Hevc") ,
+                  "Cancel: back to the details page it was on (%s)", ui_test_path());
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 8055:
+            pc++;
+            return ev_menu(b, MB_SERVERS, 1);
+        case 8056:
+            pc++;
+            return ev_key(b, w_browser, -1, 0x1B);              /* Escape on the choice: Cancel too */
+        case 8057:
+            CHECK(ui_test_page() == PG_DETAILS, "Escape: back as well");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 8058:
+            pc++;
+            return ev_menu(b, MB_SERVERS, 1);
+        case 8059:
+            pc = 8018;
+            return ev_button(b, w_browser, S_PICK_JF, 0x400);   /* the same server again, by password */
         case 8018:
             CHECK(ui_test_signin_jf() && strstr(ui_test_signin(5), "127.0.0.1:"), "the address kept: %s",
                   ui_test_signin(5));
@@ -3157,7 +3252,7 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 4);
         case 8026:
-            CHECK(ui_test_page() == PG_SIGNIN && !ui_test_signin_jf(), "Select: Plex's sign-in page again");
+            CHECK(ui_test_signin_mode() == SI_PICK, "Select: Add a server's choice again");
             pc++;
             return ev_msg(b, 0, 0, 0);
         default:

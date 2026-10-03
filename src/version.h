@@ -7,7 +7,7 @@
 #ifndef MATINEE_VERSION_H
 #define MATINEE_VERSION_H
 
-#define MATINEE_VERSION  "0.1.0-test25"
+#define MATINEE_VERSION  "0.1.0-test26"
 #define MATINEE_DATE     "30-Sep-2026"
 #define APP_AUTHOR      "Andrew Youll"
 

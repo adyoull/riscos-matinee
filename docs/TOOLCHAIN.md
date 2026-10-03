@@ -75,8 +75,17 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
+- `riscos-ffmpeg-devkit-5.1.10-riscos16-hevc2.tgz` (sha256
+  `8209aadff6177bcae951c7eb44483aa71eefc3114053a8f18bb8658ba761eb00`), used from test26:
+  riscos-ffmpeg `856b84b` (its test build r80, "hevc2": patch 0023 hevc_hwdec, HEVC on the
+  Pi 4's HEVC block, with ReelHWAccel devkit 0.2.7, sha256 `c65b8ac5…`, hevcdec 0.1.8 and
+  vcdec 0.4.2, in its `third_party/reelhwaccel`; reelcore with hevc_hwdec and drop_before).
+  Built with its own scripts from a fresh FFmpeg tree (`RECONFIGURE=1 build/build-ffmpeg.sh`,
+  `build/build-apps.sh`, `REEL_VERSION=0.1.23-hevc2 build/package.sh
+  5.1.10-riscos16-hevc2`). Link `-lvcdec -lhevcdec` after `-lavcodec`. Not a release:
+  switch to riscos-ffmpeg's own devkit once it publishes one with hevc_hwdec.
 - `riscos-ffmpeg-devkit-5.1.10-riscos16-vcdec042.tgz` (sha256
-  `3afb1bad1d5724c262e65e15b1c0fdcc7ab475859d308b5a2af0861c3dac0f68`), used from test24:
+  `3afb1bad1d5724c262e65e15b1c0fdcc7ab475859d308b5a2af0861c3dac0f68`), used for test24 and test25:
   riscos-ffmpeg's v5.1.10-riscos16 tree (`21a1046`) with its `third_party/reelhwaccel`
   `vcdec.h` and `libvcdec.a` replaced by ReelHWAccel devkit 0.2.4's (sha256 `8876f366…`,
   `ReelHWAccel/dist/r26`: vcdec 0.4.2, whose contiguous pools never include the program's

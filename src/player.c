@@ -1202,10 +1202,12 @@ static void panel_update(int sample)
              b[0] ? " (" : "", b, b[0] ? ")" : "", c[0] ? panel_short(c, 1) : "none", d[0] ? " (" : "", d, d[0] ? ")" : "");
     G.pp.label[i] = "Codecs"; G.pp.value[i] = G.val[i]; i++;
 
-    /* who decodes the picture: the Pi's VideoCore (h264_vchiq) or the ARM */
+    /* who decodes the picture: the Pi's VideoCore (h264_vchiq), the Pi 4's
+       HEVC block (hevc_hwdec) or the ARM */
     snprintf(G.val[i], sizeof(G.val[i]), "%s",
              st.decoder == REELCORE_DECODER_VIDEOCORE ? "VideoCore (hardware)" :
-             st.decoder == REELCORE_DECODER_ARM_AFTER ? "ARM (software: the VideoCore failed part way)" : "ARM (software)");
+             st.decoder == REELCORE_DECODER_HEVC_BLOCK ? "HEVC block (hardware)" :
+             st.decoder == REELCORE_DECODER_ARM_AFTER ? "ARM (software: the hardware failed part way)" : "ARM (software)");
     G.pp.label[i] = "Decoder"; G.pp.value[i] = G.val[i]; i++;
 
     media_value("Video", "Colours", a, sizeof(a));
@@ -1573,6 +1575,39 @@ void player_init(int task, int overlay, int pic_mode, double volume)
     P.vol = volume >= 0 && volume <= 1 ? volume : 1.0;
 }
 
+/* The Pi 4's HEVC block: there (and not turned off with Matinee$NoHEVCBlock)?
+   Asked once, by opening hevcdec and closing it again; the tests' fake says. */
+#if defined(__riscos__) && !defined(MATINEE_TEST)
+#include "hwhevcdec.h"
+#endif
+int player_hevc_block(void)
+{
+    static int known = -1;
+    if (getenv("Matinee$NoHEVCBlock"))
+        return 0;
+#ifdef MATINEE_TEST
+    (void)known;
+    return player_test_hevc_block;
+#elif defined(__riscos__)
+    if (known < 0) {
+        hevcdec_config c;
+        hevcdec *d = NULL;
+        hevcdec_config_init(&c);
+        c.width = 1920;
+        c.height = 1080;
+        known = hevcdec_open(&d, &c) == HEVCDEC_OK;
+        if (d)
+            hevcdec_close(d);
+        lg("the HEVC block: %s%s", known ? "there" : "not there: ", known ? "" : hevcdec_open_error());
+        page_check("after asking for the HEVC block");
+    }
+    return known;
+#else
+    (void)known;
+    return 0;
+#endif
+}
+
 static void close_video(int keep_full);
 
 int player_open(const player_src *s, int win)
@@ -1612,7 +1647,7 @@ int player_open(const player_src *s, int win)
     src.title = P.title;
     lg("open %s (%s; starts at %.1f s, from %.1f s)", P.title, P.convert ? "transcoded" : "direct play",
        P.base, P.start);
-    P.v = reelcore_open_source(&src, REELCORE_ASYNC);
+    P.v = reelcore_open_source(&src, REELCORE_ASYNC | (getenv("Matinee$NoHEVCBlock") ? REELCORE_NO_HEVC_BLOCK : 0));
     layout_boxes();
     pic_make();
     if (!P.v) {
@@ -2254,6 +2289,9 @@ void player_note(const char *text)
     bar_refresh();
 }
 
+#ifdef MATINEE_TEST
+int player_test_hevc_block;
+#endif
 #ifdef MATINEE_TEST
 int player_test_button_xy(int id, int *x, int *y)
 {

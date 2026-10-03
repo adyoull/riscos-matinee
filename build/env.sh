@@ -3,11 +3,11 @@
 TOP=$(cd "$(dirname "$0")/.." && pwd)
 GCCSDK_ENV=${GCCSDK_ENV:-$HOME/gccsdk/env}
 CROSS=${CROSS:-$GCCSDK_ENV/bin/arm-riscos-gnueabihf-}
-# riscos-ffmpeg's devkit: release v5.1.10-riscos16 (Reel 0.1.23's reelcore,
-# h264_vchiq) rebuilt with ReelHWAccel's devkit 0.2.4 (vcdec 0.4.2: its pools
-# never take our page at &8000, the "EMT trap, code 6" fix) until riscos-ffmpeg
-# publishes one with it (docs/TOOLCHAIN.md)
-FFDEV=${FFDEV:-$TOP/../devkit/riscos-ffmpeg-devkit-5.1.10-riscos16-vcdec042}
+# riscos-ffmpeg's devkit: riscos-ffmpeg 856b84b (the riscos16 tree with
+# hevc_hwdec, ReelHWAccel devkit 0.2.7: HEVC on the Pi 4's HEVC block, and
+# vcdec 0.4.2's EMT fix), built from source as riscos-ffmpeg's test build
+# r80 (hevc2) until it publishes the devkit (docs/TOOLCHAIN.md)
+FFDEV=${FFDEV:-$TOP/../devkit/riscos-ffmpeg-devkit-5.1.10-riscos16-hevc2}
 # riscos-mesa's devkit (release v20.3.5-8): libz
 MESADEV=${MESADEV:-$TOP/../devkit/riscos-mesa-devkit-20.3.5-8}
 ELF2AIF=${ELF2AIF:-elf2aif}

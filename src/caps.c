@@ -70,11 +70,29 @@ int caps_direct_ok(const caps_t *k, const plex_item *it, char *why, size_t size)
 {
     const char *vc = it->vcodec ? it->vcodec : "?";
     int h264 = it->vcodec && !strcasecmp(it->vcodec, "h264");
+    int hevc = it->vcodec && (!strcasecmp(it->vcodec, "hevc") || !strcasecmp(it->vcodec, "h265"));
 #define NO(...) do { snprintf(why, size, __VA_ARGS__); return 0; } while (0)
     if (!it->part_key)
         NO("no file to play as it is");
     if (!in_list(it->container, containers))
         NO("%s files are converted", it->container ? it->container : "these");
+    if (hevc && k->hevc) {
+        /* the Pi 4's HEVC block: Main and Main 10, 4:2:0, up to 4096 wide;
+           the ARM converts its pictures, so 4K is kept to 30 a second */
+        if (it->vprofile && (strstr(it->vprofile, "4:") || strstr(it->vprofile, "12") || strstr(it->vprofile, "rext") ||
+                             strstr(it->vprofile, "Rext")))
+            NO("HEVC %s is converted (the HEVC block can't)", it->vprofile);
+        if (it->width > CAPS_HEVC_W || it->height > CAPS_HEVC_H)
+            NO("%dx%d is bigger than the HEVC block takes", it->width, it->height);
+        if (it->bitrate_kbps > CAPS_HEVC_KBPS)
+            NO("%.1f Mbit/s is more than %d", it->bitrate_kbps / 1000.0, CAPS_HEVC_KBPS / 1000);
+        if (it->height > 1088 && it->fps > k->max_fps_1080)
+            NO("%dp at %.0f a second is too fast", it->height, it->fps);
+        if (it->acodec && !in_list(it->acodec, audio))
+            NO("%s sound is converted", it->acodec);
+        snprintf(why, size, "HEVC %dx%d, %.1f Mbit/s (the HEVC block)", it->width, it->height, it->bitrate_kbps / 1000.0);
+        return 1;
+    }
     if (!h264 && !(in_list(it->vcodec, sd_video) && it->height > 0 && it->height <= 576))
         NO("%s video is converted", vc);
     if (h264 && it->vprofile && (strstr(it->vprofile, "10") || strstr(it->vprofile, "4:")))

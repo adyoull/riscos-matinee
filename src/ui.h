@@ -10,9 +10,12 @@
 enum { PG_GRID, PG_DETAILS, PG_SIGNIN, PG_PLAYER };
 
 /* The sign-in page's buttons and fields (drawn, not icons): Plex's, then
-   Jellyfin's (its address, Quick Connect, name, password, Sign in) and the
-   buttons between the two */
-enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK, S_JF, S_PLEX, S_QC, S_JADDR, S_JUSER, S_JPW, S_LOGIN };
+   Jellyfin's (its address, Quick Connect, name, password, Sign in); the
+   first page's choice of kind (S_PICK_*); Back (to that choice) and Cancel */
+enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK, S_QC, S_JADDR, S_JUSER, S_JPW, S_LOGIN, S_PICK_PLEX, S_PICK_JF,
+       S_BACK, S_CANCEL };
+/* What the sign-in page shows: the choice of kind, Plex's sign-in, Jellyfin's */
+enum { SI_PICK, SI_PLEX, SI_JF };
 
 /* The browser's and details window's buttons (drawn, not icons) */
 enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS, B_SEARCH };
@@ -61,6 +64,7 @@ int ui_test_page(void);
 const char *ui_test_signin(int what);           /* 0 the code, 1 status, 2 address, 3 token; Jellyfin's:
                                                    4 its code, 5 address, 6 name, 7 the server's name */
 int ui_test_signin_jf(void);                    /* the sign-in page is Jellyfin's */
+int ui_test_signin_mode(void);                  /* SI_*, or -1 if it isn't the sign-in page */
 int ui_test_jf_servers(void);                   /* Jellyfin servers saved */
 int ui_test_field(void);
 int ui_test_button_xy(int w, int id, int *x, int *y);   /* a drawn button's middle */

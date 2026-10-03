@@ -1,4 +1,4 @@
-!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test25
+!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test26
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -21,8 +21,9 @@ appears on the icon bar. The first time, click Select on it to sign in.
 
 Signing in
 ----------
-Matinee has one window. Until you've signed in, it shows the sign-in page
-with a four-letter code. On any computer or phone, go to plex.tv/link,
+Matinee has one window. Until you've signed in, it shows Add a server:
+choose Plex or Jellyfin (below). Plex's sign-in page has a four-letter
+code. On any computer or phone, go to plex.tv/link,
 sign in to your Plex account there, and type the code. Matinee checks every
 2 seconds, and carries on by itself once the code has been typed: it finds
 your servers and shows your libraries. Matinee never sees your password. A
@@ -34,13 +35,17 @@ then Tab (or Return) to Token and type a token (the server's or your
 account's X-Plex-Token; it's shown as dots), then Return or Use these.
 Backspace deletes, Ctrl-U empties the field.
 
+Add a server... (on the icon's menu, and at the foot of Servers) asks
+which kind the server is, Plex or Jellyfin, then shows its sign-in.
+Back goes to that choice again; Cancel (or Escape) adds nothing and goes
+back to where you were.
+
 Jellyfin servers
 ----------------
 Matinee uses one server at a time: a Plex server or a Jellyfin server.
 Servers on the icon's menu lists your Plex servers, then the Jellyfin
 servers you've signed in to (ticked: the one in use), then Add a
-Jellyfin server...; choose one to switch to it. "Jellyfin server..." on
-the Plex sign-in page goes to the same place.
+server...; choose one to switch to it.
 
 To sign in to a Jellyfin server, type its address (such as
 192.168.1.20; :8096 is added unless you give a port or an http://
@@ -50,8 +55,7 @@ address), then either:
                  Matinee checks every 2 seconds and carries on by itself.
                  (The server's administrator may have turned it off.)
   your name and password, then Return or Sign in.
-Matinee keeps the server's token, not your password. Plex instead goes
-back to the Plex sign-in.
+Matinee keeps the server's token, not your password.
 
 On a Jellyfin server everything works as on a Plex one, except: there
 are no star ratings (Jellyfin doesn't keep them), no Plex Home people,
@@ -234,7 +238,7 @@ Matinee$NoHidePointer 1 to keep it).
 The stats (S) are drawn in the picture at a size you can read, in a
 window or full screen: the connection's speed, how much has come in and
 how much is read ahead (with graphs), the codecs, who decodes the picture
-(Decoder: the VideoCore or the ARM), the timing, and what's left out to
+(Decoder: the VideoCore, the HEVC block or the ARM), the timing, and what's left out to
 keep up (Keeping Up), as in ReelEGL.
 
 On a Raspberry Pi, H.264 (most files, and everything the server
@@ -242,6 +246,15 @@ converts) is decoded by the Pi's VideoCore, as in Reel 0.1.23, leaving
 the ARM free: up to 1920x1088, 8-bit 4:2:0; 1080p needs gpu_mem of 128
 MB or more (in config.txt). Anything else, or a machine without the
 VideoCore, is decoded on the ARM as before.
+
+On a Raspberry Pi 4 (and 400), HEVC (H.265) is decoded by its HEVC
+block: Main and Main 10 (10-bit), 4:2:0, up to 4096 wide (4K at up to
+30 a second), and up to 40 Mbit/s whatever the Quality, so HEVC files
+are played as they are instead of being converted by the server. The
+block's pictures are converted for the screen on the ARM, so 4K keeps
+it busy. *Set Matinee$NoHEVCBlock 1 before starting Matinee turns it
+off (HEVC is then converted by the server again). The built-in player
+only.
 
 Menu over the picture: Sound track, Subtitles, Chapters, Volume, Picture
 (Fit, Fill (crop) or Stretch), Stats, Full screen, Mini player, Keep on
@@ -383,7 +396,7 @@ Needs
   servers reached through their plex.direct addresses.
 - VideoOverlay (in !System on RISC OS 5), for the hardware overlay.
 - On a Raspberry Pi, the VCHIQ module (in RISC OS 5's ROM) for decoding
-  on the VideoCore.
+  on the VideoCore; on a Pi 4, nothing more for its HEVC block.
 - ReelEGL or Reel 0.1.17 or later (riscos-ffmpeg), only to play in them.
 
 !Run loads the modules it needs. PThreadTicker 0.03 (UnixLib's thread
@@ -401,8 +414,8 @@ Licence
 Matinee is free software under the GNU General Public License, version 2
 or later. It uses cJSON (MIT licence), FFmpeg 5.1 from riscos-ffmpeg
 (GPL v2 or later), riscos-ffmpeg's reelcore (LGPL 2.1 or later),
-ReelHWAccel's vcdec (GPL version 2; it decodes H.264 on the Pi's
-VideoCore), so !RunImage as a whole is under GPL version 2, and UnixLib
+ReelHWAccel's vcdec and hevcdec (GPL version 2; they decode H.264 on
+the Pi's VideoCore and HEVC on the Pi 4's HEVC block), so !RunImage as a whole is under GPL version 2, and UnixLib
 (see its licences). The licences are in
 docs.Licences, and Matinee's own source is in docs.source.
 

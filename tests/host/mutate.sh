@@ -271,6 +271,18 @@ mutate "signing out of Jellyfin forgets nothing" src/ui.c \
 mutate "stars shown for Jellyfin" src/ui.c \
   'if (it->rating_key && S.px.kind == SRV_PLEX && S.nbtn + 5 <= DET_BTN_MAX)' 'if (it->rating_key && S.nbtn + 5 <= DET_BTN_MAX)'
 
+# test26: Add a server; the HEVC block
+mutate "Cancel always goes to the home page" src/ui.c \
+  'S.page = S.si_prev == PG_DETAILS ? PG_DETAILS : PG_GRID;' 'S.page = PG_GRID;'
+mutate "Escape doesn't cancel" src/ui.c \
+  'return 4;                   /* Escape: Cancel */' 'return 0;'
+mutate "the HEVC block not used for direct play" src/caps.c \
+  'if (hevc && k->hevc) {' 'if (0) {'
+mutate "4K HEVC at 60 a second played as it is" src/caps.c \
+  'if (it->height > 1088 && it->fps > k->max_fps_1080)' 'if (0)'
+mutate "Matinee\$NoHEVCBlock not given to reelcore" src/player.c \
+  'REELCORE_NO_HEVC_BLOCK : 0' '0 : 0'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

@@ -22,6 +22,13 @@
 
 enum { Q_1080, Q_720, Q_480, Q_COUNT };
 
+/* What the Pi 4's HEVC block plays as it is (riscos-reelhwaccel's hevcdec;
+   4K at 40 Mbit/s tested): whatever the Quality, as the block, not the
+   ARM, decodes it */
+#define CAPS_HEVC_W    4096
+#define CAPS_HEVC_H    2304
+#define CAPS_HEVC_KBPS 40000
+
 typedef struct {
     int max_w, max_h;       /* pixels */
     int max_kbps;           /* the whole file's bit rate */
@@ -30,6 +37,8 @@ typedef struct {
     int max_fps_1080;       /* above 720 lines */
     int own_subs;           /* the player draws subtitles itself (the built-in
                                player): a track chosen needn't be burnt in */
+    int hevc;               /* the player has the Pi 4's HEVC block: HEVC (8 or
+                               10-bit 4:2:0, up to 4K) played as it is */
     int dry;                /* only say how it would play: ask the server
                                nothing (Jellyfin's PlaybackInfo) */
 } caps_t;

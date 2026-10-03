@@ -63,6 +63,11 @@ void player_init(int task, int overlay, int pic_mode, double volume);
    0,0, not scrolled). Returns at once: opening happens in null events
    (PE_READY or PE_FAILED). 0 = started. */
 int player_open(const player_src *src, int win);
+/* 1 if HEVC can be decoded by the Pi 4's HEVC block (asked once) */
+int player_hevc_block(void);
+#ifdef MATINEE_TEST
+extern int player_test_hevc_block;      /* the tests' answer */
+#endif
 /* Stops and lets everything go (the overlay, the full screen window) */
 void player_close(void);
 int player_active(void);

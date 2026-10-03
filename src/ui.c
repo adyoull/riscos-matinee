@@ -222,7 +222,8 @@ static struct {
        Jellyfin half: the server being signed in to, its Quick Connect code */
     jf_saved jf[JF_SAVED];
     int njf;
-    int si_jf;                      /* the sign-in page is Jellyfin's */
+    int si_mode;                    /* the sign-in page: SI_PICK, SI_PLEX or SI_JF */
+    int si_prev;                    /* the page before it (Cancel goes back there) */
     plex_ctx jfc;
     char jf_addr[256], jf_user[64], jf_pw[128], jf_secret[96], jf_code[16];
     int qc_next;
@@ -3410,6 +3411,7 @@ static void det_layout(void)
     /* how it will play (and that it has no subtitles) */
     caps_for(S.quality, &k);
     k.own_subs = S.player == PLAYER_BUILTIN;
+    k.hevc = S.player == PLAYER_BUILTIN && player_hevc_block();
     k.dry = 1;                      /* nothing asked of the server for it */
     caps_play(&S.px, it, &k, S.direct, 1, &p);
     latin1(p.why, S.det_how, sizeof(S.det_how));
@@ -3642,6 +3644,18 @@ static void browser_top(void);
 static struct { int id, x0, y0, x1, y1; } si_box[SI_MAX];
 static int si_n;
 
+static void si_add_h(int id, int x0, int y1, int w, int h)
+{
+    if (si_n >= SI_MAX)
+        return;
+    si_box[si_n].id = id;
+    si_box[si_n].x0 = x0;
+    si_box[si_n].x1 = x0 + w;
+    si_box[si_n].y1 = y1;
+    si_box[si_n].y0 = y1 - h;
+    si_n++;
+}
+
 static void si_add(int id, int x0, int y1, int w)
 {
     if (si_n >= SI_MAX)
@@ -3659,8 +3673,10 @@ static const char *si_label(int id)
     switch (id) {
     case S_NEWCODE: return "New code";
     case S_USE:     return "Use these";
-    case S_JF:      return "Jellyfin server...";
-    case S_PLEX:    return "Plex instead";
+    case S_PICK_PLEX: return "Plex";
+    case S_PICK_JF: return "Jellyfin";
+    case S_BACK:    return "Back";
+    case S_CANCEL:  return "Cancel";
     case S_QC:      return S.jf_secret[0] ? "New code" : "Quick Connect";
     case S_LOGIN:   return "Sign in";
     }
@@ -3676,19 +3692,25 @@ static void si_layout(void)
 {
     int top = -HEADER_H;
     si_n = 0;
-    if (!S.si_jf) {
+    if (S.si_mode == SI_PICK) {         /* two cards, then Cancel */
+        si_add_h(S_PICK_PLEX, 40, top - 176, 1160, 150);
+        si_add_h(S_PICK_JF, 40, top - 360, 1160, 150);
+        si_add(S_CANCEL, 40, top - 560, si_bw(S_CANCEL));
+    } else if (S.si_mode == SI_PLEX) {
         si_add(S_NEWCODE, 40, top - 372, si_bw(S_NEWCODE));
         si_add(S_ADDR, 220, top - 572, 620);
         si_add(S_TOK, 220, top - 652, 620);
         si_add(S_USE, 220, top - 736, si_bw(S_USE));
-        si_add(S_JF, 220 + si_bw(S_USE) + 32, top - 736, si_bw(S_JF));
+        si_add(S_BACK, 220 + si_bw(S_USE) + 32, top - 736, si_bw(S_BACK));
+        si_add(S_CANCEL, 220 + si_bw(S_USE) + si_bw(S_BACK) + 64, top - 736, si_bw(S_CANCEL));
     } else {
         si_add(S_JADDR, 220, top - 132, 620);
         si_add(S_QC, 40, top - 372, si_bw(S_QC));
         si_add(S_JUSER, 220, top - 572, 620);
         si_add(S_JPW, 220, top - 652, 620);
         si_add(S_LOGIN, 220, top - 736, si_bw(S_LOGIN));
-        si_add(S_PLEX, 220 + si_bw(S_LOGIN) + 32, top - 736, si_bw(S_PLEX));
+        si_add(S_BACK, 220 + si_bw(S_LOGIN) + 32, top - 736, si_bw(S_BACK));
+        si_add(S_CANCEL, 220 + si_bw(S_LOGIN) + si_bw(S_BACK) + 64, top - 736, si_bw(S_CANCEL));
     }
 }
 
@@ -3719,7 +3741,7 @@ static int si_field_of(int id)
 static char *si_field(int f, size_t *size)
 {
     char *p;
-    if (!S.si_jf) {
+    if (S.si_mode != SI_JF) {
         p = f ? S.si_tok : S.si_addr;
         *size = f ? sizeof(S.si_tok) : sizeof(S.si_addr);
     } else {
@@ -3731,11 +3753,11 @@ static char *si_field(int f, size_t *size)
 
 static int si_fields(void)
 {
-    return S.si_jf ? 3 : 2;
+    return S.si_mode == SI_JF ? 3 : S.si_mode == SI_PLEX ? 2 : 0;
 }
 
-/* The code, big and spaced out, on a card */
-static void si_code(int ox, int oy, const char *code)
+/* The code, big and spaced out, on a card; the card's right edge (work area) */
+static int si_code(int ox, int oy, const char *code)
 {
     int top = -HEADER_H;
     char t[64];
@@ -3750,6 +3772,7 @@ static void si_code(int ox, int oy, const char *code)
         w = 420;
     draw_round(ox + 40, oy + top - 292, ox + 40 + w, oy + top - 160, 20, C_CARD, C_BG);
     draw_text(D_TITLE, ox + 40 + (w - draw_width(D_TITLE, t)) / 2, oy + top - 244, t, C_TEXT, C_CARD);
+    return 40 + w;
 }
 
 static void signin_redraw(int ox, int oy, int vis_w)
@@ -3758,12 +3781,17 @@ static void signin_redraw(int ox, int oy, int vis_w)
     char t[300];
     (void)vis_w;
     si_layout();
-    if (!S.si_jf) {
-        draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in with a code", C_TEXT, C_BG);
+    if (S.si_mode == SI_PICK) {
+        draw_text(D_BOLD, ox + 40, oy + top - 76, "Add a server", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 124, "Which kind is it?", C_SUB, C_BG);
+    } else if (S.si_mode == SI_PLEX) {
+        draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in to Plex with a code", C_TEXT, C_BG);
         draw_text(D_BODY, ox + 40, oy + top - 124, "On a phone or computer, go to plex.tv/link and type this code:",
                   C_SUB, C_BG);
-        si_code(ox, oy, S.code);
-        draw_text(D_BODY, ox + 490, oy + top - 244, S.si_status, C_SUB, C_BG);
+        {
+            int x1 = si_code(ox, oy, S.code);
+            draw_text(D_BODY, ox + x1 + 40, oy + top - 244, S.si_status, C_SUB, C_BG);
+        }
         draw_rect(ox + 40, oy + top - 468, ox + 1000, oy + top - 466, C_CARD);
         draw_text(D_BOLD, ox + 40, oy + top - 520, "Or a server on your network", C_TEXT, C_BG);
         draw_text(D_BODY, ox + 40, oy + top - 616, "Address", C_SUB, C_BG);
@@ -3808,6 +3836,13 @@ static void signin_redraw(int ox, int oy, int vis_w)
                 int cx = tx + draw_width(D_BODY, t) + 2;
                 draw_rect(cx, y0 + 14, cx + 4, y1 - 14, C_ACCENT);
             }
+        } else if (si_box[i].id == S_PICK_PLEX || si_box[i].id == S_PICK_JF) {
+            int jf = si_box[i].id == S_PICK_JF;
+            draw_round(x0, y0, x1, y1, 20, C_CARD, C_BG);
+            draw_text(D_TITLE, x0 + 40, y1 - 70, jf ? "Jellyfin" : "Plex", C_TEXT, C_CARD);
+            draw_text(D_BODY, x0 + 40, y0 + 28,
+                      jf ? "Quick Connect, or your name and password" :
+                           "A code at plex.tv/link, or a server's address and token", C_SUB, C_CARD);
         } else {
             int id = si_box[i].id;
             unsigned bg = id == S_USE || id == S_LOGIN ? C_ACCENT : C_CARD;
@@ -3820,7 +3855,7 @@ static void signin_redraw(int ox, int oy, int vis_w)
 static void si_redraw_fields(void)
 {
     if (S.browser_open && S.page == PG_SIGNIN)
-        force_redraw(S.browser_w, 0, -HEADER_H - 740, S.scr_w, S.si_jf ? -HEADER_H : -HEADER_H - 540);
+        force_redraw(S.browser_w, 0, -HEADER_H - 740, S.scr_w, (S.si_mode == SI_JF) ? -HEADER_H : -HEADER_H - 540);
 }
 
 static void pin_new(void)
@@ -3842,12 +3877,23 @@ static void pin_new(void)
     si_set_status("Waiting for the code...");
 }
 
-/* The window, showing the sign-in page: Plex's (jf 0) or Jellyfin's */
-static void signin_show(int jf)
+/* The window, showing the sign-in page: the choice of kind (SI_PICK),
+   Plex's (SI_PLEX) or Jellyfin's (SI_JF). The page it was on is kept for
+   Cancel (playing stops first). */
+static void signin_show(int mode)
 {
     int st[9];
+    if (S.page == PG_PLAYER)
+        builtin_stop(1);
+    if (S.page != PG_SIGNIN) {
+        S.si_prev = S.page;
+        if (S.page == PG_GRID && S.browser_open) {
+            window_state(S.browser_w, st);
+            S.grid_sy = st[6];      /* where the grid was scrolled to */
+        }
+    }
     S.page = PG_SIGNIN;
-    S.si_jf = jf;
+    S.si_mode = mode;
     S.field = 0;
     S.hover = -1;
     S.posters_wanted = 0;
@@ -3855,25 +3901,25 @@ static void signin_show(int jf)
         browser_open();
     set_where();
     set_extent();
-    set_status(jf ? "Sign in to a Jellyfin server." : "Sign in to see your films and programmes.");
+    set_status(mode == SI_JF ? "Sign in to a Jellyfin server." : mode == SI_PLEX ? "Sign in to Plex." :
+               "Add a Plex or a Jellyfin server.");
     window_state(S.browser_w, st);
     open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
     force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
     set_caret(S.browser_w, -1, NULL);
-    if (!jf && !S.pin_id)
-        pin_new();
-    if (jf) {
+    if (mode != SI_PLEX)
         S.pin_id = 0;               /* plex.tv isn't asked meanwhile */
-        if (!S.jf_secret[0])
-            si_set_status("Type the address first.");
-    } else {
+    if (mode != SI_JF)
         S.jf_secret[0] = 0;
-    }
+    if (mode == SI_PLEX && !S.pin_id)
+        pin_new();
+    if (mode == SI_JF && !S.jf_secret[0])
+        si_set_status("Type the address first.");
 }
 
 static void signin_open(void)
 {
-    signin_show(0);
+    signin_show(SI_PICK);
 }
 
 static void signin_close(void)
@@ -3883,11 +3929,45 @@ static void signin_close(void)
     S.jf_pw[0] = 0;
 }
 
-/* A key on the sign-in page: 1 if it was used; 2 Use these (Plex), 3 Sign in (Jellyfin) */
+/* Cancel: no server added; back to the page before (the server in use's),
+   or the window closed if there's none */
+static void signin_cancel(void)
+{
+    int st[9];
+    signin_close();
+    if (!*S.px.base) {
+        if (S.browser_open)
+            close_window(S.browser_w);
+        S.browser_open = 0;
+        S.page = PG_GRID;
+        return;
+    }
+    if (!S.have_list || (S.si_prev == PG_DETAILS && !S.have_det)) {
+        browser_top();
+        return;
+    }
+    S.page = S.si_prev == PG_DETAILS ? PG_DETAILS : PG_GRID;
+    set_extent();
+    set_where();
+    set_status("%s", S.px.server_name);
+    window_state(S.browser_w, st);
+    open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, S.page == PG_GRID ? S.grid_sy : 0);
+    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+    if (S.page == PG_DETAILS)
+        det_refresh();
+    S.posters_wanted = S.page == PG_GRID;
+}
+
+/* A key on the sign-in page: 1 if it was used; 2 Use these (Plex), 3 Sign in (Jellyfin), 4 Cancel */
 static int signin_key(int k)
 {
     size_t size, n;
-    char *f = si_field(S.field, &size);
+    char *f;
+    if (k == 0x1B)
+        return 4;                   /* Escape: Cancel */
+    if (S.si_mode == SI_PICK)
+        return 0;
+    f = si_field(S.field, &size);
     n = strlen(f);
     if ((k >= 32 && k < 127) || (k >= 160 && k < 256)) {
         if (n + 1 < size) {
@@ -3907,7 +3987,7 @@ static int signin_key(int k)
         if (S.field + 1 < si_fields())
             S.field++;
         else
-            return S.si_jf ? 3 : 2;
+            return (S.si_mode == SI_JF) ? 3 : 2;
     } else {
         return 0;
     }
@@ -4205,7 +4285,7 @@ static void jf_add(void)
         snprintf(S.jf_addr, sizeof(S.jf_addr), "%s", b);
     }
     S.jf_secret[0] = 0;
-    signin_show(1);
+    signin_show(SI_JF);
 }
 
 static void sign_out(void)
@@ -4533,6 +4613,7 @@ static int builtin_open_at(double t, int new_session)
     }
     caps_for(S.quality, &k);
     k.own_subs = 1;                 /* reelcore draws them, playing the file itself */
+    k.hevc = player_hevc_block();   /* and HEVC on the Pi 4's HEVC block */
     if (caps_play_at(&S.px, it, &k, S.direct, 0, S.pl.sid, &S.pl.p) != 0) {
         set_status("%s", S.pl.p.why);
         return -1;
@@ -5256,7 +5337,7 @@ static void bar_menu_build(void)
 {
     int signed_in = *S.px.account_token != 0;
     /* the Plex account's servers, then the Jellyfin ones signed in to, then
-       Add a Jellyfin server (S.srv_map says which an item is) */
+       Add a server (S.srv_map says which an item is) */
     menu_begin(&m_servers, "Servers");
     for (int i = 0; i < S.nservers && m_servers.n < 9; i++) {
         S.srv_map[m_servers.n] = i;
@@ -5279,7 +5360,7 @@ static void bar_menu_build(void)
     if (S.njf && m_servers.n)
         m_servers.m.item[m_servers.n - 1].flags |= 2;
     S.srv_map[m_servers.n] = SRV_ADD;
-    menu_add(&m_servers, "Add a Jellyfin server...", 0, 0, -1, 0);
+    menu_add(&m_servers, "Add a server...", 0, 0, -1, 0);
     menu_end(&m_servers);
     /* Plex Home: its people; one with a PIN has a writable PIN item to its right */
     menu_begin(&m_pin, "PIN");
@@ -5315,7 +5396,7 @@ static void bar_menu_build(void)
 
     menu_begin(&m_bar, APP);
     menu_add(&m_bar, "Info", 0, 0, S.proginfo, 0);
-    menu_add(&m_bar, "Sign in...", 0, 0, -1, 0);
+    menu_add(&m_bar, "Add a server...", 0, 0, -1, 0);
     menu_add(&m_bar, "Servers", 0, 0, (int)(intptr_t)&m_servers.m, 0);
     {   /* Plex Home's people: for a Plex server */
         int users = S.nusers >= 2 && S.px.kind == SRV_PLEX;
@@ -5939,7 +6020,7 @@ static int menu_select(const int *sel)
             if (sel[1] >= 0 && sel[1] < m_servers.n) {
                 int w = S.srv_map[sel[1]];
                 if (w == SRV_ADD)
-                    jf_add();
+                    signin_open();
                 else if (w <= -1 && w > -1 - S.njf)
                     use_jf(-1 - w);
                 else if (w >= 0 && w < S.nservers && use_server(w) == 0)
@@ -5986,7 +6067,7 @@ static int menu_select(const int *sel)
             char q[300];
             if (S.px.kind == SRV_JELLYFIN)
                 snprintf(q, sizeof(q), "Sign out of %s? Matinee forgets this Jellyfin server, and you'll need to "
-                         "sign in to it again (Servers, Add a Jellyfin server).", S.px.server_name);
+                         "sign in to it again (Servers, Add a server).", S.px.server_name);
             else
                 snprintf(q, sizeof(q), "Sign out? Matinee forgets the Plex server and your sign-in, and you'll need "
                          "a new code from plex.tv/link (or the server's token) to sign in again.");
@@ -6411,10 +6492,14 @@ static void click(int *b)
                 pin_new();
             else if (id == S_USE)
                 use_manual();
-            else if (id == S_JF)
+            else if (id == S_PICK_JF)
                 jf_add();
-            else if (id == S_PLEX)
-                signin_show(0);
+            else if (id == S_PICK_PLEX)
+                signin_show(SI_PLEX);
+            else if (id == S_BACK)
+                signin_show(SI_PICK);
+            else if (id == S_CANCEL)
+                signin_cancel();
             else if (id == S_QC)
                 qc_new();
             else if (id == S_LOGIN)
@@ -6505,6 +6590,8 @@ static void key(int *b)
             use_manual();
         else if (u == 3)
             jf_password();
+        else if (u == 4)
+            signin_cancel();
         if (u)
             return;
     }
@@ -6757,7 +6844,7 @@ static void nulls(void)
         pin_check();
         return;
     }
-    if (S.jf_secret[0] && S.si_jf && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.qc_next >= 0) {
+    if (S.jf_secret[0] && S.si_mode == SI_JF && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.qc_next >= 0) {
         qc_check();
         return;
     }
@@ -6895,7 +6982,7 @@ int matinee_main(int argc, char **argv)
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
             r.r[2] = S.pin_next;
-        } else if (S.jf_secret[0] && S.si_jf && S.browser_open && S.page == PG_SIGNIN) {
+        } else if (S.jf_secret[0] && S.si_mode == SI_JF && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
             r.r[2] = S.qc_next;
         } else if (S.in_browser && S.browser_open) {
@@ -6998,7 +7085,8 @@ const char *ui_test_signin(int what)
     return what == 0 ? S.code : what == 1 ? S.si_status : what == 2 ? S.si_addr : what == 3 ? S.si_tok :
            what == 4 ? S.jf_code : what == 5 ? S.jf_addr : what == 6 ? S.jf_user : S.px.server_name;
 }
-int ui_test_signin_jf(void) { return S.page == PG_SIGNIN && S.si_jf; }
+int ui_test_signin_jf(void) { return S.page == PG_SIGNIN && S.si_mode == SI_JF; }
+int ui_test_signin_mode(void) { return S.page == PG_SIGNIN ? S.si_mode : -1; }
 int ui_test_jf_servers(void) { return S.njf; }
 int ui_test_field(void) { return S.field; }
 int ui_test_button_xy(int w, int id, int *x, int *y)
