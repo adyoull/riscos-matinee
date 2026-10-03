@@ -30,6 +30,8 @@ typedef struct {
     int max_fps_1080;       /* above 720 lines */
     int own_subs;           /* the player draws subtitles itself (the built-in
                                player): a track chosen needn't be burnt in */
+    int dry;                /* only say how it would play: ask the server
+                               nothing (Jellyfin's PlaybackInfo) */
 } caps_t;
 
 typedef struct {
@@ -39,7 +41,7 @@ typedef struct {
     char why[160];          /* for the status line: what, and why */
     char key[160];          /* Reel's "carry on" key (direct play only), or "" */
     long offset_s;          /* converted streams: where it starts */
-    char session[32];       /* the session id (the stream's, the timeline's) */
+    char session[48];       /* the session id (the stream's, the timeline's) */
 } play_t;
 
 void caps_for(int quality, caps_t *out);

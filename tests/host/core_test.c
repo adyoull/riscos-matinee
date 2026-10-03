@@ -7,6 +7,7 @@
 #include "net.h"
 #include "plex.h"
 #include "caps.h"
+#include "jellyfin.h"
 #include "handoff.h"
 #include "cJSON.h"
 #include "sources.h"          /* Reel's (riscos-ffmpeg player/sources.c) */
@@ -82,6 +83,290 @@ static const plex_item *find(const plex_list *l, const char *title)
         if (!strcmp(l->v[i].title, title))
             return &l->v[i];
     return NULL;
+}
+
+static const char *method(const cJSON *req)
+{
+    return req ? cJSON_GetObjectItem(req, "method")->valuestring : "";
+}
+
+static const char *body(const cJSON *req)
+{
+    return req ? cJSON_GetObjectItem(req, "body")->valuestring : "";
+}
+
+/* ---- a Jellyfin server: the same calls, Jellyfin's API */
+static void jellyfin_tests(void)
+{
+    plex_ctx c, t;
+    plex_list l, d, r, h, libs;
+    plex_row rows[8];
+    char secret[64], code[16], *jp;
+    caps_t k;
+    play_t p;
+    plex_playing pl;
+    cJSON *log;
+    const cJSON *q;
+    int nr, e;
+
+    plex_ctx_init(&c, "client-123", "0.1.0");
+    server_reset();
+    CHECK(jf_connect(&c, "127.0.0.1:1") != 0, "nothing at that address");
+    {
+        char a[64];
+        snprintf(a, sizeof(a), "127.0.0.1:%s", base + strlen("http://127.0.0.1:"));
+        CHECK(jf_connect(&c, a) == 0 && c.kind == SRV_JELLYFIN && !strcmp(c.server_name, "Cellar") &&
+              !strcmp(c.server_id, "JFID") && !strcmp(c.base, base), "Jellyfin found at %s (%s, %s)", a, c.base, c.err);
+    }
+    t = c;
+    CHECK(jf_connect(&t, "noport") != 0 && !strcmp(t.base, c.base), "a failed connect leaves the server in use");
+    CHECK(plex_list_get(&c, "/library/sections", &l) != 0 && strstr(c.err, "not signed in"),
+          "lists need signing in first");
+    /* a name and password */
+    t = c;
+    CHECK(jf_login(&t, "andrew", "wrong") == -2, "a wrong password: -2");
+    CHECK(jf_login(&t, "andrew", "secret") == 0 && !strcmp(t.token, "JF-TOKEN") && !strcmp(t.user_id, "u1") &&
+          !strcmp(t.user_name, "andrew"), "signed in by password: %s", t.err);
+    log = server_log();
+    q = last(log, "/Users/AuthenticateByName");
+    CHECK(q && !strcmp(method(q), "POST") && !strcmp(hdr(q, "Content-Type"), "application/json") &&
+          strstr(body(q), "\"Username\":\"andrew\"") && strstr(body(q), "\"Pw\":\"secret\""), "a JSON POST");
+    CHECK(q && strstr(hdr(q, "Authorization"), "MediaBrowser Client=\"Matinee\"") &&
+          strstr(hdr(q, "Authorization"), "DeviceId=\"client-123\"") && strstr(hdr(q, "Authorization"), "Version=\"0.1.0\"") &&
+          strstr(hdr(q, "Authorization"), "Device=\"RISC%20OS%20computer\"") && !strstr(hdr(q, "Authorization"), "Token="),
+          "Jellyfin's Authorization header, no token yet: %s", q ? hdr(q, "Authorization") : "");
+    CHECK(q && !*hdr(q, "X-Plex-Product"), "no Plex headers");
+    cJSON_Delete(log);
+    /* Quick Connect */
+    CHECK(jf_qc_start(&c, secret, sizeof(secret), code, sizeof(code)) == 0 && !strcmp(code, "123456") &&
+          !strcmp(secret, "SEC1"), "a Quick Connect code: %s", c.err);
+    CHECK(jf_qc_check(&c, "nope") == -1, "an unknown secret: -1");
+    CHECK(jf_qc_check(&c, secret) == 0, "not allowed yet");
+    CHECK(jf_qc_check(&c, secret) == 1 && !strcmp(c.token, "JF-TOKEN") && !strcmp(c.user_id, "u1"),
+          "allowed: signed in (%s)", c.err);
+    log = server_log();
+    q = last(log, "/Users/AuthenticateWithQuickConnect");
+    CHECK(q && !strcmp(body(q), "{\"Secret\":\"SEC1\"}"), "the secret exchanged for a token");
+    cJSON_Delete(log);
+
+    /* libraries and lists, by Plex's paths */
+    CHECK(plex_list_get(&c, "/library/sections", &l) == 0 && l.n == 3 && !strcmp(l.v[0].title, "Jelly Films") &&
+          !strcmp(l.v[0].key, "/library/sections/1/all") && !strcmp(l.v[0].type, "movie") && l.v[0].kind == PI_FOLDER &&
+          !strcmp(l.v[1].type, "show") && !strcmp(l.v[1].key, "/library/sections/2/all") && l.v[2].kind == PI_OTHER,
+          "the libraries as sections, collections' left out (%d)", l.n);
+    plex_list_free(&l);
+    CHECK(plex_list_get(&c, "/library/sections/1/all", &l) == 0 && l.n == 3 && !strcmp(l.v[0].title, "Jelly Bunny") &&
+          !strcmp(l.title, "Jelly Films") && l.v[0].kind == PI_VIDEO && !strcmp(l.v[0].type, "movie") &&
+          !strcmp(l.v[0].subtitle, "2008") && !strcmp(l.v[0].thumb, "/Items/jm1/Images/Primary?tag=pt-jm1") &&
+          !strcmp(l.v[0].art, "/Items/jm1/Images/Backdrop/0?tag=bt-jm1") && l.v[0].view_offset_ms == 2530000 &&
+          l.v[2].watched && !l.v[0].watched && !strcmp(l.v[0].rating_key, "jm1"), "a film library (%d: %s)", l.n, c.err);
+    plex_list_free(&l);
+    log = server_log();
+    q = last(log, "/Users/u1/Items");
+    CHECK(q && !strcmp(qv(q, "ParentId"), "lib-m") && !strcmp(qv(q, "IncludeItemTypes"), "Movie") &&
+          !strcmp(qv(q, "Recursive"), "true") && !strcmp(qv(q, "SortBy"), "SortName") &&
+          strstr(hdr(q, "Authorization"), "Token=\"JF-TOKEN\""), "asked as Jellyfin: films, by name, with the token");
+    cJSON_Delete(log);
+    CHECK(plex_list_get(&c, "/library/sections/1/all?sort=year:desc&unwatched=1", &l) == 0 && l.n == 2 &&
+          !strcmp(l.v[0].title, "Jelly Hevc"), "sorted by year, unwatched only (%d)", l.n);
+    plex_list_free(&l);
+    log = server_log();
+    q = last(log, "/Users/u1/Items");
+    CHECK(q && !strcmp(qv(q, "Filters"), "IsUnplayed") && !strcmp(qv(q, "SortOrder"), "Descending"), "Filters and SortOrder");
+    cJSON_Delete(log);
+    CHECK(plex_list_get(&c, "/library/sections/2/all", &l) == 0 && l.n == 1 && !strcmp(l.v[0].type, "show") &&
+          !strcmp(l.v[0].key, "/library/metadata/js1/children") && !strcmp(l.v[0].subtitle, "1 season") &&
+          l.v[0].unwatched == 1, "a TV library: a show");
+    plex_list_free(&l);
+    CHECK(plex_list_get(&c, "/library/metadata/js1/children", &l) == 0 && l.n == 1 && !strcmp(l.v[0].type, "season") &&
+          !strcmp(l.v[0].key, "/library/metadata/jss1/children?series=js1") && l.v[0].index == 1 &&
+          !strcmp(l.v[0].thumb, "/Items/js1/Images/Primary?tag=pt-js1") && !strcmp(l.v[0].grandparent_key, "js1"),
+          "a show's series (its poster for theirs)");
+    plex_list_free(&l);
+    CHECK(plex_list_get(&c, "/library/metadata/jss1/children?series=js1", &l) == 0 && l.n == 2 &&
+          !strcmp(l.v[1].subtitle, "S1 E2") && l.v[0].watched, "a series' episodes, the missing one left out (%d)", l.n);
+    plex_list_free(&l);
+    log = server_log();
+    q = last(log, "/Shows/js1/Episodes");
+    CHECK(q && !strcmp(qv(q, "SeasonId"), "jss1") && !strcmp(qv(q, "UserId"), "u1"), "Episodes with the SeasonId");
+    cJSON_Delete(log);
+    CHECK(plex_list_get(&c, "/library/sections/1/collections", &l) == 0 && l.n == 1 && !strcmp(l.v[0].type, "collection") &&
+          !strcmp(l.v[0].key, "/library/metadata/jb1/children?parent=box") && !strcmp(l.v[0].subtitle, "2 items"),
+          "collections");
+    plex_list_free(&l);
+    CHECK(plex_list_get(&c, "/library/metadata/jb1/children?parent=box", &l) == 0 && l.n == 2, "a collection's films");
+    plex_list_free(&l);
+    CHECK(plex_list_get(&c, "/playlists?playlistType=video", &l) == 0 && l.n == 1 && !strcmp(l.v[0].title, "Jelly Night"),
+          "the videos' playlists only");
+    plex_list_free(&l);
+    CHECK(plex_list_get(&c, "/library/sections/9/all", &l) != 0, "no such library");
+    CHECK(plex_list_get(&c, "/library/nonsense", &l) != 0, "a path Jellyfin has nothing for");
+
+    /* the home page: Continue watching (part watched, then next up) and recently added */
+    CHECK(plex_home(&c, &h, rows, 8, &nr, &libs) == 0 && nr == 3 && rows[0].kind == PR_CONTINUE && rows[0].n == 2 &&
+          !strcmp(h.v[0].title, "Jelly Bunny") && !strcmp(h.v[1].title, "Moon Show") &&
+          !strcmp(h.v[1].subtitle, "S1 E2 Moon 2") && rows[1].n == 2 && !strcmp(rows[1].title, "Recently added in Jelly Films") &&
+          !strcmp(rows[2].path, "/library/sections/2/recentlyAdded") && libs.n == 3,
+          "the home page (%d rows: %s)", nr, c.err);
+    plex_list_free(&h);
+    plex_list_free(&libs);
+
+    /* details: the file, its tracks, chapters, the cast */
+    {
+        plex_item film;
+        memset(&film, 0, sizeof(film));
+        film.rating_key = "jm1";
+        CHECK(plex_details(&c, &film, &d) == 0 && d.n == 1, "details: %s", c.err);
+    }
+    if (d.n == 1) {
+        plex_item *it = &d.v[0];
+        CHECK(!strcmp(it->container, "mov") && !strcmp(it->vcodec, "h264") && it->width == 1920 && it->height == 1080 &&
+              it->bitrate_kbps == 5000 && !strcmp(it->acodec, "aac") && it->fps == 24 && it->bit_depth == 8 &&
+              !strcmp(it->source_id, "ms-jm1") && !strcmp(it->part_key, "/Videos/jm1/stream?static=true&mediaSourceId=ms-jm1"),
+              "the file: %s %s %dx%d %d", it->container, it->vcodec, it->width, it->height, it->bitrate_kbps);
+        CHECK(it->nauds == 2 && it->auds[0].id == 2 && it->auds[0].selected && !strcmp(it->auds[1].codec, "ac3") &&
+              it->nsubs == 3 && it->subs[0].id == 4 && !it->subs[0].external && !strcmp(it->subs[1].codec, "srt") &&
+              it->subs[1].external && !strcmp(it->subs[1].key, "/Videos/jm1/ms-jm1/Subtitles/4/0/Stream.srt") &&
+              !strcmp(it->subs[2].codec, "pgssub") && it->subs[2].forced && plex_sub_selected(it) < 0,
+              "sound and subtitle tracks (ids Index + 1)");
+        CHECK(caps_sub_own(&it->subs[2]), "Jellyfin's PGS: the player's own");
+        CHECK(it->nchapters == 2 && !strcmp(it->chapters[1].title, "The meadow") && it->chapters[1].start_ms == 5000 &&
+              it->chapters[1].end_ms == 5400000, "chapters");
+        CHECK(it->ncast == 2 && !strcmp(it->cast[0].role, "Himself") && !strcmp(it->cast[0].thumb, "/Items/p1/Images/Primary?tag=pp1") &&
+              !it->cast[1].thumb && !strcmp(it->directors, "Sacha") && !strcmp(it->genres, "Animation, Comedy") &&
+              !strcmp(it->studio, "Blender Foundation") && !strcmp(it->released, "2008-04-10") &&
+              !strcmp(it->tagline, "One big rabbit"), "the cast and the rest");
+        /* playing it: the file itself */
+        caps_for(Q_1080, &k);
+        k.own_subs = 1;
+        CHECK(caps_play(&c, it, &k, 1, 1, &p) == 0 && p.direct &&
+              !strncmp(p.url, base, strlen(base)) && strstr(p.url, "/Videos/jm1/stream?static=true&mediaSourceId=ms-jm1") &&
+              strstr(p.url, "&api_key=JF-TOKEN") && strstr(p.url, "&DeviceId=client-123") &&
+              strstr(p.headers, "Authorization: MediaBrowser") && !strncmp(p.key, "jellyfin:JFID/jm1", 17),
+              "direct play: %s (%s)", p.url, p.why);
+        /* subtitles chosen: kept here (Jellyfin keeps none) */
+        CHECK(plex_set_subtitle(&c, it, it->subs[1].id) == 0, "a subtitle track chosen");
+        plex_list_free(&d);
+        {
+            plex_item film;
+            memset(&film, 0, sizeof(film));
+            film.rating_key = "jm1";
+            CHECK(plex_details(&c, &film, &d) == 0 && d.n == 1 && plex_sub_selected(&d.v[0]) == 1,
+                  "the choice remembered in its details");
+        }
+        it = &d.v[0];
+        /* converted: PlaybackInfo with what Reel takes */
+        CHECK(caps_play(&c, it, &k, 0, 0, &p) == 0 && !p.direct &&
+              !strcmp(p.url + strlen(base), "/videos/jm1/master.m3u8?DeviceId=x&MediaSourceId=ms-jm1&VideoCodec=h264"
+                      "&AudioCodec=aac&PlaySessionId=0123456789abcdef0123456789abcdef&ApiKey=JF-TOKEN") &&
+              !strcmp(p.session, "0123456789abcdef0123456789abcdef") && p.offset_s == 0,
+              "converted: the server's HLS address and session (%s; %s)", p.url, p.why);
+        log = server_log();
+        q = last(log, "/Items/jm1/PlaybackInfo");
+        {
+            cJSON *b = q ? cJSON_Parse(body(q)) : NULL, *dp = cJSON_GetObjectItem(b, "DeviceProfile");
+            cJSON *tp = cJSON_GetArrayItem(cJSON_GetObjectItem(dp, "TranscodingProfiles"), 0);
+            cJSON *cp = cJSON_GetArrayItem(cJSON_GetObjectItem(dp, "CodecProfiles"), 0);
+            CHECK(b && cJSON_IsFalse(cJSON_GetObjectItem(b, "EnableDirectPlay")) &&
+                  cJSON_GetObjectItem(b, "SubtitleStreamIndex")->valueint == 4 &&
+                  cJSON_GetObjectItem(b, "AudioStreamIndex")->valueint == 1 &&
+                  !strcmp(cJSON_GetObjectItem(b, "MediaSourceId")->valuestring, "ms-jm1") &&
+                  !strcmp(cJSON_GetObjectItem(b, "UserId")->valuestring, "u1") &&
+                  cJSON_GetObjectItem(b, "MaxStreamingBitrate")->valuedouble == 10000000,
+                  "PlaybackInfo: the tracks chosen, the source, the bit rate");
+            CHECK(tp && !strcmp(cJSON_GetObjectItem(tp, "Protocol")->valuestring, "hls") &&
+                  !strcmp(cJSON_GetObjectItem(tp, "VideoCodec")->valuestring, "h264") &&
+                  !strcmp(cJSON_GetObjectItem(tp, "MaxAudioChannels")->valuestring, "2") &&
+                  cp && strstr(cJSON_PrintUnformatted(cp), "\"Property\":\"Width\",\"Value\":\"1920\""),
+                  "the DeviceProfile: HLS H.264, stereo, 1920 wide at most");
+            CHECK(strstr(body(q), "\"Format\":\"pgssub\",\"Method\":\"Encode\""), "subtitles burnt in when converting");
+            cJSON_Delete(b);
+        }
+        cJSON_Delete(log);
+        /* progress: started, then progress, then stopped */
+        memset(&pl, 0, sizeof(pl));
+        snprintf(pl.session, sizeof(pl.session), "%s", p.session);
+        pl.direct = 0;
+        server_reset();
+        e = plex_timeline(&c, it, "playing", 61000, 5400000, &pl);
+        e |= plex_timeline(&c, it, "paused", 62000, 5400000, &pl);
+        e |= plex_timeline(&c, it, "stopped", 63000, 5400000, &pl);
+        CHECK(e == 0, "timeline: %s", c.err);
+        log = server_log();
+        q = last(log, "/Sessions/Playing");
+        CHECK(count(log, "/Sessions/Playing") == 1 && q && strstr(body(q), "\"PositionTicks\":610000000") &&
+              strstr(body(q), "\"PlaySessionId\":\"0123456789abcdef0123456789abcdef\"") &&
+              strstr(body(q), "\"PlayMethod\":\"Transcode\"") && strstr(body(q), "\"ItemId\":\"jm1\"") &&
+              strstr(body(q), "\"MediaSourceId\":\"ms-jm1\""), "started once: %s", body(q));
+        q = last(log, "/Sessions/Playing/Progress");
+        CHECK(q && strstr(body(q), "\"IsPaused\":true"), "then progress (paused)");
+        CHECK(last(log, "/Sessions/Playing/Stopped") != NULL, "then stopped");
+        cJSON_Delete(log);
+        CHECK(plex_transcode_ping(&c, p.session) == 0 && plex_transcode_stop(&c, p.session) == 0, "ping and stop");
+        log = server_log();
+        q = last(log, "/Videos/ActiveEncodings");
+        CHECK(q && !strcmp(method(q), "DELETE") && !strcmp(qv(q, "playSessionId"), p.session) &&
+              !strcmp(qv(q, "deviceId"), "client-123"), "stopping: DELETE ActiveEncodings");
+        q = last(log, "/Sessions/Playing/Ping");
+        CHECK(q && !strcmp(qv(q, "playSessionId"), p.session), "pinging");
+        cJSON_Delete(log);
+        /* watched */
+        CHECK(plex_mark(&c, it, 1) == 0 && plex_mark(&c, it, 0) == 0, "watched, then not");
+        log = server_log();
+        CHECK(count(log, "/Users/u1/PlayedItems/jm1") == 2 && !strcmp(method(last(log, "/Users/u1/PlayedItems/jm1")), "DELETE"),
+              "PlayedItems: POST then DELETE");
+        cJSON_Delete(log);
+        CHECK(plex_remove_continue(&c, it) == 0, "taken off Continue watching");
+        CHECK(plex_rate(&c, it, 8) != 0, "no star ratings on Jellyfin");
+        plex_list_free(&d);
+    }
+    /* an episode: its intro and credits, the next one */
+    {
+        plex_item ep;
+        memset(&ep, 0, sizeof(ep));
+        ep.rating_key = "je1";
+        CHECK(plex_details(&c, &ep, &d) == 0 && d.n == 1 && d.v[0].nmarkers == 2 && d.v[0].markers[0].type == PM_INTRO &&
+              d.v[0].markers[0].start_ms == 2000 && d.v[0].markers[1].type == PM_CREDITS && d.v[0].markers[1].end_ms == 20000 &&
+              !strcmp(d.v[0].grandparent_key, "js1") && !strcmp(d.v[0].grandparent_title, "Moon Show"),
+              "an episode: its media segments as markers");
+        if (d.n == 1) {
+            CHECK(plex_next_episode(&c, &d.v[0], &r) == 0 && r.n == 1 && !strcmp(r.v[0].rating_key, "je2"), "the next episode");
+            plex_list_free(&r);
+            CHECK(plex_details(&c, &d.v[0], &r) == 0 && r.n == 1 && !strcmp(r.v[0].vcodec, "h264") && r.v[0].height == 720,
+                  "its file");
+            plex_list_free(&r);
+        }
+        plex_list_free(&d);
+    }
+    /* search, posters, the rest */
+    CHECK(plex_search(&c, "moon", &r) == 0 && r.n == 3 && !strcmp(r.v[0].subtitle, "Show \xc2\xb7 1 season") &&
+          !strcmp(r.v[1].title, "Moon Show") && !strcmp(r.v[1].subtitle, "S1 E1 Moon 1"), "search: the show, then its episodes (%d)", r.n);
+    plex_list_free(&r);
+    CHECK(plex_search(&c, "jelly", &r) == 0 && r.n == 3 && !strcmp(r.v[0].subtitle, "Film \xc2\xb7 2008"), "search: films");
+    plex_list_free(&r);
+    {
+        char *jpeg;
+        size_t len;
+        CHECK(plex_poster(&c, "/Items/jm1/Images/Primary?tag=pt-jm1", 200, 300, &jpeg, &len) == 0 &&
+              strstr(jpeg + 4, "/Items/jm1/Images/Primary?tag=pt-jm1&fillWidth=200&fillHeight=300"), "a poster");
+        if (!c.err[0] || jpeg)
+            free(jpeg);
+    }
+    CHECK(plex_list_get(&c, "/library/metadata/jm1/similar", &r) == 0 && r.n == 1, "more like this");
+    plex_list_free(&r);
+    CHECK(plex_list_get(&c, "/library/metadata/jm1/extras", &r) == 0 && r.n == 0, "extras");
+    plex_list_free(&r);
+    {
+        plex_playing q2;
+        CHECK(plex_play_queue(&c, NULL, &q2) == 0 && q2.pq_id == 0, "no play queues");
+    }
+    jp = jf_device_profile(&k);
+    CHECK(jp && strstr(jp, "\"Context\":\"Streaming\""), "a profile");
+    free(jp);
+    /* back to Plex: the kind goes with the server */
+    t = c;
+    CHECK(plex_use_address(&t, base, "SRV-TOKEN") == 0 && t.kind == SRV_PLEX && !*t.user_id, "a Plex server again");
+    CHECK(jf_logout(&c) == 0, "signed out");
 }
 
 int main(int argc, char **argv)
@@ -508,6 +793,7 @@ int main(int argc, char **argv)
     plex_list_free(&films);
     plex_list_free(&tv);
     plex_list_free(&deck);
+    jellyfin_tests();
     printf("core_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

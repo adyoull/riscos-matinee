@@ -131,10 +131,12 @@ int net_send(const char *url, const char *headers, const char *method, const cha
         av_dict_set(&o, "method", method && strcmp(method, "GET") ? method : "POST", 0);
         av_dict_set(&o, "post_data", hex, 0);
         free(hex);
-        /* the form's type, beside the caller's headers */
+        /* the body's type, beside the caller's headers: JSON (Jellyfin's
+           API) or a form (Plex's) */
         h = malloc((headers ? strlen(headers) : 0) + 64);
         if (h) {
-            sprintf(h, "%sContent-Type: application/x-www-form-urlencoded\r\n", headers ? headers : "");
+            sprintf(h, "%sContent-Type: %s\r\n", headers ? headers : "",
+                    *body == '{' || *body == '[' ? "application/json" : "application/x-www-form-urlencoded");
             av_dict_set(&o, "headers", h, 0);
             free(h);
         }

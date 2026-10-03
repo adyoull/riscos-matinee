@@ -3,6 +3,8 @@
  * Part of riscos-matinee. GPL v2 or later.
  */
 #include "plex.h"
+#include "plex_int.h"
+#include "jellyfin.h"
 #include "net.h"
 #include "cJSON.h"
 
@@ -10,11 +12,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define API_TIMEOUT   15000     /* ms */
-#define PROBE_TIMEOUT 3000      /* ms, trying one of a server's addresses */
-#define PAGE_SIZE     2000      /* items fetched for one list */
+/* the helpers jellyfin.c shares (plex_int.h) */
+#define set_err px_err
+#define get_json px_get_json
+#define jstr px_jstr
+#define jnum px_jnum
+#define jbool px_jbool
+#define dup_s px_dup
+#define grow px_grow
+#define item_free px_item_free
+#define api_headers px_api_headers
 
-static void set_err(plex_ctx *c, const char *fmt, const char *arg)
+void set_err(plex_ctx *c, const char *fmt, const char *arg)
 {
     snprintf(c->err, sizeof(c->err), fmt, arg ? arg : "");
 }
@@ -35,7 +44,12 @@ void plex_ctx_init(plex_ctx *c, const char *client_id, const char *version)
 
 void plex_headers(const plex_ctx *c, const char *token, char *out, size_t size)
 {
-    int n = snprintf(out, size,
+    int n;
+    if (c->kind == SRV_JELLYFIN) {
+        jf_headers(c, token, out, size);
+        return;
+    }
+    n = snprintf(out, size,
                      "Accept: application/json\r\n"
                      "X-Plex-Product: %s\r\n"
                      "X-Plex-Version: %s\r\n"
@@ -55,7 +69,7 @@ void plex_headers(const plex_ctx *c, const char *token, char *out, size_t size)
    gzips them; FFmpeg's http unzips): a library of 2000 films is several
    MB of JSON, a tenth of that compressed. Not for pictures or video (a
    range of a compressed file means nothing). */
-static void api_headers(plex_ctx *c, const char *token, char *out, size_t size)
+void api_headers(plex_ctx *c, const char *token, char *out, size_t size)
 {
     size_t n;
     plex_headers(c, token, out, size);
@@ -64,7 +78,7 @@ static void api_headers(plex_ctx *c, const char *token, char *out, size_t size)
         snprintf(out + n, size - n, "Accept-Encoding: gzip\r\n");
 }
 
-static cJSON *get_json(plex_ctx *c, const char *url, const char *token, const char *post, int timeout, int *status)
+cJSON *get_json(plex_ctx *c, const char *url, const char *token, const char *post, int timeout, int *status)
 {
     char headers[1024];
     net_buf b;
@@ -84,13 +98,13 @@ static cJSON *get_json(plex_ctx *c, const char *url, const char *token, const ch
     return j;
 }
 
-static const char *jstr(const cJSON *o, const char *k)
+const char *jstr(const cJSON *o, const char *k)
 {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(o, k);
     return cJSON_IsString(v) ? v->valuestring : NULL;
 }
 
-static double jnum(const cJSON *o, const char *k, double def)
+double jnum(const cJSON *o, const char *k, double def)
 {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(o, k);
     if (cJSON_IsNumber(v))
@@ -100,7 +114,7 @@ static double jnum(const cJSON *o, const char *k, double def)
     return def;
 }
 
-static int jbool(const cJSON *o, const char *k)
+int jbool(const cJSON *o, const char *k)
 {
     const cJSON *v = cJSON_GetObjectItemCaseSensitive(o, k);
     if (cJSON_IsBool(v))
@@ -112,7 +126,7 @@ static int jbool(const cJSON *o, const char *k)
     return 0;
 }
 
-static char *dup_s(const char *s)
+char *dup_s(const char *s)
 {
     char *d;
     if (!s)
@@ -268,10 +282,13 @@ static void use(plex_ctx *c, const char *base, const char *token)
 int plex_use_server(plex_ctx *c, const plex_server *s)
 {
     char first[256] = "";
+    c->kind = SRV_PLEX;             /* the probes ask in Plex's way */
     for (int i = 0; i < s->nconn; i++) {
         int e = probe(c, s->conn[i].uri, s->token, PROBE_TIMEOUT);
         if (e == 0) {
             use(c, s->conn[i].uri, s->token);
+            c->kind = SRV_PLEX;
+            c->user_id[0] = c->user_name[0] = 0;
             snprintf(c->server_name, sizeof(c->server_name), "%s", s->name);
             c->local = s->conn[i].local;
             return 0;
@@ -293,6 +310,8 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token)
     char url[320];
     cJSON *j;
     char b[256];
+    c->kind = SRV_PLEX;
+    c->user_id[0] = c->user_name[0] = 0;
     snprintf(b, sizeof(b), "%s", base);
     if (!strstr(b, "://"))
         snprintf(b, sizeof(b), "http://%s", base);
@@ -315,7 +334,7 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token)
 
 /* ---- lists ---------------------------------------------------------------- */
 
-static int grow(plex_list *l, int *cap)
+int grow(plex_list *l, int *cap)
 {
     if (l->n < *cap)
         return 0;
@@ -739,6 +758,8 @@ static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
     char headers[1024];
     net_buf b;
     memset(out, 0, sizeof(*out));
+    if (c->kind == SRV_JELLYFIN)    /* the same paths, from Jellyfin's API */
+        return jf_fetch(c, path, size, out);
     snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=0&X-Plex-Container-Size=%d",
              c->base, path, strchr(path, '?') ? "&" : "?", size);
     api_headers(c, c->token, headers, sizeof(headers));
@@ -753,11 +774,11 @@ static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
     return 0;
 }
 
-static void item_free(plex_item *it)
+void item_free(plex_item *it)
 {
     free(it->title); free(it->subtitle); free(it->show_thumb); free(it->key); free(it->rating_key); free(it->type);
     free(it->thumb); free(it->container); free(it->vcodec); free(it->acodec); free(it->vprofile);
-    free(it->part_key); free(it->part_file);
+    free(it->part_key); free(it->part_file); free(it->source_id);
     free(it->summary); free(it->art); free(it->content_rating); free(it->tagline);
     free(it->grandparent_key); free(it->grandparent_title);
     free(it->genres); free(it->directors); free(it->writers); free(it->studio); free(it->country);
@@ -899,6 +920,8 @@ int plex_sub_selected(const plex_item *it)
 
 int plex_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_set_subtitle(c, it, stream_id);
     char url[512], headers[1024];
     net_buf b;
     if (!it->part_id) {
@@ -924,6 +947,8 @@ int plex_audio_selected(const plex_item *it)
 
 int plex_remove_continue(plex_ctx *c, const plex_item *it)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_remove_continue(c, it);
     char url[512], headers[1024];
     net_buf b;
     if (!it->rating_key) {
@@ -940,6 +965,8 @@ int plex_remove_continue(plex_ctx *c, const plex_item *it)
 
 int plex_rate(plex_ctx *c, const plex_item *it, int rating)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_rate(c, it, rating);
     char url[512], headers[1024];
     net_buf b;
     if (!it->rating_key) {
@@ -1021,6 +1048,8 @@ int plex_switch_user(plex_ctx *c, const char *uuid, const char *pin)
 
 int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_set_audio(c, it, stream_id);
     char url[512], headers[1024];
     net_buf b;
     if (!it->part_id) {
@@ -1040,6 +1069,8 @@ int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id)
 
 int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_play_queue(c, it, pl);
     char uri[256], esc[512], url[1024];
     cJSON *j, *mc, *m0;
     pl->pq_id = pl->pq_item_id = 0;
@@ -1071,6 +1102,8 @@ int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl)
 int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
                   const plex_playing *pl)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_timeline(c, it, state, time_ms, duration_ms, pl);
     char url[1400], esc[64], guid[300], headers[1200];
     net_buf b;
     size_t n, u;
@@ -1105,6 +1138,8 @@ int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t t
 
 int plex_search(plex_ctx *c, const char *query, plex_list *out)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_search(c, query, out);
     static const char *const kinds[3] = { "movie", "show", "episode" };
     char esc[400], url[1024];
     cJSON *j, *hubs, *h, *m;
@@ -1146,6 +1181,8 @@ int plex_search(plex_ctx *c, const char *query, plex_list *out)
 
 static int transcode_call(plex_ctx *c, const char *what, const char *session)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_transcode_call(c, what, session);
     char url[512], esc[96], headers[1024];
     net_buf b;
     if (!session || !*session)
@@ -1194,6 +1231,8 @@ int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out)
 
 int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_poster(c, thumb, w, h, jpeg, len);
     char esc[512], url[1024], headers[1024];
     net_buf b;
     net_escape(thumb, esc, sizeof(esc));
@@ -1209,6 +1248,8 @@ int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_
 
 int plex_mark(plex_ctx *c, const plex_item *it, int watched)
 {
+    if (c->kind == SRV_JELLYFIN)
+        return jf_mark(c, it, watched);
     char url[512], esc[64], headers[1024];
     net_buf b;
     if (!it->rating_key)
@@ -1225,5 +1266,9 @@ int plex_mark(plex_ctx *c, const plex_item *it, int watched)
 
 void plex_part_url(const plex_ctx *c, const plex_item *it, char *url, size_t size)
 {
+    if (c->kind == SRV_JELLYFIN && it->part_key) {    /* its token in the address too */
+        snprintf(url, size, "%s%s&api_key=%s", c->base, it->part_key, c->token);
+        return;
+    }
     snprintf(url, size, "%s%s", c->base, it->part_key ? it->part_key : "");
 }

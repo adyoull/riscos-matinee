@@ -21,7 +21,12 @@
 
 #define PLEX_TV "https://plex.tv"
 
+/* What kind of server is in use: Plex, or Jellyfin (jellyfin.c, which
+   gives the same lists and playing through the same calls) */
+enum { SRV_PLEX, SRV_JELLYFIN };
+
 typedef struct {
+    int kind;               /* SRV_* */
     char client_id[48];     /* made once, kept in Choices */
     char product[32];       /* "Matinee" */
     char version[16];
@@ -35,6 +40,8 @@ typedef struct {
     char server_name[64];
     char server_id[64];     /* its clientIdentifier (machine id) */
     int local;              /* the connection is on the local network */
+    char user_id[48];       /* Jellyfin: who's signed in on the server (its user's Id) */
+    char user_name[64];
     char plextv[128];       /* https://plex.tv, or the tests' fake */
     char err[256];          /* what went wrong last */
 } plex_ctx;
@@ -112,6 +119,7 @@ typedef struct {
     char *part_file;        /* the file's name on the server */
     int64_t part_size;
     long part_id;           /* Part's id (choosing subtitles goes by it) */
+    char *source_id;        /* Jellyfin: the MediaSource's Id (Plex: NULL) */
     /* for the details panel */
     char *summary, *art, *content_rating, *tagline;
     int year;
@@ -235,7 +243,8 @@ int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id);
 typedef struct {
     long pq_id, pq_item_id;
     int pq_version;
-    char session[40];
+    char session[48];       /* Jellyfin's PlaySessionId is 32 characters */
+    int direct;             /* the file itself (Jellyfin's PlayMethod) */
 } plex_playing;
 
 /* Makes a play queue of one video (POST /playQueues); fills pl's pq_*.

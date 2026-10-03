@@ -1,13 +1,14 @@
 # Matinee
 
-A Plex client for RISC OS, built natively in C. It browses a Plex Media Server and plays
+A Plex and Jellyfin client for RISC OS, built natively in C. It browses a Plex Media Server
+(or a Jellyfin server) and plays
 the videos in its own window with a **built-in player** (riscos-ffmpeg's reelcore, the core
 of Reel), or hands them to **ReelEGL** or **Reel**. Files that can be played as they are
 are played directly. Everything else is converted by the server into a stream that can
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test24).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test25).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -31,11 +32,17 @@ rather than through the middle, and has a Matinee icon (a little theatre); test2
 reelcore with riscos-reelhwaccel's h264_vchiq: H.264 decoded by the Pi's VideoCore;
 test23 is the same code built on the published riscos-ffmpeg 5.1.10-riscos16 devkit (Reel
 0.1.23; ReelHWAccel's vcdec under GPL version 2); test24 has vcdec 0.4.2 (ReelHWAccel devkit
-0.2.4), which fixes the "EMT trap, code 6" left behind after VideoCore playback.
-It's tested on Linux too: the core against a fake Plex server, and the Wimp front end
+0.2.4), which fixes the "EMT trap, code 6" left behind after VideoCore playback; test25
+adds Jellyfin servers (one at a time, beside Plex's on the Servers menu: Quick Connect or a
+name and password, the same browsing, playing and progress).
+It's tested on Linux too: the core against a fake Plex and Jellyfin server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
 - Sign-in with a plex.tv/link code, or a server's address and token typed by hand.
+- Jellyfin servers too, one at a time, switched on the Servers menu: Quick Connect or a name
+  and password; libraries, Continue watching (resume and next up), details, search, direct
+  play or an HLS stream the server converts (asked for with a DeviceProfile), progress and
+  watched marks reported, media segments as Skip intro / Skip credits.
 - Servers, and a dark poster browser: Continue watching, films, TV shows, seasons and
   episodes, with shadows, a highlight under the pointer, and three poster sizes.
 - One window: the sign-in page, the posters, and a details page (the backdrop, title,

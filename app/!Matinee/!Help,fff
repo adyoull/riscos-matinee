@@ -1,8 +1,8 @@
-!Matinee - a Plex client for RISC OS                  0.1.0-test24
+!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test25
 ===================================================================
 
-Matinee browses the films and TV programmes on a Plex Media Server and
-plays them in its own window, with the player core of riscos-ffmpeg's
+Matinee browses the films and TV programmes on a Plex Media Server (or
+a Jellyfin server) and plays them in its own window, with the player core of riscos-ffmpeg's
 Reel (or hands them to ReelEGL or Reel, if you'd rather). Files it can
 play as they are are played directly. Everything else is converted by
 the server, as it plays, into a stream it can handle: H.264 video with
@@ -12,7 +12,7 @@ This is a test build.
 
 Matinee was called PlexRO in its first test builds (its choices and
 sign-in carry over). Plex is a trademark of Plex, Inc.; Matinee isn't
-made by Plex or connected with it.
+made by Plex or connected with it, nor with the Jellyfin project.
 
 Starting
 --------
@@ -33,6 +33,36 @@ Address and type its address (such as 192.168.1.10; :32400 is added),
 then Tab (or Return) to Token and type a token (the server's or your
 account's X-Plex-Token; it's shown as dots), then Return or Use these.
 Backspace deletes, Ctrl-U empties the field.
+
+Jellyfin servers
+----------------
+Matinee uses one server at a time: a Plex server or a Jellyfin server.
+Servers on the icon's menu lists your Plex servers, then the Jellyfin
+servers you've signed in to (ticked: the one in use), then Add a
+Jellyfin server...; choose one to switch to it. "Jellyfin server..." on
+the Plex sign-in page goes to the same place.
+
+To sign in to a Jellyfin server, type its address (such as
+192.168.1.20; :8096 is added unless you give a port or an http://
+address), then either:
+  Quick Connect  a six-digit code: in Jellyfin on a phone or computer,
+                 open your user menu, choose Quick Connect and type it.
+                 Matinee checks every 2 seconds and carries on by itself.
+                 (The server's administrator may have turned it off.)
+  your name and password, then Return or Sign in.
+Matinee keeps the server's token, not your password. Plex instead goes
+back to the Plex sign-in.
+
+On a Jellyfin server everything works as on a Plex one, except: there
+are no star ratings (Jellyfin doesn't keep them), no Plex Home people,
+and your choice of subtitles and sound track lasts while Matinee runs
+(Jellyfin doesn't keep it). Skip intro and Skip credits appear where the
+server has found them (Jellyfin 10.10 or later, with its media segments
+plug-ins). Collections are the server's, not each library's. Remove from
+Continue watching forgets where you got to.
+
+Sign out of this server (the icon's menu, while a Jellyfin server is in
+use) signs out on the server and forgets it; your Plex sign-in is kept.
 
 The browser
 -----------
@@ -317,7 +347,8 @@ Choices file; 0 turns it off): past that the oldest go when Matinee
 starts. Clear image cache on the icon's menu empties it, and says how
 big it was.
 
-Sign out (on the icon's menu) asks first.
+Sign out (on the icon's menu) asks first. With a Plex server it forgets
+your Plex sign-in; with a Jellyfin server, that server only.
 
 Who's watching (Plex Home)
 --------------------------
@@ -333,8 +364,9 @@ Choices
 -------
 Kept in Choices:Matinee.Choices: the player, the quality, direct play,
 the poster size, the built-in player's picture, volume and hardware
-overlay, the server in use, who's watching (Plex Home), and the tokens
-that sign Matinee in to plex.tv and the server. Anyone who can read your Choices can use those tokens: Sign out
+overlay, the server in use, who's watching (Plex Home), the Jellyfin
+servers you've signed in to, and the tokens that sign Matinee in to
+plex.tv and the servers. Anyone who can read your Choices can use those tokens: Sign out
 on the icon's menu removes them.
 
 Needs

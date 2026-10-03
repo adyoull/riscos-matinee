@@ -21,13 +21,13 @@ PORT=${PORT:-18411}
 [ -f "$REEL_SRC/player/sources.c" ] || { echo "run.sh: set REEL_SRC to a riscos-ffmpeg checkout" >&2; exit 2; }
 mkdir -p "$OUT"
 gcc -O1 -g -Wall -Wno-format-truncation -I"$TOP/src" -I"$TOP/third_party/cjson" -I"$REEL_SRC/player" \
-  -o "$OUT/core_test" "$TOP/tests/host/core_test.c" "$TOP"/src/net.c "$TOP"/src/plex.c \
+  -o "$OUT/core_test" "$TOP/tests/host/core_test.c" "$TOP"/src/net.c "$TOP"/src/plex.c "$TOP"/src/jellyfin.c \
   "$TOP"/src/caps.c "$TOP"/src/handoff.c "$TOP/third_party/cjson/cJSON.c" "$REEL_SRC/player/sources.c" \
   $(pkg-config --cflags --libs libavformat libavutil)
 arm-linux-gnueabihf-gcc -O1 -g -Wall -Wno-format-truncation -marm -mno-unaligned-access -no-pie \
   -DMATINEE_TEST -DMATINEE_NO_MAIN -D_FILE_OFFSET_BITS=64 \
   -I"$TOP/tests/host/fake" -I"$TOP/src" -I"$TOP/third_party/cjson" -I"$REEL_SRC/player" -I"$REEL_SRC/reelcore" \
-  -o "$OUT/ui_test" "$TOP/tests/host/ui_test.c" "$TOP/src/ui.c" "$TOP/src/plex.c" "$TOP/src/caps.c" \
+  -o "$OUT/ui_test" "$TOP/tests/host/ui_test.c" "$TOP/src/ui.c" "$TOP/src/plex.c" "$TOP/src/jellyfin.c" "$TOP/src/caps.c" \
   "$TOP/src/handoff.c" "$TOP/src/draw.c" "$TOP/src/player.c" "$TOP/src/imgcache.c" "$TOP/tests/host/fake_reelcore.c" "$TOP/tests/host/net_sock.c" "$TOP/third_party/cjson/cJSON.c" "$REEL_SRC/player/sources.c" -lm
 
 python3 "$TOP/tests/host/fakeplex.py" "$PORT" > "$OUT/fakeplex.log" 2>&1 &

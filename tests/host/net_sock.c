@@ -107,8 +107,10 @@ static int request(const char *url, const char *headers, const char *method, con
     if (post) {
         const char *body = *post ? post : "x=1";
         snprintf(req, rl, "%s %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s"
-                 "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: %d\r\n\r\n%s",
-                 method, path, host, port, agent, headers ? headers : "", (int)strlen(body), body);
+                 "Content-Type: %s\r\nContent-Length: %d\r\n\r\n%s",
+                 method, path, host, port, agent, headers ? headers : "",
+                 *body == '{' || *body == '[' ? "application/json" : "application/x-www-form-urlencoded",
+                 (int)strlen(body), body);
     } else {
         snprintf(req, rl, "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s\r\n",
                  path, host, port, agent, headers ? headers : "");

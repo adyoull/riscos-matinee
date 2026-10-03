@@ -110,7 +110,7 @@ mutate "cast photos square" src/ui.c \
 mutate "the timeline without the play queue" src/plex.c \
   'if (pl && pl->pq_id && u < sizeof(url))' 'if (0)'
 mutate "the stream without the session id" src/ui.c \
-  'if (strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))' 'if (0)'
+  'if (S.px.kind == SRV_PLEX && strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))' 'if (0)'
 mutate "a search on every key" src/ui.c \
   'S.search_due = now_cs() + SEARCH_WAIT;\n    if (!S.search_due)\n        S.search_due = 1;' 'search_now();\n    return 1;'
 mutate "search results in the server's order" src/plex.c \
@@ -134,7 +134,7 @@ mutate "the pointer never hidden" src/player.c \
 mutate "the panel not scaled for the overlay" src/player.c \
   'reelcore_set_yuv_scale(P.v, (double)ov.fw / rw);' '(void)rw;'
 mutate "Sign out without asking" src/ui.c \
-  'if (ask("Sign out?' 'if (1 || ask("Sign out?'
+  '            if (ask(q))' '            if (1 || ask(q))'
 
 mutate "the stats say Direct Play for a transcoded stream" src/player.c \
   'P.convert ? "Transcoded" : "Direct Play"' '"Direct Play"'
@@ -246,6 +246,30 @@ mutate "the Decoder row says ARM always" src/player.c \
 # test24: the page at &8000
 mutate "a moved page at &8000 not noticed" src/player.c \
   'if (p && P.app_page && p != P.app_page) {' 'if (0) {'
+
+# test25: Jellyfin
+mutate "Jellyfin's header without the token" src/jellyfin.c \
+  'if (token && *token && n > 0 && (size_t)n < size) {' 'if (0) {'
+mutate "a JSON body sent as a form" src/net.c \
+  '*body == '"'"'{'"'"' || *body == '"'"'['"'"' ? "application/json"' '0 ? "application/json"'
+mutate "stream ids are Jellyfin's Index (0 taken as none)" src/jellyfin.c \
+  '            sb->id = idx + 1;' '            sb->id = idx;'
+mutate "missing episodes listed" src/jellyfin.c \
+  'if (!strcmp(ty, "Episode") && loc && !strcmp(loc, "Virtual"))' 'if (0)'
+mutate "Next up not in Continue watching" src/jellyfin.c \
+  'snprintf(path, sizeof(path), "/Shows/NextUp?UserId=%s&Limit=%d&Fields=" ROW_FIELDS IMAGES, c->user_id, size);\n    if (get_items(c, path, 1, &nx) != 0)' 'if (1)'
+mutate "progress always reported as a start" src/jellyfin.c \
+  '} else if (strcmp(playing_session, sess)) {' '} else if (1) {'
+mutate "the details page asks the server how it plays" src/ui.c \
+  '    k.dry = 1;                      /* nothing asked of the server for it */' ''
+mutate "the session id stays Matinee's (Jellyfin's PlaySessionId not used)" src/ui.c \
+  '    snprintf(S.pl.sid, sizeof(S.pl.sid), "%s", S.pl.p.session);\n' ''
+mutate "a Plex server keeps Jellyfin's kind" src/plex.c \
+  '    c->kind = SRV_PLEX;\n    c->user_id[0] = c->user_name[0] = 0;\n    snprintf(b, sizeof(b), "%s", base);' '    snprintf(b, sizeof(b), "%s", base);'
+mutate "signing out of Jellyfin forgets nothing" src/ui.c \
+  '                memmove(&S.jf[i], &S.jf[i + 1], (S.njf - i - 1) * sizeof(jf_saved));\n                S.njf--;' ''
+mutate "stars shown for Jellyfin" src/ui.c \
+  'if (it->rating_key && S.px.kind == SRV_PLEX && S.nbtn + 5 <= DET_BTN_MAX)' 'if (it->rating_key && S.nbtn + 5 <= DET_BTN_MAX)'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

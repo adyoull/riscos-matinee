@@ -131,6 +131,94 @@ SHOW = {"ratingKey": "20", "key": "/library/metadata/20/children", "type": "show
         "Genre": [{"tag": "Science Fiction"}, {"tag": "Drama"}]}
 
 
+# ---- a Jellyfin server, on the same port (its paths start with a capital) ----
+
+JF_TOKEN = "JF-TOKEN"
+JF_USER = "u1"
+JF_QC = {"polls": 0, "secret": None}
+JF_PLAYED = {"jm3"}             # item ids watched
+JF_POS = {"jm1": 25300000000}   # where you got to, in ticks
+JF_PREFIXES = ("/System/", "/QuickConnect/", "/Users/", "/Items/", "/Shows/", "/Videos/", "/videos/", "/Sessions/",
+               "/MediaSegments/")
+
+
+def jf_stream_set(iid):
+    st = [{"Index": 0, "Type": "Video", "Codec": "h264", "Profile": "High", "Width": 1920, "Height": 1080,
+           "BitDepth": 8, "RealFrameRate": 24.0, "BitRate": 4800000}]
+    if iid == "jm2":
+        st = [{"Index": 0, "Type": "Video", "Codec": "hevc", "Profile": "Main 10", "Width": 1920, "Height": 1080,
+               "BitDepth": 10, "RealFrameRate": 24.0}]
+    if iid.startswith("je"):
+        st[0].update({"Width": 1280, "Height": 720})
+    st.append({"Index": 1, "Type": "Audio", "Codec": "aac", "Channels": 2, "Language": "eng",
+               "DisplayTitle": "English - AAC - Stereo", "IsDefault": True})
+    if iid == "jm1":
+        st += [{"Index": 2, "Type": "Audio", "Codec": "ac3", "Channels": 6, "DisplayTitle": "Commentary - AC3 - 5.1"},
+               {"Index": 3, "Type": "Subtitle", "Codec": "subrip", "Language": "eng", "DisplayTitle": "English - SUBRIP"},
+               {"Index": 4, "Type": "Subtitle", "Codec": "subrip", "Language": "eng", "IsExternal": True,
+                "DisplayTitle": "English - SUBRIP - External"},
+               {"Index": 5, "Type": "Subtitle", "Codec": "PGSSUB", "Language": "fre", "IsForced": True,
+                "DisplayTitle": "French - PGSSUB - Forced"}]
+    return st
+
+
+def jf_item(iid, full=False):
+    """One of the fake Jellyfin's items, as a BaseItemDto"""
+    films = {"jm1": ("Jelly Bunny", 2008, 5400), "jm2": ("Jelly Hevc", 2020, 6000), "jm3": ("Jelly Seen", 2001, 5000)}
+    ud = {"Played": iid in JF_PLAYED, "PlaybackPositionTicks": JF_POS.get(iid, 0), "PlayCount": 1 if iid in JF_PLAYED else 0}
+    if iid in films:
+        t, y, mins = films[iid]
+        m = {"Id": iid, "Name": t, "Type": "Movie", "ProductionYear": y, "RunTimeTicks": 54000000000,
+             "ImageTags": {"Primary": "pt-" + iid}, "BackdropImageTags": ["bt-" + iid], "CommunityRating": 7.4,
+             "OfficialRating": "PG", "UserData": ud, "MediaType": "Video"}
+    elif iid == "js1":
+        m = {"Id": "js1", "Name": "Moon Show", "Type": "Series", "ProductionYear": 2022, "ChildCount": 1,
+             "ImageTags": {"Primary": "pt-js1"}, "BackdropImageTags": ["bt-js1"],
+             "UserData": {"Played": False, "UnplayedItemCount": 1}, "Overview": "A show about the moon."}
+    elif iid == "jss1":
+        m = {"Id": "jss1", "Name": "Season 1", "Type": "Season", "IndexNumber": 1, "SeriesId": "js1",
+             "SeriesName": "Moon Show", "SeriesPrimaryImageTag": "pt-js1", "ChildCount": 2,
+             "UserData": {"Played": False, "UnplayedItemCount": 1}}
+    elif iid in ("je1", "je2", "je3"):
+        n = int(iid[2])
+        m = {"Id": iid, "Name": "Moon %d" % n, "Type": "Episode", "IndexNumber": n, "ParentIndexNumber": 1,
+             "SeriesId": "js1", "SeriesName": "Moon Show", "SeasonId": "jss1", "SeriesPrimaryImageTag": "pt-js1",
+             "RunTimeTicks": 27000000000, "ImageTags": {"Primary": "pt-" + iid}, "MediaType": "Video",
+             "UserData": {"Played": iid == "je1" or iid in JF_PLAYED, "PlaybackPositionTicks": 0},
+             "ParentBackdropItemId": "js1", "ParentBackdropImageTags": ["bt-js1"]}
+        if iid == "je3":
+            m["LocationType"] = "Virtual"
+    elif iid == "jb1":
+        m = {"Id": "jb1", "Name": "Jelly Collection", "Type": "BoxSet", "ChildCount": 2,
+             "ImageTags": {"Primary": "pt-jb1"}, "UserData": {}}
+    elif iid in ("jp1", "jp2"):
+        m = {"Id": iid, "Name": "Jelly Night" if iid == "jp1" else "Jelly Songs", "Type": "Playlist",
+             "MediaType": "Video" if iid == "jp1" else "Audio", "ChildCount": 2, "UserData": {}}
+    else:
+        return None
+    if full and m["Type"] in ("Movie", "Episode"):
+        m["Overview"] = "%s: a test video on a Jellyfin server." % m["Name"]
+        m["Genres"] = ["Animation", "Comedy"]
+        m["Studios"] = [{"Name": "Blender Foundation", "Id": "st1"}]
+        m["Taglines"] = ["One big rabbit"]
+        m["PremiereDate"] = "2008-04-10T00:00:00.0000000Z"
+        m["People"] = [{"Name": "Bunny", "Id": "p1", "Role": "Himself", "Type": "Actor", "PrimaryImageTag": "pp1"},
+                       {"Name": "Frank", "Id": "p2", "Role": "Squirrel", "Type": "Actor"},
+                       {"Name": "Sacha", "Id": "p3", "Type": "Director"}]
+        m["MediaSources"] = [{"Id": "ms-" + iid, "Container": "mkv" if iid != "jm1" else "mov,mp4,m4a,3gp,3g2,mj2",
+                              "Path": "/media/films/%s.mkv" % m["Name"], "Size": 3500000000, "Bitrate": 5000000,
+                              "DefaultAudioStreamIndex": 1, "MediaStreams": jf_stream_set(iid)}]
+        if iid == "jm1":
+            m["Chapters"] = [{"StartPositionTicks": 0, "Name": "Opening"},
+                             {"StartPositionTicks": 50000000, "Name": "The meadow"}]
+    return m
+
+
+def jf_items(ids, total=None):
+    its = [jf_item(i) for i in ids]
+    return {"Items": its, "TotalRecordCount": len(its) if total is None else total}
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -164,6 +252,145 @@ class H(BaseHTTPRequestHandler):
         q = parse_qs(urlsplit(self.path).query)
         return self.headers.get("X-Plex-Token") or (q.get("X-Plex-Token") or [None])[0]
 
+    def jf_token(self):
+        a = self.headers.get("Authorization") or ""
+        if 'Token="' in a:
+            return a.split('Token="', 1)[1].split('"', 1)[0]
+        q = parse_qs(urlsplit(self.path).query)
+        return (q.get("api_key") or q.get("ApiKey") or [None])[0]
+
+    def jf(self, body=b""):
+        """The fake Jellyfin server"""
+        u = urlsplit(self.path)
+        p, q, m = u.path, parse_qs(u.query), self.command
+        a = self.headers.get("Authorization") or ""
+        keyed = q.get("api_key") or q.get("ApiKey") or "/Images/" in p
+        if not keyed and (not a.startswith("MediaBrowser ") or 'DeviceId="' not in a or 'Client="Matinee"' not in a):
+            return self.send(400, {"error": "no MediaBrowser authorization"})
+        js = json.loads(body) if body[:1] in (b"{", b"[") else None
+        if p == "/System/Info/Public":
+            return self.send(200, {"Id": "JFID", "ServerName": "Cellar", "Version": "10.10.7",
+                                   "ProductName": "Jellyfin Server", "StartupWizardCompleted": True})
+        if p == "/QuickConnect/Initiate" and m == "POST":
+            JF_QC.update({"polls": 0, "secret": "SEC1"})
+            return self.send(200, {"Secret": "SEC1", "Code": "123456", "Authenticated": False})
+        if p == "/QuickConnect/Connect":
+            if (q.get("secret") or [""])[0] != JF_QC["secret"]:
+                return self.send(404, {})
+            JF_QC["polls"] += 1
+            return self.send(200, {"Secret": "SEC1", "Code": "123456", "Authenticated": JF_QC["polls"] >= 2})
+        if p == "/Users/AuthenticateWithQuickConnect":
+            if not js or js.get("Secret") != "SEC1" or JF_QC["polls"] < 2:
+                return self.send(401, {})
+            return self.send(200, {"AccessToken": JF_TOKEN, "ServerId": "JFID", "User": {"Id": JF_USER, "Name": "andrew"}})
+        if p == "/Users/AuthenticateByName":
+            if not js or js.get("Username") != "andrew" or js.get("Pw") != "secret":
+                return self.send(401, {})
+            return self.send(200, {"AccessToken": JF_TOKEN, "ServerId": "JFID", "User": {"Id": JF_USER, "Name": "andrew"}})
+        if "/Images/" in p:
+            return self.send(200, raw=jpeg(p + "?" + u.query), ctype="image/jpeg")
+        if self.jf_token() != JF_TOKEN:
+            return self.send(401, {})
+        if p == "/Sessions/Logout" or p.startswith("/Sessions/Playing") or p == "/Videos/ActiveEncodings":
+            return self.send(204, raw=b"")
+        if p.startswith("/Users/%s/PlayedItems/" % JF_USER):
+            iid = p.rsplit("/", 1)[1]
+            (JF_PLAYED.add if m == "POST" else JF_PLAYED.discard)(iid)
+            return self.send(200, {"Played": m == "POST"})
+        if p.startswith("/Users/%s/Items/" % JF_USER) and p.endswith("/UserData"):
+            iid = p.split("/")[4]
+            if js and "PlaybackPositionTicks" in js:
+                JF_POS[iid] = js["PlaybackPositionTicks"]
+            return self.send(200, {})
+        if p == "/Users/%s/Views" % JF_USER:
+            return self.send(200, {"Items": [
+                {"Id": "lib-m", "Name": "Jelly Films", "CollectionType": "movies", "Type": "CollectionFolder"},
+                {"Id": "lib-t", "Name": "Jelly TV", "CollectionType": "tvshows", "Type": "CollectionFolder"},
+                {"Id": "lib-bs", "Name": "Collections", "CollectionType": "boxsets", "Type": "CollectionFolder"},
+                {"Id": "lib-mu", "Name": "Jelly Music", "CollectionType": "music", "Type": "CollectionFolder"}],
+                "TotalRecordCount": 4})
+        if p == "/Users/%s/Items/Resume" % JF_USER:
+            return self.send(200, jf_items([i for i in ("jm1",) if JF_POS.get(i)]))
+        if p == "/Shows/NextUp":
+            return self.send(200, jf_items(["je2"]))
+        if p == "/Users/%s/Items/Latest" % JF_USER:
+            par = (q.get("ParentId") or [""])[0]
+            return self.send(200, [jf_item(i) for i in ({"lib-m": ["jm2", "jm1"], "lib-t": ["je2"]}.get(par, []))])
+        if p == "/Users/%s/Items" % JF_USER:
+            par = (q.get("ParentId") or [""])[0]
+            types = (q.get("IncludeItemTypes") or [""])[0]
+            term = (q.get("searchTerm") or [""])[0].lower()
+            if term:
+                ids = [i for i in ("je1", "je2", "js1", "jm1", "jm2", "jm3") if term in jf_item(i)["Name"].lower()
+                       or (i.startswith("je") and term in "moon show")]
+                return self.send(200, jf_items(ids))
+            if types == "BoxSet":
+                return self.send(200, jf_items(["jb1"]))
+            if types == "Playlist":
+                return self.send(200, jf_items(["jp1", "jp2"]))
+            if par == "lib-m":
+                ids = ["jm1", "jm2", "jm3"]
+                sb = (q.get("SortBy") or [""])[0]
+                if sb.startswith("ProductionYear"):
+                    ids.sort(key=lambda i: -jf_item(i)["ProductionYear"])
+                if (q.get("Filters") or [""])[0] == "IsUnplayed":
+                    ids = [i for i in ids if i not in JF_PLAYED]
+                return self.send(200, jf_items(ids))
+            if par == "lib-t":
+                return self.send(200, jf_items(["js1"]))
+            if par in ("jb1", "jp1"):
+                return self.send(200, jf_items(["jm1", "jm2"]))
+            return self.send(200, jf_items([]))
+        if p.startswith("/Users/%s/Items/" % JF_USER) and p.endswith("/SpecialFeatures"):
+            return self.send(200, [])
+        if p.startswith("/Users/%s/Items/" % JF_USER) and p.count("/") == 4:
+            it = jf_item(p.rsplit("/", 1)[1], full=True)
+            return self.send(200, it) if it else self.send(404, {})
+        if p == "/Shows/js1/Seasons":
+            return self.send(200, jf_items(["jss1"]))
+        if p == "/Shows/js1/Episodes":
+            return self.send(200, jf_items(["je1", "je2", "je3"]))
+        if p.startswith("/Items/") and p.endswith("/Similar"):
+            return self.send(200, jf_items(["jm2"]))
+        if p.startswith("/MediaSegments/"):
+            if p.endswith("/je1"):
+                return self.send(200, {"Items": [
+                    {"Type": "Intro", "StartTicks": 20000000, "EndTicks": 80000000},
+                    {"Type": "Commercial", "StartTicks": 90000000, "EndTicks": 100000000},
+                    {"Type": "Outro", "StartTicks": 140000000, "EndTicks": 200000000}]})
+            return self.send(200, {"Items": []})
+        if p.startswith("/Items/") and p.endswith("/PlaybackInfo") and m == "POST":
+            iid = p.split("/")[2]
+            return self.send(200, {"PlaySessionId": "0123456789abcdef0123456789abcdef", "MediaSources": [
+                {"Id": "ms-" + iid, "SupportsDirectPlay": False, "SupportsTranscoding": True,
+                 "TranscodingUrl": "/videos/%s/master.m3u8?DeviceId=x&MediaSourceId=ms-%s&VideoCodec=h264"
+                                   "&AudioCodec=aac&PlaySessionId=0123456789abcdef0123456789abcdef&ApiKey=%s"
+                                   % (iid, iid, JF_TOKEN),
+                 "TranscodingSubProtocol": "hls", "TranscodingContainer": "ts"}]})
+        if p.endswith("/master.m3u8"):
+            return self.send(200, raw=b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=4000000\nmain.m3u8\n",
+                             ctype="application/vnd.apple.mpegurl")
+        if p == "/Videos/jm1/ms-jm1/Subtitles/4/0/Stream.srt":
+            return self.send(200, raw=b"1\r\n00:00:01,000 --> 00:00:04,000\r\nA jelly buck.\r\n")
+        if p.startswith("/Videos/") and p.endswith("/stream"):
+            rng = self.headers.get("Range")
+            start = int(rng[6:].split("-")[0] or 0) if rng and rng.startswith("bytes=") else 0
+            data = PART[start:]
+            if start:
+                return self.send(206, raw=data, ctype="video/mp4",
+                                 extra={"Content-Range": "bytes %d-%d/%d" % (start, len(PART) - 1, len(PART)),
+                                        "Accept-Ranges": "bytes"})
+            return self.send(200, raw=data, ctype="video/mp4", extra={"Accept-Ranges": "bytes"})
+        return self.send(404, {})
+
+    def do_DELETE(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n)
+        self.record(body)
+        if urlsplit(self.path).path.startswith(JF_PREFIXES):
+            return self.jf(body)
+        self.send(404, {})
+
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n)
@@ -171,8 +398,15 @@ class H(BaseHTTPRequestHandler):
         if p == "/_reset":
             with LOCK:
                 LOG.clear()
+                JF_PLAYED.clear()
+                JF_PLAYED.add("jm3")
+                JF_POS.clear()
+                JF_POS["jm1"] = 25300000000
+                JF_QC.update({"polls": 0, "secret": None})
             return self.send(200, {})
         self.record(body)
+        if p.startswith(JF_PREFIXES):
+            return self.jf(body)
         if p == "/playQueues":
             if self.token() not in SERVERS:
                 return self.send(401, {})
@@ -232,6 +466,8 @@ class H(BaseHTTPRequestHandler):
             with LOCK:
                 return self.send(200, LOG)
         self.record()
+        if p.startswith(JF_PREFIXES):
+            return self.jf()
         if p == "/api/v2/pins/4242":
             PIN_POLLS["n"] += 1
             return self.send(200, {"id": 4242, "code": "ABCD",

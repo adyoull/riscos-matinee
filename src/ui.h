@@ -9,8 +9,10 @@
 /* What the window shows */
 enum { PG_GRID, PG_DETAILS, PG_SIGNIN, PG_PLAYER };
 
-/* The sign-in page's buttons and fields (drawn, not icons) */
-enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK };
+/* The sign-in page's buttons and fields (drawn, not icons): Plex's, then
+   Jellyfin's (its address, Quick Connect, name, password, Sign in) and the
+   buttons between the two */
+enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK, S_JF, S_PLEX, S_QC, S_JADDR, S_JUSER, S_JPW, S_LOGIN };
 
 /* The browser's and details window's buttons (drawn, not icons) */
 enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS, B_SEARCH };
@@ -56,7 +58,10 @@ int ui_test_sel(void);
 int ui_test_posters(int *failed);               /* posters made (and failed) */
 int ui_test_windows(int *browser, int *save);   /* 1 if the browser window is open */
 int ui_test_page(void);
-const char *ui_test_signin(int what);           /* 0 the code, 1 status, 2 address, 3 token */
+const char *ui_test_signin(int what);           /* 0 the code, 1 status, 2 address, 3 token; Jellyfin's:
+                                                   4 its code, 5 address, 6 name, 7 the server's name */
+int ui_test_signin_jf(void);                    /* the sign-in page is Jellyfin's */
+int ui_test_jf_servers(void);                   /* Jellyfin servers saved */
 int ui_test_field(void);
 int ui_test_button_xy(int w, int id, int *x, int *y);   /* a drawn button's middle */
 const char *ui_test_button(int id);             /* a details button's label, or NULL */

@@ -2944,6 +2944,222 @@ static int script(int *b, int mask)
             }
             pc++;
             return ev_menu(b, MB_QUIT, -1);
+        /* ---- the third run: a Jellyfin server beside the Plex one */
+        case 8000:
+            CHECK(!win(w_browser)->open, "third run: nothing open yet");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);             /* Menu on the icon */
+        case 8001: {
+            const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
+            CHECK(sm && !menu_shaded(menu_open, MB_SERVERS) && !strcmp(menu_text(sm, 0), "Add a Jellyfin server...") &&
+                  (menu_flags(sm, 0) & 0x80), "Servers, not signed in to plex.tv: Add a Jellyfin server... only");
+            pc++;
+            return ev_menu(b, MB_SERVERS, 0);
+        }
+        case 8002:
+            CHECK(ui_test_page() == PG_SIGNIN && ui_test_signin_jf() && win(w_browser)->open && ui_test_field() == 0,
+                  "the Jellyfin sign-in page, the caret in the address");
+            snprintf(type_str, sizeof(type_str), "127.0.0.1:%s", base + 17);
+            type_i = 0;
+            pc++;
+            return ev_button(b, w_browser, S_JADDR, 0x400);
+        case 8003:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            CHECK(!strcmp(ui_test_signin(5), type_str), "the address typed: %s", ui_test_signin(5));
+            pc++;
+            return ev_button(b, w_browser, S_QC, 0x400);        /* Quick Connect */
+        case 8004:
+            CHECK(!strcmp(ui_test_signin(4), "123456") && strstr(ui_test_signin(1), "Quick Connect"),
+                  "a Quick Connect code: %s (%s)", ui_test_signin(4), ui_test_signin(1));
+            CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 200, "checked every 2 s");
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 8005:
+            CHECK(strstr(plotted_text, "Sign in to a Jellyfin server|") && strstr(plotted_text, "1  2  3  4  5  6|") &&
+                  strstr(plotted_text, "New code|") && strstr(plotted_text, "Plex instead|"), "drawn: %s", plotted_text);
+            save_picture("signin-jellyfin.ppm", w_browser);
+            fake_cs = idle_time;
+            pc++;
+            return NULL_EVENT;
+        case 8006:
+            CHECK(ui_test_page() == PG_SIGNIN, "not yet allowed");
+            fake_cs = idle_time;
+            pc++;
+            return NULL_EVENT;
+        case 8007: {
+            int rows = 0, pick = 0, st = 0, n = 0, vis = 0, cur = -1;
+            CHECK(ui_test_page() == PG_GRID && ui_test_home(&rows, &pick) && rows == 3, "allowed: Jellyfin's home page (%d rows)", rows);
+            CHECK(ui_test_home_row(0, &st, &n, &vis) && !strcmp(ui_test_home_row(0, &st, &n, &vis), "Continue watching") && n == 2 &&
+                  !strcmp(ui_test_item(0, 0), "Jelly Bunny") && !strcmp(ui_test_item(1, 0), "Moon Show") &&
+                  !strncmp(ui_test_item(1, 1), "S1 E2", 5), "Continue watching: part watched, then next up (%s, %s)",
+                  ui_test_item(0, 0), ui_test_item(1, 0));
+            CHECK(!strcmp(ui_test_home_row(1, &st, &n, &vis), "Recently added in Jelly Films") && n == 2, "recently added");
+            CHECK(!strcmp(ui_test_path(), "Cellar") && strstr(ui_test_status(), "Signed in to Cellar as andrew"),
+                  "where: %s; %s", ui_test_path(), ui_test_status());
+            CHECK(ui_test_tab(&cur) == 4 && cur == 0, "Home and three libraries");
+            snprintf(want, sizeof(want), "jellyfin Cellar|JFID|%s|JF-TOKEN|u1|andrew\n", base);
+            CHECK(strstr(read_file(choices), want) && strstr(read_file(choices), "server_kind 1\n") &&
+                  strstr(read_file(choices), "server_user_id u1\n"), "kept in Choices:\n%s", read_file(choices));
+            CHECK(log_count("/Items/jm1/Images/Primary", NULL, NULL) >= 0, "posters");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 8008: {
+            const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
+            CHECK(sm && !strcmp(menu_text(sm, 0), "Cellar (Jellyfin)") && (menu_flags(sm, 0) & 1) &&
+                  !strcmp(menu_text(sm, 1), "Add a Jellyfin server..."), "Servers: Cellar, ticked");
+            CHECK(menu_shaded(menu_open, MB_USERS) && !strcmp(menu_text(menu_open, MB_SIGNOUT), "Sign out of this server"),
+                  "no Plex Home; Sign out of this server");
+            pc++;
+            return ev_button(b, w_browser, TB_TAB + 1, 0x400);  /* Jelly Films */
+        }
+        case 8009: {
+            int view = -1, sort = -1, unw = -1;
+            CHECK(ui_test_items() == 3 && find_tile("Jelly Bunny") >= 0 && ui_test_lib(&view, &sort, &unw),
+                  "a Jellyfin library: %d films, its bar", ui_test_items());
+            pc++;
+            return ev_tile(b, find_tile("Jelly Bunny"), 4);
+        }
+        case 8010: {
+            int x, y;
+            CHECK(ui_test_page() == PG_DETAILS && strstr(ui_test_det(2), "Direct Play"), "its details: %s", ui_test_det(2));
+            CHECK(ui_test_button_xy(w_browser, D_STAR, &x, &y) != 0, "no stars: Jellyfin keeps none");
+            CHECK(log_count("/Items/jm1/PlaybackInfo", NULL, NULL) == 0, "how it plays: nothing asked of the server");
+            fake_rc.len = 5400;
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_redraw(b, w_browser);
+        }
+        case 8011:
+            save_picture("details-jellyfin.ppm", w_browser);
+            pc++;
+            return ev_button(b, w_browser, D_PLAY, 0x400);
+        case 8012:
+            snprintf(want, sizeof(want), "%s/Videos/jm1/stream?static=true&mediaSourceId=ms-jm1&PlaySessionId=", base);
+            CHECK(ui_test_page() == PG_PLAYER && fake_rc.opens == open0 + 1 && !strncmp(fake_rc.url, want, strlen(want)) &&
+                  strstr(fake_rc.url, "&api_key=JF-TOKEN"), "played from Jellyfin, the file itself: %s", fake_rc.url);
+            CHECK(strstr(fake_rc.headers, "Authorization: MediaBrowser Client=\"Matinee\"") && strstr(fake_rc.headers, "Token=\"JF-TOKEN\"") &&
+                  !strstr(fake_rc.headers, "X-Plex") && !strstr(fake_rc.headers, "Accept:"), "with Jellyfin's header: %s",
+                  fake_rc.headers);
+            n_null = 0;
+            pc++;
+            continue;
+        case 8013:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            CHECK(player_ready() && fake_rc.seeks >= 1 && NEAR(fake_rc.seek_to, 2530, 0.01), "resumed where it was left (%d %d %.1f)",
+                  player_ready(), fake_rc.seeks, fake_rc.seek_to);
+            fake_cs += 1100;                                    /* the timeline's 10 s */
+            n_null = 0;
+            pc++;
+            return NULL_EVENT;
+        case 8014:
+            CHECK(log_count("/Sessions/Playing", NULL, NULL) == 1, "Jellyfin told it's playing (%d)",
+                  log_count("/Sessions/Playing", NULL, NULL));
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 8015:
+            pc++;
+            return ev_menu(b, MP_STOP, -1);
+        case 8016:
+            CHECK(ui_test_page() == PG_DETAILS && log_count("/Sessions/Playing/Stopped", NULL, NULL) == 1,
+                  "stopped: Jellyfin told");
+            CHECK(log_count("/Videos/ActiveEncodings", NULL, NULL) == 0, "the file itself: nothing converting to stop");
+            pc = 8030;
+            return ev_key(b, w_browser, -1, 0x1B);              /* Escape: the grid */
+        case 8030:
+            pc++;
+            return ev_tile(b, find_tile("Jelly Hevc"), 4);
+        case 8031:
+            CHECK(ui_test_page() == PG_DETAILS && strstr(ui_test_det(2), "Transcoded"), "HEVC: converted (%s)", ui_test_det(2));
+            CHECK(log_count("/Items/jm2/PlaybackInfo", NULL, NULL) == 0, "the details say so without asking the server");
+            open0 = fake_rc.opens;
+            pc++;
+            return ev_button(b, w_browser, D_PLAY, 0x400);
+        case 8032:
+            snprintf(want, sizeof(want), "%s/videos/jm2/master.m3u8?", base);
+            CHECK(ui_test_page() == PG_PLAYER && fake_rc.opens == open0 + 1 && !strncmp(fake_rc.url, want, strlen(want)) &&
+                  strstr(fake_rc.url, "ApiKey=JF-TOKEN") && log_count("/Items/jm2/PlaybackInfo", NULL, NULL) == 1,
+                  "converted: the server's HLS playlist, from PlaybackInfo: %s", fake_rc.url);
+            n_null = 0;
+            pc++;
+            continue;
+        case 8033:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 8034:
+            pc++;
+            return ev_menu(b, MP_STOP, -1);
+        case 8035:
+            CHECK(log_count("/Videos/ActiveEncodings", "playSessionId", "0123456789abcdef0123456789abcdef") == 1,
+                  "stopped: the conversion ended under Jellyfin's PlaySessionId");
+            pc = 8017;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 8017:
+            pc++;
+            return ev_menu(b, MB_SERVERS, 1);                   /* Add a Jellyfin server...: the same, by password */
+        case 8018:
+            CHECK(ui_test_signin_jf() && strstr(ui_test_signin(5), "127.0.0.1:"), "the address kept: %s",
+                  ui_test_signin(5));
+            snprintf(type_str, sizeof(type_str), "andrew");
+            type_i = 0;
+            pc++;
+            return ev_button(b, w_browser, S_JUSER, 0x400);
+        case 8019:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            snprintf(type_str, sizeof(type_str), "wrong");
+            type_i = 0;
+            pc++;
+            return ev_key(b, w_browser, -1, 13);                /* Return: the password */
+        case 8020:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            CHECK(ui_test_field() == 2, "Return moved to the password");
+            pc++;
+            return ev_key(b, w_browser, -1, 13);                /* Return: Sign in */
+        case 8021:
+            CHECK(ui_test_page() == PG_SIGNIN && strstr(ui_test_signin(1), "didn't take that name and password"),
+                  "a wrong password: %s", ui_test_signin(1));
+            snprintf(type_str, sizeof(type_str), "secret");
+            type_i = 0;
+            pc++;
+            continue;
+        case 8022:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            pc++;
+            return ev_button(b, w_browser, S_LOGIN, 0x400);
+        case 8023:
+            CHECK(ui_test_page() == PG_GRID && ui_test_jf_servers() == 1, "signed in by password: still one server kept (%d)",
+                  ui_test_jf_servers());
+            report_answer = 1;
+            prev_reports = reports;
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 8024:
+            pc++;
+            return ev_menu(b, MB_SIGNOUT, -1);
+        case 8025:
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "Sign out of Cellar?"), "asked: %s", last_report);
+            CHECK(!win(w_browser)->open && ui_test_jf_servers() == 0 && !strstr(read_file(choices), "jellyfin ") &&
+                  strstr(read_file(choices), "server_kind 0\n") && log_count("/Sessions/Logout", NULL, NULL) == 1,
+                  "signed out of it: forgotten, and the server told:\n%s", read_file(choices));
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 4);
+        case 8026:
+            CHECK(ui_test_page() == PG_SIGNIN && !ui_test_signin_jf(), "Select: Plex's sign-in page again");
+            pc++;
+            return ev_msg(b, 0, 0, 0);
         default:
             printf("  script ran out at %d\n", pc);
             fails++;
@@ -3013,6 +3229,11 @@ int main(int argc, char **argv)
     nwins = 0; pc = 100; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
     CHECK(matinee_main(1, argv) == 0, "second run ends cleanly");
+
+    /* third run: a Jellyfin server added, played from, signed out of */
+    nwins = 0; pc = 8000; menu_open = NULL; bar_icon_made = 0;
+    ntasks = 0;
+    CHECK(matinee_main(1, argv) == 0, "third run ends cleanly");
 
     /* a second copy: another Matinee task is running */
     nwins = 0; bar_icon_made = 0;

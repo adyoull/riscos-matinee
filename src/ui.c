@@ -55,6 +55,7 @@
 #include <kernel.h>
 
 #include "plex.h"
+#include "jellyfin.h"
 #include "caps.h"
 #include "handoff.h"
 #include "net.h"
@@ -185,6 +186,13 @@ typedef struct {
     char path[256];
 } pend_t;
 
+/* A Jellyfin server signed in to: kept in Choices, one of the Servers menu */
+#define JF_SAVED 6
+#define SRV_ADD (-100)
+typedef struct {
+    char name[64], id[64], base[256], token[128], uid[48], uname[64];
+} jf_saved;
+
 static struct {
     int task, bar_icon, proginfo;
     int browser_w, save_w;
@@ -210,6 +218,15 @@ static struct {
     long pin_id;
     int pin_next;                   /* monotonic time of the next check */
     char code[16], si_status[160], si_addr[256], si_tok[256];
+    /* Jellyfin: the servers signed in to (Choices); the sign-in page's
+       Jellyfin half: the server being signed in to, its Quick Connect code */
+    jf_saved jf[JF_SAVED];
+    int njf;
+    int si_jf;                      /* the sign-in page is Jellyfin's */
+    plex_ctx jfc;
+    char jf_addr[256], jf_user[64], jf_pw[128], jf_secret[96], jf_code[16];
+    int qc_next;
+    int srv_map[16];                /* the Servers menu: >= 0 Plex server n, -1 - k Jellyfin k, SRV_ADD */
 
     /* browser */
     plex_list list;
@@ -314,7 +331,7 @@ static struct {
         plex_list det;              /* the video's details (one item) */
         play_t p;                   /* how it's played (the stream's session) */
         plex_playing pq;            /* its play queue on the server, and the session */
-        char sid[32];               /* the playback's session id ("" before the first part) */
+        char sid[48];               /* the playback's session id ("" before the first part) */
         int ping_cs;                /* a converted stream, paused: when to tell the server it's wanted */
         int prev_page;              /* the page to go back to */
         int tl_cs;                  /* when the server is told where it's got to next */
@@ -524,6 +541,12 @@ static void choices_save(void)
             S.px.server_name, S.px.server_id, S.px.local, player_names[S.player], S.quality, S.direct,
             S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5), S.cache_mb,
             player_ontop(), mw, mr, mb, S.user_uuid, S.user_title);
+    /* the server in use is Plex's or Jellyfin's; and the Jellyfin servers
+       signed in to, a line each: name|id|address|token|user id|user name */
+    fprintf(f, "server_kind %d\nserver_user_id %s\nserver_user_name %s\n", S.px.kind, S.px.user_id, S.px.user_name);
+    for (int i = 0; i < S.njf; i++)
+        fprintf(f, "jellyfin %s|%s|%s|%s|%s|%s\n", S.jf[i].name, S.jf[i].id, S.jf[i].base, S.jf[i].token, S.jf[i].uid,
+                S.jf[i].uname);
     fclose(f);
 }
 
@@ -541,9 +564,36 @@ static int value(const char *line, const char *key, char *out, size_t size)
     return 1;
 }
 
+/* A Jellyfin server's Choices line (name|id|address|token|user id|user name) */
+static void jf_saved_parse(const char *v)
+{
+    jf_saved *j;
+    char t[700], *f[6], *p = t;
+    int n = 0;
+    if (S.njf >= JF_SAVED)
+        return;
+    snprintf(t, sizeof(t), "%s", v);
+    while (n < 6) {
+        f[n++] = p;
+        p = strchr(p, '|');
+        if (!p)
+            break;
+        *p++ = 0;
+    }
+    if (n < 6 || !*f[2] || !*f[3])
+        return;
+    j = &S.jf[S.njf++];
+    snprintf(j->name, sizeof(j->name), "%s", f[0]);
+    snprintf(j->id, sizeof(j->id), "%s", f[1]);
+    snprintf(j->base, sizeof(j->base), "%s", f[2]);
+    snprintf(j->token, sizeof(j->token), "%s", f[3]);
+    snprintf(j->uid, sizeof(j->uid), "%s", f[4]);
+    snprintf(j->uname, sizeof(j->uname), "%s", f[5]);
+}
+
 static void choices_load(void)
 {
-    char line[400], v[300], id[48] = "";
+    char line[800], v[700], id[48] = "";
     FILE *f = choices_open(0);
     plex_ctx *c = &S.px;
     int version = 1, player = PLAYER_BUILTIN;
@@ -630,6 +680,14 @@ static void choices_load(void)
                 snprintf(c->server_id, sizeof(c->server_id), "%s", v);
             else if (value(line, "server_local", v, sizeof(v)))
                 c->local = atoi(v) != 0;
+            else if (value(line, "server_kind", v, sizeof(v)))
+                c->kind = atoi(v) == SRV_JELLYFIN ? SRV_JELLYFIN : SRV_PLEX;
+            else if (value(line, "server_user_id", v, sizeof(v)))
+                snprintf(c->user_id, sizeof(c->user_id), "%s", v);
+            else if (value(line, "server_user_name", v, sizeof(v)))
+                snprintf(c->user_name, sizeof(c->user_name), "%s", v);
+            else if (value(line, "jellyfin", v, sizeof(v)))
+                jf_saved_parse(v);
         }
         fclose(f);
     }
@@ -3333,7 +3391,7 @@ static void det_layout(void)
         det_button(D_SAVE, "Save file", &x, &y);
     y -= BTN + 20;
     /* your rating: five stars (click one to rate; the one you gave, to take it away) */
-    if (it->rating_key && S.nbtn + 5 <= DET_BTN_MAX) {
+    if (it->rating_key && S.px.kind == SRV_PLEX && S.nbtn + 5 <= DET_BTN_MAX) {   /* Jellyfin keeps no stars */
         det_stars_y = y - 8;
         det_stars_x = det_tx + draw_width(D_BODY, "Your rating") + 24;
         for (int k = 0; k < 5; k++) {
@@ -3352,6 +3410,7 @@ static void det_layout(void)
     /* how it will play (and that it has no subtitles) */
     caps_for(S.quality, &k);
     k.own_subs = S.player == PLAYER_BUILTIN;
+    k.dry = 1;                      /* nothing asked of the server for it */
     caps_play(&S.px, it, &k, S.direct, 1, &p);
     latin1(p.why, S.det_how, sizeof(S.det_how));
     if (!it->nsubs && strlen(S.det_how) + 20 < sizeof(S.det_how))
@@ -3565,30 +3624,71 @@ static int det_button_at(int sx, int sy)
 
 /* ---- sign-in: a page of the window ------------------------------------------------- */
 
-/* Before a server is chosen the window shows the sign-in page: the code
-   to type at plex.tv/link (checked every 2 seconds), New code, and a
-   server's address and token for signing in without plex.tv. The two
-   fields are drawn here and typed into here (the window has the caret):
-   Tab or the arrow keys move between them, Return goes on. */
+/* Before a server is chosen the window shows the sign-in page. Plex's: the
+   code to type at plex.tv/link (checked every 2 seconds), New code, and a
+   server's address and token for signing in without plex.tv; and
+   "Jellyfin server..." for the other half. Jellyfin's: the server's
+   address, Quick Connect (a code to type into Jellyfin, checked every 2
+   seconds), or a name and password; and "Plex instead". The fields are
+   drawn here and typed into here (the window has the caret): Tab or the
+   arrow keys move between them, Return goes on. */
 
 static void choose_server(void);
+static void jf_signed_in(void);
+static void builtin_stop(int leave);
+static void browser_top(void);
 
-static struct { int id, x0, y0, x1, y1; } si_box[4];
+#define SI_MAX 8
+static struct { int id, x0, y0, x1, y1; } si_box[SI_MAX];
+static int si_n;
+
+static void si_add(int id, int x0, int y1, int w)
+{
+    if (si_n >= SI_MAX)
+        return;
+    si_box[si_n].id = id;
+    si_box[si_n].x0 = x0;
+    si_box[si_n].x1 = x0 + w;
+    si_box[si_n].y1 = y1;
+    si_box[si_n].y0 = y1 - BTN;
+    si_n++;
+}
+
+static const char *si_label(int id)
+{
+    switch (id) {
+    case S_NEWCODE: return "New code";
+    case S_USE:     return "Use these";
+    case S_JF:      return "Jellyfin server...";
+    case S_PLEX:    return "Plex instead";
+    case S_QC:      return S.jf_secret[0] ? "New code" : "Quick Connect";
+    case S_LOGIN:   return "Sign in";
+    }
+    return "";
+}
+
+static int si_bw(int id)
+{
+    return draw_width(D_BOLD, si_label(id)) + 64;
+}
 
 static void si_layout(void)
 {
     int top = -HEADER_H;
-    const int ids[4] = { S_NEWCODE, S_ADDR, S_TOK, S_USE };
-    const int y1s[4] = { top - 372, top - 572, top - 652, top - 736 };
-    const int x0s[4] = { 40, 220, 220, 220 };
-    const int ws[4] = { 0, 620, 620, 0 };
-    for (int i = 0; i < 4; i++) {
-        int w = ws[i] ? ws[i] : draw_width(D_BOLD, i == 0 ? "New code" : "Use these") + 64;
-        si_box[i].id = ids[i];
-        si_box[i].x0 = x0s[i];
-        si_box[i].x1 = x0s[i] + w;
-        si_box[i].y1 = y1s[i];
-        si_box[i].y0 = y1s[i] - BTN;
+    si_n = 0;
+    if (!S.si_jf) {
+        si_add(S_NEWCODE, 40, top - 372, si_bw(S_NEWCODE));
+        si_add(S_ADDR, 220, top - 572, 620);
+        si_add(S_TOK, 220, top - 652, 620);
+        si_add(S_USE, 220, top - 736, si_bw(S_USE));
+        si_add(S_JF, 220 + si_bw(S_USE) + 32, top - 736, si_bw(S_JF));
+    } else {
+        si_add(S_JADDR, 220, top - 132, 620);
+        si_add(S_QC, 40, top - 372, si_bw(S_QC));
+        si_add(S_JUSER, 220, top - 572, 620);
+        si_add(S_JPW, 220, top - 652, 620);
+        si_add(S_LOGIN, 220, top - 736, si_bw(S_LOGIN));
+        si_add(S_PLEX, 220 + si_bw(S_LOGIN) + 32, top - 736, si_bw(S_PLEX));
     }
 }
 
@@ -3599,10 +3699,57 @@ static int si_hit(int sx, int sy)
     wx = sx - (st[1] - st[5]);
     wy = sy - (st[4] - st[6]);
     si_layout();
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < si_n; i++)
         if (wx >= si_box[i].x0 && wx < si_box[i].x1 && wy >= si_box[i].y0 && wy < si_box[i].y1)
             return si_box[i].id;
     return 0;
+}
+
+/* The fields: their text, and which is which (the caret's S.field) */
+static int si_field_of(int id)
+{
+    switch (id) {
+    case S_ADDR: case S_JADDR: return 0;
+    case S_TOK: case S_JUSER:  return 1;
+    case S_JPW:                return 2;
+    }
+    return -1;
+}
+
+static char *si_field(int f, size_t *size)
+{
+    char *p;
+    if (!S.si_jf) {
+        p = f ? S.si_tok : S.si_addr;
+        *size = f ? sizeof(S.si_tok) : sizeof(S.si_addr);
+    } else {
+        p = f == 0 ? S.jf_addr : f == 1 ? S.jf_user : S.jf_pw;
+        *size = f == 0 ? sizeof(S.jf_addr) : f == 1 ? sizeof(S.jf_user) : sizeof(S.jf_pw);
+    }
+    return p;
+}
+
+static int si_fields(void)
+{
+    return S.si_jf ? 3 : 2;
+}
+
+/* The code, big and spaced out, on a card */
+static void si_code(int ox, int oy, const char *code)
+{
+    int top = -HEADER_H;
+    char t[64];
+    size_t n = 0;
+    for (const char *c = code; *c && n + 3 < sizeof(t); c++) {
+        t[n++] = *c;
+        if (c[1]) { t[n++] = ' '; t[n++] = ' '; }
+    }
+    t[n] = 0;
+    int w = draw_width(D_TITLE, t) + 120;
+    if (w < 420)                    /* Plex's four letters; Jellyfin's six digits wider */
+        w = 420;
+    draw_round(ox + 40, oy + top - 292, ox + 40 + w, oy + top - 160, 20, C_CARD, C_BG);
+    draw_text(D_TITLE, ox + 40 + (w - draw_width(D_TITLE, t)) / 2, oy + top - 244, t, C_TEXT, C_CARD);
 }
 
 static void signin_redraw(int ox, int oy, int vis_w)
@@ -3611,35 +3758,47 @@ static void signin_redraw(int ox, int oy, int vis_w)
     char t[300];
     (void)vis_w;
     si_layout();
-    draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in with a code", C_TEXT, C_BG);
-    draw_text(D_BODY, ox + 40, oy + top - 124, "On a phone or computer, go to plex.tv/link and type this code:",
-              C_SUB, C_BG);
-    {   /* the code, big and spaced out, on a card */
-        size_t n = 0;
-        for (const char *c = S.code; *c && n + 3 < sizeof(t); c++) {
-            t[n++] = *c;
-            if (c[1]) { t[n++] = ' '; t[n++] = ' '; }
+    if (!S.si_jf) {
+        draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in with a code", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 124, "On a phone or computer, go to plex.tv/link and type this code:",
+                  C_SUB, C_BG);
+        si_code(ox, oy, S.code);
+        draw_text(D_BODY, ox + 490, oy + top - 244, S.si_status, C_SUB, C_BG);
+        draw_rect(ox + 40, oy + top - 468, ox + 1000, oy + top - 466, C_CARD);
+        draw_text(D_BOLD, ox + 40, oy + top - 520, "Or a server on your network", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 616, "Address", C_SUB, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 696, "Token", C_SUB, C_BG);
+    } else {
+        draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in to a Jellyfin server", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 176, "Address", C_SUB, C_BG);
+        if (S.jf_secret[0]) {
+            si_code(ox, oy - 60, S.jf_code);
+            draw_text(D_BODY, ox + 40 + si_bw(S_QC) + 32, oy + top - 412, S.si_status, C_SUB, C_BG);
+        } else {
+            draw_text(D_BODY, ox + 40, oy + top - 236,
+                      "Quick Connect gives a code to type into Jellyfin on a phone or computer", C_SUB, C_BG);
+            draw_text(D_BODY, ox + 40, oy + top - 284, "(its user menu, then Quick Connect).", C_SUB, C_BG);
+            draw_text(D_BODY, ox + 40 + si_bw(S_QC) + 32, oy + top - 412, S.si_status, C_SUB, C_BG);
         }
-        t[n] = 0;
-        draw_round(ox + 40, oy + top - 292, ox + 460, oy + top - 160, 20, C_CARD, C_BG);
-        draw_text(D_TITLE, ox + 250 - draw_width(D_TITLE, t) / 2, oy + top - 244, t, C_TEXT, C_CARD);
+        draw_rect(ox + 40, oy + top - 468, ox + 1000, oy + top - 466, C_CARD);
+        draw_text(D_BOLD, ox + 40, oy + top - 520, "Or your name and password", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 616, "Name", C_SUB, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 696, "Password", C_SUB, C_BG);
     }
-    draw_text(D_BODY, ox + 490, oy + top - 244, S.si_status, C_SUB, C_BG);
-    draw_rect(ox + 40, oy + top - 468, ox + 1000, oy + top - 466, C_CARD);
-    draw_text(D_BOLD, ox + 40, oy + top - 520, "Or a server on your network", C_TEXT, C_BG);
-    draw_text(D_BODY, ox + 40, oy + top - 616, "Address", C_SUB, C_BG);
-    draw_text(D_BODY, ox + 40, oy + top - 696, "Token", C_SUB, C_BG);
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < si_n; i++) {
         int x0 = ox + si_box[i].x0, y0 = oy + si_box[i].y0, x1 = ox + si_box[i].x1, y1 = oy + si_box[i].y1;
-        if (si_box[i].id == S_ADDR || si_box[i].id == S_TOK) {
-            int f = si_box[i].id == S_TOK, tx = x0 + 20;
-            if (f) {                /* the token shown as dots */
-                size_t n = strlen(S.si_tok);
+        int f = si_field_of(si_box[i].id);
+        if (f >= 0) {
+            size_t size;
+            const char *v = si_field(f, &size);
+            int tx = x0 + 20;
+            if (si_box[i].id == S_TOK || si_box[i].id == S_JPW) {   /* shown as dots */
+                size_t n = strlen(v);
                 if (n > 60) n = 60;
                 memset(t, 0xB7, n);
                 t[n] = 0;
             } else {
-                snprintf(t, sizeof(t), "%s", S.si_addr);
+                snprintf(t, sizeof(t), "%s", v);
             }
             if (S.field == f)       /* the caret's field: a blue edge */
                 draw_round(x0 - 4, y0 - 4, x1 + 4, y1 + 4, 16, C_ACCENT, C_BG);
@@ -3650,9 +3809,10 @@ static void signin_redraw(int ox, int oy, int vis_w)
                 draw_rect(cx, y0 + 14, cx + 4, y1 - 14, C_ACCENT);
             }
         } else {
-            unsigned bg = si_box[i].id == S_USE ? C_ACCENT : C_CARD;
+            int id = si_box[i].id;
+            unsigned bg = id == S_USE || id == S_LOGIN ? C_ACCENT : C_CARD;
             draw_round(x0, y0, x1, y1, BTN / 2, bg, C_BG);
-            draw_text(D_BOLD, x0 + 32, y0 + 22, si_box[i].id == S_USE ? "Use these" : "New code", C_TEXT, bg);
+            draw_text(D_BOLD, x0 + 32, y0 + 22, si_label(id), C_TEXT, bg);
         }
     }
 }
@@ -3660,7 +3820,7 @@ static void signin_redraw(int ox, int oy, int vis_w)
 static void si_redraw_fields(void)
 {
     if (S.browser_open && S.page == PG_SIGNIN)
-        force_redraw(S.browser_w, 0, -HEADER_H - 740, S.scr_w, -HEADER_H - 540);
+        force_redraw(S.browser_w, 0, -HEADER_H - 740, S.scr_w, S.si_jf ? -HEADER_H : -HEADER_H - 540);
 }
 
 static void pin_new(void)
@@ -3682,36 +3842,53 @@ static void pin_new(void)
     si_set_status("Waiting for the code...");
 }
 
-/* The window, showing the sign-in page */
-static void signin_open(void)
+/* The window, showing the sign-in page: Plex's (jf 0) or Jellyfin's */
+static void signin_show(int jf)
 {
     int st[9];
     S.page = PG_SIGNIN;
+    S.si_jf = jf;
+    S.field = 0;
     S.hover = -1;
     S.posters_wanted = 0;
     if (!S.browser_open)
         browser_open();
     set_where();
     set_extent();
-    set_status("Sign in to see your films and programmes.");
+    set_status(jf ? "Sign in to a Jellyfin server." : "Sign in to see your films and programmes.");
     window_state(S.browser_w, st);
     open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
     force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
     set_caret(S.browser_w, -1, NULL);
-    if (!S.pin_id)
+    if (!jf && !S.pin_id)
         pin_new();
+    if (jf) {
+        S.pin_id = 0;               /* plex.tv isn't asked meanwhile */
+        if (!S.jf_secret[0])
+            si_set_status("Type the address first.");
+    } else {
+        S.jf_secret[0] = 0;
+    }
+}
+
+static void signin_open(void)
+{
+    signin_show(0);
 }
 
 static void signin_close(void)
 {
     S.pin_id = 0;                   /* no more checks */
+    S.jf_secret[0] = 0;
+    S.jf_pw[0] = 0;
 }
 
-/* A key on the sign-in page: 1 if it was used */
+/* A key on the sign-in page: 1 if it was used; 2 Use these (Plex), 3 Sign in (Jellyfin) */
 static int signin_key(int k)
 {
-    char *f = S.field ? S.si_tok : S.si_addr;
-    size_t size = S.field ? sizeof(S.si_tok) : sizeof(S.si_addr), n = strlen(f);
+    size_t size, n;
+    char *f = si_field(S.field, &size);
+    n = strlen(f);
     if ((k >= 32 && k < 127) || (k >= 160 && k < 256)) {
         if (n + 1 < size) {
             f[n] = (char)k;
@@ -3722,13 +3899,15 @@ static int signin_key(int k)
             f[n - 1] = 0;
     } else if (k == 21) {           /* Ctrl-U: empty it */
         f[0] = 0;
-    } else if (k == 9 || k == 0x18E || k == 0x18F) {
-        S.field = !S.field;
+    } else if (k == 9 || k == 0x18E) {
+        S.field = (S.field + 1) % si_fields();
+    } else if (k == 0x18F) {
+        S.field = (S.field + si_fields() - 1) % si_fields();
     } else if (k == 13) {
-        if (!S.field)
-            S.field = 1;
+        if (S.field + 1 < si_fields())
+            S.field++;
         else
-            return 2;               /* Use these */
+            return S.si_jf ? 3 : 2;
     } else {
         return 0;
     }
@@ -3775,13 +3954,105 @@ static void use_manual(void)
         return;
     }
     hourglass(0);
+    builtin_stop(0);
     S.px = c;
     choices_save();
     signin_close();
     browser_top();
 }
 
+/* ---- signing in to Jellyfin ------------------------------------------------------------ */
+
+/* The Jellyfin server at the address typed (S.jfc), if it isn't already */
+static int jf_reach(void)
+{
+    char *a = S.jf_addr;
+    a[strcspn(a, "\r\n")] = 0;
+    if (!*a) {
+        si_set_status("Type the server's address first (such as 192.168.1.10).");
+        S.field = 0;
+        si_redraw_fields();
+        return -1;
+    }
+    S.jfc = S.px;                   /* who this computer is */
+    si_set_status("Trying %s...", a);
+    hourglass(1);
+    if (jf_connect(&S.jfc, a) != 0) {
+        hourglass(0);
+        si_set_status("%s", S.jfc.err);
+        return -1;
+    }
+    hourglass(0);
+    return 0;
+}
+
+static void qc_new(void)
+{
+    char secret[96], code[16];
+    int e;
+    S.jf_secret[0] = 0;
+    if (jf_reach() != 0)
+        return;
+    hourglass(1);
+    e = jf_qc_start(&S.jfc, secret, sizeof(secret), code, sizeof(code));
+    hourglass(0);
+    if (e != 0) {
+        si_set_status(e == -2 ? "Quick Connect is off on %s: sign in with your name and password."
+                              : "Can't start Quick Connect: %s", e == -2 ? S.jfc.server_name : S.jfc.err);
+        return;
+    }
+    snprintf(S.jf_secret, sizeof(S.jf_secret), "%s", secret);
+    snprintf(S.jf_code, sizeof(S.jf_code), "%s", code);
+    S.qc_next = now_cs() + PIN_EVERY;
+    si_set_status("Type the code in Jellyfin: Quick Connect.");
+    if (S.browser_open && S.page == PG_SIGNIN)
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+}
+
+static void qc_check(void)
+{
+    int e = jf_qc_check(&S.jfc, S.jf_secret);
+    S.qc_next = now_cs() + PIN_EVERY;
+    if (e == 0)
+        return;
+    if (e < 0) {
+        S.jf_secret[0] = 0;
+        si_set_status("The code has run out: click Quick Connect for another.");
+        return;
+    }
+    jf_signed_in();
+}
+
+static void jf_password(void)
+{
+    int e;
+    if (jf_reach() != 0)
+        return;
+    if (!*S.jf_user) {
+        si_set_status("Type your name on %s.", S.jfc.server_name);
+        S.field = 1;
+        si_redraw_fields();
+        return;
+    }
+    hourglass(1);
+    e = jf_login(&S.jfc, S.jf_user, S.jf_pw);
+    hourglass(0);
+    if (e != 0) {
+        si_set_status(e == -2 ? "%s didn't take that name and password." : "Can't sign in: %s",
+                      e == -2 ? S.jfc.server_name : S.jfc.err);
+        S.jf_pw[0] = 0;
+        S.field = 2;
+        si_redraw_fields();
+        return;
+    }
+    jf_signed_in();
+}
+
 /* ---- servers -------------------------------------------------------------------- */
+
+static void server_changed(void);
+static int use_jf(int k);
+static void jf_add(void);
 
 static int servers_get(void)
 {
@@ -3809,6 +4080,8 @@ static int use_server(int i)
         return -1;
     }
     hourglass(0);
+    if (S.px.kind != SRV_PLEX || strcmp(S.px.server_id, c.server_id))
+        server_changed();
     S.px = c;
     choices_save();
     return 0;
@@ -3832,7 +4105,108 @@ static void choose_server(void)
         browser_top();
 }
 
-static void builtin_stop(int leave);
+/* ---- Jellyfin servers -------------------------------------------------------------- */
+
+/* Choices' line can't take a '|' in a name */
+static void no_bars(char *s)
+{
+    for (; *s; s++)
+        if (*s == '|' || *s == '\n' || *s == '\r')
+            *s = '/';
+}
+
+/* The server in use (a Jellyfin one) kept, the same server and user replaced */
+static void jf_remember(void)
+{
+    jf_saved *j = NULL;
+    for (int i = 0; i < S.njf; i++)
+        if (!strcmp(S.jf[i].id, S.px.server_id) && !strcmp(S.jf[i].uid, S.px.user_id))
+            j = &S.jf[i];
+    if (!j) {
+        if (S.njf >= JF_SAVED) {        /* the oldest makes room */
+            memmove(&S.jf[0], &S.jf[1], (JF_SAVED - 1) * sizeof(jf_saved));
+            S.njf--;
+        }
+        j = &S.jf[S.njf++];
+    }
+    snprintf(j->name, sizeof(j->name), "%s", S.px.server_name);
+    snprintf(j->id, sizeof(j->id), "%s", S.px.server_id);
+    snprintf(j->base, sizeof(j->base), "%s", S.px.base);
+    snprintf(j->token, sizeof(j->token), "%s", S.px.token);
+    snprintf(j->uid, sizeof(j->uid), "%s", S.px.user_id);
+    snprintf(j->uname, sizeof(j->uname), "%s", S.px.user_name);
+    no_bars(j->name);
+    no_bars(j->uname);
+}
+
+/* Moving to another server: what was shown of the last one goes */
+static void server_changed(void)
+{
+    builtin_stop(0);
+    if (S.libs.n || S.libs.v)
+        plex_list_free(&S.libs);
+    S.nhist = 0;
+}
+
+/* The server (a copy of the context, kind and all) made the one in use;
+   the Plex account's sign-in stays */
+static void server_take(const plex_ctx *c)
+{
+    plex_ctx *d = &S.px;
+    d->kind = c->kind;
+    d->local = c->local;
+    snprintf(d->base, sizeof(d->base), "%s", c->base);
+    snprintf(d->token, sizeof(d->token), "%s", c->token);
+    snprintf(d->server_name, sizeof(d->server_name), "%s", c->server_name);
+    snprintf(d->server_id, sizeof(d->server_id), "%s", c->server_id);
+    snprintf(d->user_id, sizeof(d->user_id), "%s", c->user_id);
+    snprintf(d->user_name, sizeof(d->user_name), "%s", c->user_name);
+}
+
+/* Signed in on the sign-in page's Jellyfin half: that server, then its home page */
+static void jf_signed_in(void)
+{
+    server_changed();
+    server_take(&S.jfc);
+    jf_remember();
+    choices_save();
+    signin_close();
+    browser_top();
+    set_status("Signed in to %s as %s.", S.px.server_name, S.px.user_name);
+}
+
+/* Jellyfin server k of the saved ones */
+static int use_jf(int k)
+{
+    plex_ctx c = S.px;
+    if (k < 0 || k >= S.njf)
+        return -1;
+    c.kind = SRV_JELLYFIN;
+    c.local = 1;
+    snprintf(c.base, sizeof(c.base), "%s", S.jf[k].base);
+    snprintf(c.token, sizeof(c.token), "%s", S.jf[k].token);
+    snprintf(c.server_name, sizeof(c.server_name), "%s", S.jf[k].name);
+    snprintf(c.server_id, sizeof(c.server_id), "%s", S.jf[k].id);
+    snprintf(c.user_id, sizeof(c.user_id), "%s", S.jf[k].uid);
+    snprintf(c.user_name, sizeof(c.user_name), "%s", S.jf[k].uname);
+    server_changed();
+    server_take(&c);
+    choices_save();
+    browser_top();
+    return 0;
+}
+
+/* The Jellyfin page of the sign-in, with the address of the server in
+   use (or the last one) to start from */
+static void jf_add(void)
+{
+    if (!*S.jf_addr) {
+        const char *b = S.px.kind == SRV_JELLYFIN ? S.px.base : S.njf ? S.jf[S.njf - 1].base : "";
+        snprintf(S.jf_addr, sizeof(S.jf_addr), "%s", b);
+    }
+    S.jf_secret[0] = 0;
+    signin_show(1);
+}
 
 static void sign_out(void)
 {
@@ -3840,10 +4214,27 @@ static void sign_out(void)
     builtin_stop(0);
     if (S.libs.n || S.libs.v)
         plex_list_free(&S.libs);    /* no tabs until signed in again */
-    c->account_token[0] = c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
-    S.nservers = 0;
-    S.nusers = -1;
-    S.user_uuid[0] = S.user_title[0] = 0;
+    if (c->kind == SRV_JELLYFIN) {
+        /* that Jellyfin server forgotten (its token is no use now); the
+           Plex account and the other servers kept */
+        hourglass(1);
+        jf_logout(c);
+        hourglass(0);
+        for (int i = 0; i < S.njf; i++)
+            if (!strcmp(S.jf[i].id, c->server_id) && !strcmp(S.jf[i].uid, c->user_id)) {
+                memmove(&S.jf[i], &S.jf[i + 1], (S.njf - i - 1) * sizeof(jf_saved));
+                S.njf--;
+                break;
+            }
+        c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
+        c->user_id[0] = c->user_name[0] = 0;
+        c->kind = SRV_PLEX;
+    } else {
+        c->account_token[0] = c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
+        S.nservers = 0;
+        S.nusers = -1;
+        S.user_uuid[0] = S.user_title[0] = 0;
+    }
     if (S.browser_open)
         close_window(S.browser_w);
     S.browser_open = 0;
@@ -3869,6 +4260,8 @@ static void bar_select(void)
             browser_top();
     } else if (*S.px.account_token) {
         choose_server();
+    } else if (S.njf) {
+        use_jf(S.njf - 1);
     } else {
         signin_open();
     }
@@ -4146,9 +4539,12 @@ static int builtin_open_at(double t, int new_session)
     }
     media_headers(S.pl.p.headers, headers, sizeof(headers));
     /* the stream and the timeline under one session id: how the server
-       ties them together (the dashboard's Now Playing) */
+       ties them together (the dashboard's Now Playing); Jellyfin's is the
+       one its PlaybackInfo gave */
+    snprintf(S.pl.sid, sizeof(S.pl.sid), "%s", S.pl.p.session);
     snprintf(S.pl.pq.session, sizeof(S.pl.pq.session), "%s", S.pl.p.session);
-    if (strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))
+    S.pl.pq.direct = S.pl.p.direct;
+    if (S.px.kind == SRV_PLEX && strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))
         snprintf(headers + strlen(headers), sizeof(headers) - strlen(headers), "X-Plex-Session-Identifier: %s\r\n",
                  S.pl.p.session);
     builtin_title(it, title, sizeof(title));
@@ -4463,6 +4859,11 @@ static void save_prepare(const plex_item *it)
     if (!S.sv_ok)
         return;
     leaf = it->part_file ? strrchr(it->part_file, '/') : NULL;
+    {
+        const char *bs = it->part_file ? strrchr(it->part_file, '\\') : NULL;
+        if (bs && (!leaf || bs > leaf))         /* a Windows server's path (Jellyfin's) */
+            leaf = bs;
+    }
     leaf = leaf ? leaf + 1 : it->part_file ? it->part_file : "Video";
     if ((dot = strrchr(leaf, '.')) != NULL)
         snprintf(ext, sizeof(ext), "%s", dot + 1);
@@ -4854,11 +5255,31 @@ static void open_menu(menu_t *m, int x, int y)
 static void bar_menu_build(void)
 {
     int signed_in = *S.px.account_token != 0;
+    /* the Plex account's servers, then the Jellyfin ones signed in to, then
+       Add a Jellyfin server (S.srv_map says which an item is) */
     menu_begin(&m_servers, "Servers");
-    for (int i = 0; i < S.nservers; i++)
-        menu_add(&m_servers, S.servers[i].name, !strcmp(S.servers[i].id, S.px.server_id), 0, -1, 0);
-    if (!S.nservers)
-        menu_add(&m_servers, "(none found)", 0, 1, -1, 0);
+    for (int i = 0; i < S.nservers && m_servers.n < 9; i++) {
+        S.srv_map[m_servers.n] = i;
+        menu_add(&m_servers, S.servers[i].name, S.px.kind == SRV_PLEX && !strcmp(S.servers[i].id, S.px.server_id),
+                 0, -1, 0);
+    }
+    if (signed_in && !S.nservers) {
+        S.srv_map[m_servers.n] = SRV_ADD - 1;
+        menu_add(&m_servers, "(no Plex servers found)", 0, 1, -1, 0);
+    }
+    if (m_servers.n)
+        m_servers.m.item[m_servers.n - 1].flags |= 2;   /* a line under Plex's */
+    for (int k = 0; k < S.njf && m_servers.n < 15; k++) {
+        char t[80];
+        snprintf(t, sizeof(t), "%s (Jellyfin)", S.jf[k].name);
+        S.srv_map[m_servers.n] = -1 - k;
+        menu_add(&m_servers, t, S.px.kind == SRV_JELLYFIN && !strcmp(S.jf[k].id, S.px.server_id) &&
+                 !strcmp(S.jf[k].uid, S.px.user_id), 0, -1, 0);
+    }
+    if (S.njf && m_servers.n)
+        m_servers.m.item[m_servers.n - 1].flags |= 2;
+    S.srv_map[m_servers.n] = SRV_ADD;
+    menu_add(&m_servers, "Add a Jellyfin server...", 0, 0, -1, 0);
     menu_end(&m_servers);
     /* Plex Home: its people; one with a PIN has a writable PIN item to its right */
     menu_begin(&m_pin, "PIN");
@@ -4895,8 +5316,11 @@ static void bar_menu_build(void)
     menu_begin(&m_bar, APP);
     menu_add(&m_bar, "Info", 0, 0, S.proginfo, 0);
     menu_add(&m_bar, "Sign in...", 0, 0, -1, 0);
-    menu_add(&m_bar, "Servers", 0, !signed_in, signed_in ? (int)(intptr_t)&m_servers.m : -1, 0);
-    menu_add(&m_bar, "Switch user", 0, S.nusers < 2, S.nusers >= 2 ? (int)(intptr_t)&m_users.m : -1, 0);
+    menu_add(&m_bar, "Servers", 0, 0, (int)(intptr_t)&m_servers.m, 0);
+    {   /* Plex Home's people: for a Plex server */
+        int users = S.nusers >= 2 && S.px.kind == SRV_PLEX;
+        menu_add(&m_bar, "Switch user", 0, !users, users ? (int)(intptr_t)&m_users.m : -1, 0);
+    }
     menu_add(&m_bar, "Player", 0, 0, (int)(intptr_t)&m_player.m, 0);
     menu_add(&m_bar, "Quality", 0, 0, (int)(intptr_t)&m_quality.m, 0);
     menu_add(&m_bar, "Poster size", 0, 0, (int)(intptr_t)&m_size.m, 0);
@@ -4908,7 +5332,8 @@ static void bar_menu_build(void)
         snprintf(t, sizeof(t), "Clear image cache (%.1f MB)", b / 1048576.0);
         menu_add(&m_bar, t, 0, n == 0, -1, 0);
     }
-    menu_add(&m_bar, "Sign out", 0, !signed_in && !*S.px.base, -1, 0);
+    menu_add(&m_bar, S.px.kind == SRV_JELLYFIN ? "Sign out of this server" : "Sign out", 0,
+             !signed_in && !*S.px.base, -1, 0);
     menu_add(&m_bar, "Quit", 0, 0, -1, 0);
     menu_end(&m_bar);
 }
@@ -5019,7 +5444,7 @@ static void item_menu_build(void)
     {
         /* yours: the details' if they're this one's (lists may leave it out) */
         double ur = it && det_is(it) ? det_item()->user_rating : it ? it->user_rating : 0;
-        int can = it && it->rating_key && it->type &&
+        int can = it && it->rating_key && it->type && S.px.kind == SRV_PLEX &&
                   (!strcmp(it->type, "movie") || !strcmp(it->type, "episode") || !strcmp(it->type, "show") ||
                    !strcmp(it->type, "season"));
         menu_begin(&m_rate, "Rate");
@@ -5511,11 +5936,18 @@ static int menu_select(const int *sel)
             signin_open();
             break;
         case MB_SERVERS:
-            if (sel[1] >= 0 && sel[1] < S.nservers && use_server(sel[1]) == 0)
-                browser_top();
+            if (sel[1] >= 0 && sel[1] < m_servers.n) {
+                int w = S.srv_map[sel[1]];
+                if (w == SRV_ADD)
+                    jf_add();
+                else if (w <= -1 && w > -1 - S.njf)
+                    use_jf(-1 - w);
+                else if (w >= 0 && w < S.nservers && use_server(w) == 0)
+                    browser_top();
+            }
             break;
         case MB_USERS:
-            if (sel[1] >= 0 && sel[1] < S.nusers && strcmp(S.users[sel[1]].uuid, S.user_uuid)) {
+            if (S.px.kind == SRV_PLEX && sel[1] >= 0 && sel[1] < S.nusers && strcmp(S.users[sel[1]].uuid, S.user_uuid)) {
                 char pin[16];
                 snprintf(pin, sizeof(pin), "%s", sel[2] == 0 ? m_pin.text[0] : "");
                 pin[strcspn(pin, "\r\n")] = 0;
@@ -5550,11 +5982,18 @@ static int menu_select(const int *sel)
             set_status("Image cache cleared: %d picture%s (%.1f MB).", n, n == 1 ? "" : "s", b / 1048576.0);
             break;
         }
-        case MB_SIGNOUT:            /* easily chosen by mistake: asked first */
-            if (ask("Sign out? Matinee forgets the server and your sign-in, and you'll need a new code "
-                    "from plex.tv/link (or the server's token) to sign in again."))
+        case MB_SIGNOUT: {          /* easily chosen by mistake: asked first */
+            char q[300];
+            if (S.px.kind == SRV_JELLYFIN)
+                snprintf(q, sizeof(q), "Sign out of %s? Matinee forgets this Jellyfin server, and you'll need to "
+                         "sign in to it again (Servers, Add a Jellyfin server).", S.px.server_name);
+            else
+                snprintf(q, sizeof(q), "Sign out? Matinee forgets the Plex server and your sign-in, and you'll need "
+                         "a new code from plex.tv/link (or the server's token) to sign in again.");
+            if (ask(q))
                 sign_out();
             break;
+        }
         case MB_QUIT:
             if (S.save.active && !ask("A file is being saved. Stop saving it and quit?"))
                 break;
@@ -5972,8 +6411,16 @@ static void click(int *b)
                 pin_new();
             else if (id == S_USE)
                 use_manual();
-            else if (id == S_ADDR || id == S_TOK) {
-                S.field = id == S_TOK;
+            else if (id == S_JF)
+                jf_add();
+            else if (id == S_PLEX)
+                signin_show(0);
+            else if (id == S_QC)
+                qc_new();
+            else if (id == S_LOGIN)
+                jf_password();
+            else if (si_field_of(id) >= 0) {
+                S.field = si_field_of(id);
                 si_redraw_fields();
             }
             return;
@@ -6056,6 +6503,8 @@ static void key(int *b)
         int u = signin_key(k);
         if (u == 2)
             use_manual();
+        else if (u == 3)
+            jf_password();
         if (u)
             return;
     }
@@ -6308,6 +6757,10 @@ static void nulls(void)
         pin_check();
         return;
     }
+    if (S.jf_secret[0] && S.si_jf && S.browser_open && S.page == PG_SIGNIN && now_cs() - S.qc_next >= 0) {
+        qc_check();
+        return;
+    }
     if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
         return;
     if (S.home.due && S.home.on && S.page == PG_GRID && S.browser_open && now_cs() - S.home.due >= 0) {
@@ -6442,6 +6895,9 @@ int matinee_main(int argc, char **argv)
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
             r.r[2] = S.pin_next;
+        } else if (S.jf_secret[0] && S.si_jf && S.browser_open && S.page == PG_SIGNIN) {
+            reason = Wimp_PollIdle;
+            r.r[2] = S.qc_next;
         } else if (S.in_browser && S.browser_open) {
             reason = Wimp_PollIdle;         /* watching the pointer, 10 times a second */
             r.r[2] = now_cs() + 10;
@@ -6539,8 +6995,11 @@ int ui_test_windows(int *browser, int *save)
 int ui_test_page(void) { return S.page; }
 const char *ui_test_signin(int what)
 {
-    return what == 0 ? S.code : what == 1 ? S.si_status : what == 2 ? S.si_addr : S.si_tok;
+    return what == 0 ? S.code : what == 1 ? S.si_status : what == 2 ? S.si_addr : what == 3 ? S.si_tok :
+           what == 4 ? S.jf_code : what == 5 ? S.jf_addr : what == 6 ? S.jf_user : S.px.server_name;
 }
+int ui_test_signin_jf(void) { return S.page == PG_SIGNIN && S.si_jf; }
+int ui_test_jf_servers(void) { return S.njf; }
 int ui_test_field(void) { return S.field; }
 int ui_test_button_xy(int w, int id, int *x, int *y)
 {
@@ -6552,7 +7011,7 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
     }
     if (w == S.browser_w && S.page == PG_SIGNIN) {
         si_layout();
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < si_n; i++)
             if (si_box[i].id == id) {
                 x0 = si_box[i].x0; y0 = si_box[i].y0; x1 = si_box[i].x1; y1 = si_box[i].y1;
                 found = 1;

@@ -3,6 +3,7 @@
  * Part of riscos-matinee. GPL v2 or later.
  */
 #include "caps.h"
+#include "jellyfin.h"
 #include "net.h"
 
 #include <stdio.h>
@@ -57,7 +58,7 @@ static const char *const sd_video[] = { "mpeg2video", "mpeg1video", "mpeg4", "ms
 /* reelcore's subtitle decoders (FFmpeg's), by Plex's codec names */
 static const char *const sub_in_file[] = { "srt", "subrip", "ass", "ssa", "mov_text", "tx3g", "webvtt", "vtt",
                                            "pgs", "hdmv_pgs_subtitle", "vobsub", "dvd_subtitle", "dvb_subtitle",
-                                           "dvbsub", NULL };
+                                           "dvbsub", "pgssub", "dvdsub", NULL };     /* the last two: Jellyfin's names */
 static const char *const sub_file[] = { "srt", "subrip", "ass", "ssa", "webvtt", "vtt", NULL };
 
 int caps_sub_own(const plex_sub *sb)
@@ -132,6 +133,8 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
                  long offset_s, const char *session, play_t *out)
 {
     char why[160];
+    if (c->kind == SRV_JELLYFIN)
+        return jf_play(c, it, k, allow_direct, offset_s, session, out);
     memset(out, 0, sizeof(*out));
     if (it->kind != PI_VIDEO || !it->rating_key) {
         snprintf(out->why, sizeof(out->why), "that isn't a video");

@@ -155,7 +155,9 @@ ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h
 `REEL_SRC`, a riscos-ffmpeg checkout at `reel-0.1.21` (riscos14), which also gives
 `reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
 `details.ppm`, `player.ppm` and `upnext.ppm` in `OUT`. It links
-`tests/host/fake_reelcore.c` in place of reelcore.
+`tests/host/fake_reelcore.c` in place of reelcore. fakeplex.py is a fake Jellyfin server
+as well as a fake Plex one (Jellyfin's paths start with a capital letter); ui_test's
+third run uses it and leaves `signin-jellyfin.ppm` and `details-jellyfin.ppm`.
 
 `PROFILE=1` makes ui_test print, for each picture it saves (and for 1.2 s of playing),
 the SWIs called and how often, the smooth shapes made and the text widths measured: a
