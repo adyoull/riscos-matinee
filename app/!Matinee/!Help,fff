@@ -1,4 +1,4 @@
-!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test26
+!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test27
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -339,6 +339,14 @@ fast it came, in Mbit/s, and how much the file needs:
                    the file first and play it from the disc
 It also says whether the server is reached over http or https (https is
 slower on RISC OS), and whether it's on the local network.
+
+The built-in player reads ahead up to 10 seconds. RISC OS gives the
+reading only the time Matinee itself has, so while the read-ahead is
+under 6 seconds Matinee doesn't sleep between pictures: it gives that
+time to the reading until it's back to 9.5 seconds (the Task Manager
+shows Matinee busier meanwhile). Every 10 seconds MatineeLog (in the
+scrap directory) says how far ahead it is and how fast it came: send
+it with a report of a video that buffers.
 
 Saving the original file
 ------------------------

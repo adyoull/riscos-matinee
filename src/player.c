@@ -15,6 +15,9 @@
 #include <stdarg.h>
 #include <time.h>
 #include "kernel.h"
+#if defined(__riscos__) && !defined(MATINEE_TEST)
+#include <pthread.h>
+#endif
 #include "reelcore.h"
 #include "draw.h"
 #include "player.h"
@@ -112,6 +115,10 @@ static struct {
     /* timing */
     int idle_cs;
     int ov_pending;
+    /* the network's read-ahead: the reader given our idle time while it's
+       short (feeding), and the log's figures every NET_LOG_CS */
+    int feeding, feed_cs, net_log_cs;
+    long long net_log_bytes;
     int app_page, page_moves;       /* the physical page at &8000 (0: unknown), and how often it moved */
     unsigned draw_n, draw_cs;
     /* the log */
@@ -1640,6 +1647,7 @@ int player_open(const player_src *s, int win)
     for (int i = 0; s->chapters && i < s->nchapters && P.nchap < (int)(sizeof(P.chap) / sizeof(P.chap[0])); i++)
         P.chap[P.nchap++] = s->chapters[i];
     P.opened_cs = now_cs();
+    P.feeding = P.feed_cs = P.net_log_cs = 0;
     memset(&src, 0, sizeof(src));
     src.url = P.url;
     src.headers = P.headers[0] ? P.headers : NULL;
@@ -1854,6 +1862,70 @@ static void watch_pointer(void)
     }
 }
 
+/* Reading ahead over the network. reelcore's reader thread runs only while
+   Matinee is paged in (UnixLib switches threads within the task's own
+   time), so sleeping in Wimp_PollIdle between pictures stops it: with the
+   CPU partly idle the read-ahead could still run short on a fast local
+   network. While it's short (under FEED_START seconds, until FEED_STOP)
+   the time until the next picture is given to the reader instead
+   (pthread_yield), and the next null event comes at once. Every NET_LOG_CS
+   the log says how far ahead it is and how fast it came. */
+#define FEED_START 6.0
+#define FEED_STOP  9.5
+#define FEED_MAX_CS 2
+#define NET_LOG_CS 1000
+#ifdef MATINEE_TEST
+int player_test_feeds;
+#endif
+static void feed_reader(int cs)
+{
+#if defined(__riscos__) && !defined(MATINEE_TEST)
+    int end = now_cs() + cs;
+    while (now_cs() - end < 0)
+        pthread_yield();
+#else
+    (void)cs;
+#endif
+#ifdef MATINEE_TEST
+    player_test_feeds++;
+#endif
+}
+
+static void net_feed(int t)
+{
+    ReelCoreNet ns;
+    if (!reelcore_net(P.v, &ns) || ns.opening || ns.ended) {
+        P.feeding = 0;
+        return;
+    }
+    if (!P.net_log_cs) {
+        P.net_log_cs = t;
+        P.net_log_bytes = ns.bytes_read;
+    } else if (t - P.net_log_cs >= NET_LOG_CS) {
+        double secs = (t - P.net_log_cs) / 100.0;
+        lg("network: %.1f s (%u KB) read ahead; %.1f Mbit/s over %.0f s; the reader given %d cs of it", ns.ahead,
+           ns.bytes_ahead >> 10, (ns.bytes_read - P.net_log_bytes) * 8 / secs / 1e6, secs, P.feed_cs);
+        P.net_log_cs = t;
+        P.net_log_bytes = ns.bytes_read;
+        P.feed_cs = 0;
+    }
+    if (!P.feeding && ns.ahead < FEED_START) {
+        P.feeding = 1;
+        lg("network: %.1f s read ahead: the reader gets the time between pictures", ns.ahead);
+    } else if (P.feeding && ns.ahead >= FEED_STOP) {
+        P.feeding = 0;
+        lg("network: %.1f s read ahead: sleeping between pictures again", ns.ahead);
+    }
+    if (!P.feeding)
+        return;
+    if (P.idle_cs > 0) {
+        int cs = P.idle_cs < FEED_MAX_CS ? P.idle_cs : FEED_MAX_CS;
+        feed_reader(cs);
+        P.feed_cs += cs;
+    }
+    P.idle_cs = 0;                  /* straight back: Wimp_Poll, not PollIdle */
+}
+
 int player_null(void)
 {
     int r2, t = now_cs();
@@ -1891,6 +1963,7 @@ int player_null(void)
     mini_keep_on_top(t);
     r2 = reelcore_update(P.v);
     P.idle_cs = (int)(reelcore_idle_time(P.v) * 100);
+    net_feed(t);
     if (r2 == REELCORE_NEW_FRAME) {
         if (!P.based) {             /* a converted stream counting from where it started? */
             double p = reelcore_position(P.v);

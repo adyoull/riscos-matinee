@@ -2090,11 +2090,30 @@ static int script(int *b, int mask)
             CHECK(strstr(player_test_time(), "42:1") && strstr(player_test_time(), "/ 1:30:00"), "the time: %s",
                   player_test_time());
             CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 4, "asleep between pictures (PollIdle %d)", idle_time - fake_cs);
+            fake_rc.ahead = 2;                                  /* the read-ahead runs short */
+            count0 = player_test_feeds;
+            pc = 9080;
+            return NULL_EVENT;
+        }
+        case 9080:
+            CHECK(last_poll == 0x400C7 && !(mask & 1) && player_test_feeds == count0 + 1,
+                  "2 s read ahead: no sleeping, the time between pictures given to the reader (%x, %d)", last_poll,
+                  player_test_feeds - count0);
+            fake_rc.ahead = 7;
+            pc++;
+            return NULL_EVENT;
+        case 9081:
+            CHECK(last_poll == 0x400C7 && player_test_feeds == count0 + 2, "7 s: still filling, up to 9.5 s");
+            fake_rc.ahead = 9.8;
+            pc++;
+            return NULL_EVENT;
+        case 9082:
+            CHECK(last_poll == 0x400E1 && player_test_feeds == count0 + 2, "9.8 s: asleep between pictures again");
+            fake_rc.ahead = 0;
             for (int i = 0; i < FB_W * FB_H; i++)   /* what was there before: the details page */
                 fb[i] = 0x123456;
-            pc++;
+            pc = 909;
             return ev_redraw(b, w_browser);
-        }
         case 909:
             {   /* the picture box outside the overlay (above and below a 16:9 picture) */
                 win_t *x = win(w_browser);

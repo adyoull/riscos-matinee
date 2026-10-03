@@ -283,6 +283,12 @@ mutate "4K HEVC at 60 a second played as it is" src/caps.c \
 mutate "Matinee\$NoHEVCBlock not given to reelcore" src/player.c \
   'REELCORE_NO_HEVC_BLOCK : 0' '0 : 0'
 
+# test27: the reader given the time between pictures
+mutate "asleep between pictures with the read-ahead short" src/player.c \
+  '    P.idle_cs = 0;                  /* straight back: Wimp_Poll, not PollIdle */' ''
+mutate "the reader fed until full, never stopping" src/player.c \
+  '} else if (P.feeding && ns.ahead >= FEED_STOP) {' '} else if (0) {'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

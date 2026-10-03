@@ -32,7 +32,8 @@ typedef struct {
     int fast;                   /* reelcore_set_fast */
     double clock_start;         /* set by the test: the clock counts from here (a stream's start_time) */
     int app_page;               /* the physical page at &8000 (the fake OS_Memory 0 gives it) */
-    int open_flags;             /* reelcore_open_source's flags */
+    int open_flags;
+    double ahead;               /* set by the test: seconds read ahead (0: 8) */             /* reelcore_open_source's flags */
     int hevc_block;             /* set by the test: the video is decoded by the HEVC block */
     int move_page_on_open;      /* set by the test: opening moves it (a decoder claiming contiguous memory) */
 } fake_rc_t;

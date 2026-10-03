@@ -67,6 +67,7 @@ int player_open(const player_src *src, int win);
 int player_hevc_block(void);
 #ifdef MATINEE_TEST
 extern int player_test_hevc_block;      /* the tests' answer */
+extern int player_test_feeds;           /* times the reader was given the time between pictures */
 #endif
 /* Stops and lets everything go (the overlay, the full screen window) */
 void player_close(void);
