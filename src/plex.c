@@ -139,7 +139,7 @@ char *dup_s(const char *s)
 
 /* ---- sign in -------------------------------------------------------------- */
 
-int plex_pin_create(plex_ctx *c, long *id, char *code, size_t codelen)
+int plex_pin_create(plex_ctx *c, long long *id, char *code, size_t codelen)
 {
     char url[256];
     cJSON *j;
@@ -147,7 +147,7 @@ int plex_pin_create(plex_ctx *c, long *id, char *code, size_t codelen)
     /* strong=false: the short code plex.tv/link takes */
     if (!(j = get_json(c, url, NULL, "strong=false", API_TIMEOUT, NULL)))
         return -1;
-    *id = (long)jnum(j, "id", 0);
+    *id = (long long)jnum(j, "id", 0);    /* plex.tv's ids can pass 2^31: not a 32-bit long */
     snprintf(code, codelen, "%s", jstr(j, "code") ? jstr(j, "code") : "");
     cJSON_Delete(j);
     if (!*id || !*code) {
@@ -157,13 +157,13 @@ int plex_pin_create(plex_ctx *c, long *id, char *code, size_t codelen)
     return 0;
 }
 
-int plex_pin_check(plex_ctx *c, long id)
+int plex_pin_check(plex_ctx *c, long long id)
 {
     char url[256];
     const char *tok;
     int status = 0;
     cJSON *j;
-    snprintf(url, sizeof(url), "%s/api/v2/pins/%ld", c->plextv, id);
+    snprintf(url, sizeof(url), "%s/api/v2/pins/%lld", c->plextv, id);
     if (!(j = get_json(c, url, NULL, NULL, API_TIMEOUT, &status)))
         return status == 404 ? -1 : 0;      /* 404: the code has expired; else try again */
     tok = jstr(j, "authToken");
@@ -312,11 +312,28 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token)
     char b[256];
     c->kind = SRV_PLEX;
     c->user_id[0] = c->user_name[0] = 0;
-    snprintf(b, sizeof(b), "%s", base);
-    if (!strstr(b, "://"))
-        snprintf(b, sizeof(b), "http://%s", base);
-    if (!strchr(strstr(b, "://") + 3, ':'))     /* no port: Plex's */
-        snprintf(b + strlen(b), sizeof(b) - strlen(b), ":32400");
+    {
+        /* the scheme (http if none), the host, its port (Plex's if none),
+           then any path; slashes at the end dropped */
+        char a[256];
+        const char *host;
+        size_t h, n;
+        snprintf(a, sizeof(a), "%s", base);
+        n = strlen(a);
+        while (n && (a[n - 1] == '/' || a[n - 1] == ' '))
+            a[--n] = 0;
+        if (strstr(a, "://"))
+            snprintf(b, sizeof(b), "%s", a);
+        else
+            snprintf(b, sizeof(b), "http://%s", a);
+        host = strstr(b, "://") + 3;
+        h = strcspn(host, "/");
+        if (!memchr(host, ':', h)) {
+            char rest[256];
+            snprintf(rest, sizeof(rest), "%s", host + h);
+            snprintf(b + (host - b) + h, sizeof(b) - (size_t)(host - b) - h, ":32400%s", rest);
+        }
+    }
     if (probe(c, b, token, API_TIMEOUT) != 0)
         return -1;
     use(c, b, token);
@@ -832,15 +849,15 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, 
         return -1;
     /* Continue watching */
     if (list_fetch(c, "/library/onDeck", HOME_ROW, &l) == 0) {
-        if (l.n && nr < max) {
+        int start = out->n, n = l.n;
+        if (plex_list_append(out, &l) == 0 && n && nr < max) {     /* a row only for what was added */
             rows[nr].kind = PR_CONTINUE;
-            rows[nr].start = out->n;
-            rows[nr].n = l.n;
+            rows[nr].start = start;
+            rows[nr].n = n;
             snprintf(rows[nr].title, sizeof(rows[nr].title), "Continue watching");
             snprintf(rows[nr].path, sizeof(rows[nr].path), "/library/onDeck");
             nr++;
         }
-        plex_list_append(out, &l);
     }
     /* recently added, in each film and TV library */
     for (int i = 0; i < secs.n && nr < max; i++) {
@@ -853,15 +870,17 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, 
         snprintf(path, sizeof(path), "/library/sections/%d/recentlyAdded", id);
         if (list_fetch(c, path, HOME_ROW, &l) != 0)
             continue;
-        if (l.n) {
-            rows[nr].kind = PR_RECENT;
-            rows[nr].start = out->n;
-            rows[nr].n = l.n;
-            snprintf(rows[nr].title, sizeof(rows[nr].title), "Recently added in %s", s2->title);
-            snprintf(rows[nr].path, sizeof(rows[nr].path), "%s", path);
-            nr++;
+        {
+            int start = out->n, n = l.n;
+            if (plex_list_append(out, &l) == 0 && n) {
+                rows[nr].kind = PR_RECENT;
+                rows[nr].start = start;
+                rows[nr].n = n;
+                snprintf(rows[nr].title, sizeof(rows[nr].title), "Recently added in %s", s2->title);
+                snprintf(rows[nr].path, sizeof(rows[nr].path), "%s", path);
+                nr++;
+            }
         }
-        plex_list_append(out, &l);
     }
     *libs = secs;                   /* the libraries: the caller's, for its tabs */
     snprintf(out->title, sizeof(out->title), "%s", c->server_name);

@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test27).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test28).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -37,7 +37,10 @@ adds Jellyfin servers (one at a time, beside Plex's on the Servers menu: Quick C
 name and password, the same browsing, playing and progress); test26 has Add a server (Plex or
 Jellyfin, then its sign-in, with Back and Cancel) and plays HEVC as it is on a Pi 4, decoded by
 its HEVC block (riscos-ffmpeg's hevc_hwdec, ReelHWAccel devkit 0.2.7); test27 gives the network
-reader the time between pictures while the read-ahead is short, and logs it.
+reader the time between pictures while the read-ahead is short, and logs it; test28 is a code
+audit's fixes, relinked with riscos-ffmpeg's 5.1.10-riscos17 release (Reel 0.1.24: the HEVC
+block's pictures converted once, straight into the overlay), UnixLib 5.0.3.2 and riscos-mesa
+20.3.5-11's zlib.
 It's tested on Linux too: the core against a fake Plex and Jellyfin server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 

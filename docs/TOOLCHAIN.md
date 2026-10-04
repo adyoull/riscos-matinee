@@ -1,43 +1,47 @@
 # Toolchain, dependencies and building
 
-## The toolchain: GCCSDK GCC 10.2 with UnixLib 5.0.3.1
+## The toolchain: GCCSDK GCC 10.2 with UnixLib 5.0.3.2
 
 Matinee is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`) in
-`~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.3.1** (riscos-unixlib
-release v5.0.3.1; test17 used pre-release rc8, test1 to test16 release v5.0.2), so programs built with
+`~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.3.2** (riscos-unixlib
+release v5.0.3.2 from test28; 5.0.3.1 for test18 to test27, pre-release rc8 for test17, 5.0.2 before), so programs built with
 `-D_FILE_OFFSET_BITS=64` handle files over 2GB (up to 4GB−1), and fork, `_exit`, heaps past 128 MB and
 threads in programs that poll often are in. riscos-ffmpeg's devkit (5.1.10-riscos14) was built against 5.0.2:
 its libraries link with 5.0.3.1 unchanged (no interface changes; 5.0.3.1's headers differ
-from 5.0.2's only in a comment in `sched.h`).
+from 5.0.2's only in a comment in `sched.h`). 5.0.3.2 changes `LLONG_MIN` (`limits.h`),
+adds `getservbyname_r` and friends and fixes eventfd between threads: no struct or
+argument changes, and nothing Matinee links is different but `limits.h`'s constant.
 
 ### Quickest: the prebuilt toolchain
 
 1. Unpack riscos-warzone2100's `gccsdk-gcc10.2-x86_64-linux-env.tgz` into your home
    directory. It gives `~/gccsdk/env`.
-2. Put UnixLib 5.0.3.1 into it:
-   - `libunixlib.a` from the v5.0.3.1 release goes to
+2. Put UnixLib 5.0.3.2 into it:
+   - `libunixlib.a` from the v5.0.3.2 release goes to
      `~/gccsdk/env/arm-riscos-gnueabihf/lib/`. Its sha256 is
-     `fa98152f7e05313aa94d15004c5011d7e2cfec92623adc467d4d50a23368354e`.
-   - The headers that changed since GCCSDK come from the v5.0.3.1 tag
-     (`libunixlib/include/`): `sys/stat.h`, `sys/mman.h`, `unistd.h` and `sched.h`.
+     `aab4339ee0a29bc35b0527f7972d8fd03e73590e3bb4db41b8a097a2103db2a9`.
+   - The headers that changed since GCCSDK come from the v5.0.3.2 tag
+     (`libunixlib/include/`): `sys/stat.h`, `sys/mman.h`, `unistd.h`, `sched.h` and
+     `limits.h`.
      They go to `~/gccsdk/env/arm-riscos-gnueabihf/include/`.
 3. elf2aif (with the large-image fix): riscos-crossdev's toolchain has a Linux build in
    `bin/elf2aif`. riscos-ffmpeg's `tools/elf2aif` also builds one from source.
 
 `build/build.sh` checks the result: `tools/check-unixlib.sh` fails if the program
-wasn't linked with UnixLib 5.0.3.1 (`__exit_status`, and the 640-byte pthread
-block).
+wasn't linked with UnixLib 5.0.3.1 or later (`__exit_status`, and the 640-byte pthread
+block; 5.0.3.2 has no symbol of its own that Matinee links, so the two can't be told apart
+in the program: the library's sha256 above is the check).
 
 ### From source
 
 No prebuilt GCCSDK toolchain is published as a GitHub release asset, so it can also be
 built from source. Use riscos-warzone2100's `build/build-toolchain.sh`, with one change:
-the UnixLib patch is riscos-unixlib **v5.0.3.1**'s `unixlib-riscos.diff`.
+the UnixLib patch is riscos-unixlib **v5.0.3.2**'s `unixlib-riscos.diff`.
 
 ```
 git clone --depth 1 https://github.com/adyoull/riscos-warzone2100.git wz
 mkdir dl && cd dl
-curl -LO https://github.com/adyoull/riscos-unixlib/releases/download/v5.0.3.1/unixlib-riscos.diff
+curl -LO https://github.com/adyoull/riscos-unixlib/releases/download/v5.0.3.2/unixlib-riscos.diff
 curl -L -o gccsdk-64c6f81.tar.gz https://codeload.github.com/jhamby/riscos-gccsdk/tar.gz/64c6f81
 curl -L -o gcc-10.2.0.tar.gz https://codeload.github.com/gcc-mirror/gcc/tar.gz/refs/tags/releases/gcc-10.2.0
 U=http://archive.ubuntu.com/ubuntu/pool
@@ -67,13 +71,24 @@ It takes well over an hour on one core.
 | mpfr4_4.1.0.orig.tar.xz | 0c98a3f1732ff6ca4ea690552079da9c597872d30e96ec28414ee23c95558a7f |
 | mpclib3_1.2.1.orig.tar.gz | 17503d2c395dfcf106b622dc142683c1199431d095367c6aacba6eec30340459 |
 | cJSON-1.7.18 tarball (codeload v1.7.18) | 3aa806844a03442c00769b83e99970be70fbef03735ff898f4811dd03b9f5ee5 |
-| UnixLib 5.0.3.1 `libunixlib.a` | fa98152f7e05313aa94d15004c5011d7e2cfec92623adc467d4d50a23368354e |
-| UnixLib 5.0.3.1 `unixlib-riscos.diff` | 1209261295caa39ead46ecbc01e7c510da8bd2905fe8738ffb0dab7e2a557f10 |
-| UnixLib 5.0.3.1 `PThreadTicker-0.03.zip` | a5e9e925ba416986d99fbf0402ca8887062bd3e568f1b58d3fd2284d6ac60658 |
+| UnixLib 5.0.3.2 `libunixlib.a` | aab4339ee0a29bc35b0527f7972d8fd03e73590e3bb4db41b8a097a2103db2a9 |
+| UnixLib 5.0.3.2 `unixlib-riscos.diff` | d8913bc24dc6f1f4545d239185196327ad298f5c83b9b5ccb19277c2d46dc523 |
+| UnixLib 5.0.3.2 `PThreadTicker-0.03.zip` | f26dba5d5dcba5397fe4d11a7f7f23d5c2590140c0106e8bb975177d4d718e80 |
 
 ## Devkits (release assets)
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
+
+- `riscos-ffmpeg/releases/download/v5.1.10-riscos17/riscos-ffmpeg-devkit-5.1.10-riscos17.tgz`
+  (sha256 `83089de546b576fac83137558d3be5d620ac43b7965933eea97db1901b11e792`), used from
+  test28: the riscos17 release (commit `2acad6a`, Reel 0.1.24's reelcore): h264_vchiq,
+  hevc_hwdec with ReelHWAccel devkit 0.2.8 (the HEVC block's pictures converted once,
+  straight into the overlay: `hevcdec_frame_to_i420_half` is linked), libvcdec.a and
+  libhevcdec.a. Link `-lvcdec -lhevcdec` after `-lavcodec`. Its libraries were built with
+  UnixLib 5.0.3.1.
+- `riscos-mesa/releases/download/v20.3.5-11/riscos-mesa-devkit-20.3.5-11.tgz` (sha256
+  `c89123ceb27870f8eea29b20d0639e51075df2176ea9bd4aeb6923d29d8ed8ea`), from test28: only its
+  `libz.a` (the same zlib.h as -8's; the library rebuilt).
 
 - `riscos-ffmpeg-devkit-5.1.10-riscos16-hevc2.tgz` (sha256
   `8209aadff6177bcae951c7eb44483aa71eefc3114053a8f18bb8658ba761eb00`), used from test26:

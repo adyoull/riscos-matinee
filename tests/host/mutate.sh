@@ -92,8 +92,8 @@ mutate "no next episode" src/ui.c \
   'if (plex_next_episode(&S.px, it, &S.pl.next) == 0 && S.pl.next.n) {' 'if (0) {'
 mutate "Accept: JSON given to reelcore" src/ui.c \
   'if (strncmp(in, "Accept:", 7) && o + n < size) {' 'if (o + n < size) {'
-mutate "sleeping while buffering" src/player.c \
-  'if (reelcore_net(P.v, &ns) && (ns.buffering || ns.opening))\n        return 0;' ''
+# (test28: "sleeping while buffering" went: net_feed's no-sleep covers buffering too, so
+# player_poll_cs's own check can go without a test noticing; both kept)
 mutate "Resume ignored" src/player.c \
   'if (P.start > 0)\n        reelcore_seek(P.v, P.start - P.base);' ''
 mutate "Stretch not given to the overlay" src/player.c \
@@ -123,7 +123,7 @@ mutate "the image cache not read" src/ui.c \
 mutate "the cache trimmed in any order" src/imgcache.c \
   'qsort(l.v, l.n, sizeof(*l.v), older);' '(void)older;'
 mutate "Clear image cache deletes nothing" src/imgcache.c \
-  'if (remove(path) == 0) {\n        (*gone)++;' 'if (0) {\n        (*gone)++;'
+  '        gone += remove(path) == 0;' '        gone += 0;'
 # test8: in-stream seeking, the keep-alive, the pointer, the panel, sign out
 mutate "a new sound track keeps the old conversion" src/ui.c \
   'if (*S.pl.sid && !S.pl.p.direct)\n            plex_transcode_stop(&S.px, S.pl.sid);' ''
@@ -265,7 +265,7 @@ mutate "the details page asks the server how it plays" src/ui.c \
 mutate "the session id stays Matinee's (Jellyfin's PlaySessionId not used)" src/ui.c \
   '    snprintf(S.pl.sid, sizeof(S.pl.sid), "%s", S.pl.p.session);\n' ''
 mutate "a Plex server keeps Jellyfin's kind" src/plex.c \
-  '    c->kind = SRV_PLEX;\n    c->user_id[0] = c->user_name[0] = 0;\n    snprintf(b, sizeof(b), "%s", base);' '    snprintf(b, sizeof(b), "%s", base);'
+  '    c->kind = SRV_PLEX;\n    c->user_id[0] = c->user_name[0] = 0;\n    {\n        /* the scheme' '    {\n        /* the scheme'
 mutate "signing out of Jellyfin forgets nothing" src/ui.c \
   '                memmove(&S.jf[i], &S.jf[i + 1], (S.njf - i - 1) * sizeof(jf_saved));\n                S.njf--;' ''
 mutate "stars shown for Jellyfin" src/ui.c \
@@ -288,6 +288,12 @@ mutate "asleep between pictures with the read-ahead short" src/player.c \
   '    P.idle_cs = 0;                  /* straight back: Wimp_Poll, not PollIdle */' ''
 mutate "the reader fed until full, never stopping" src/player.c \
   '} else if (P.feeding && ns.ahead >= FEED_STOP) {' '} else if (0) {'
+
+# test28: the audit
+mutate "the PIN id in a 32-bit long" src/ui.c \
+  '    long long pin_id;' '    long pin_id;'
+mutate "window_state's block left as it was when refused" src/ui.c \
+  '    memset(st, 0, 9 * sizeof(int));     /* all callers'"'"' blocks are 9 words; zero if the Wimp refuses */\n    st[0] = w;\n    r.r[1] = (intptr_t)st;\n    if (swi(Wimp_GetWindowState, &r)) {\n        memset(st, 0, 9 * sizeof(int));\n        st[0] = w;\n    }' '    st[0] = w;\n    r.r[1] = (intptr_t)st;\n    swi(Wimp_GetWindowState, &r);'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

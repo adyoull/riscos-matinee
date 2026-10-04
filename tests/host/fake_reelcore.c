@@ -174,7 +174,7 @@ int reelcore_net(const ReelCore *v, ReelCoreNet *st)
     memset(st, 0, sizeof(*st));
     st->opening = !v->ready;
     st->buffering = fake_rc.buffering;
-    st->ahead = fake_rc.buffering ? 0 : fake_rc.ahead > 0 ? fake_rc.ahead : 8;
+    st->ahead = fake_rc.buffering ? 0 : fake_rc.ahead > 0 ? fake_rc.ahead : 10;
     st->bytes_ahead = fake_rc.buffering ? 0 : 5 << 20;
     st->bytes_read = v->bytes;
     return 1;

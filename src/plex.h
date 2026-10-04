@@ -164,9 +164,9 @@ void plex_ctx_init(plex_ctx *c, const char *client_id, const char *version);
 void plex_headers(const plex_ctx *c, const char *token, char *out, size_t size);
 
 /* Sign in: a PIN to type at plex.tv/link. 0 = ok. */
-int plex_pin_create(plex_ctx *c, long *id, char *code, size_t codelen);
+int plex_pin_create(plex_ctx *c, long long *id, char *code, size_t codelen);
 /* 1 = signed in (account_token set), 0 = not yet, -1 = error / expired */
-int plex_pin_check(plex_ctx *c, long id);
+int plex_pin_check(plex_ctx *c, long long id);
 
 /* The account's servers (those that provide "server"), up to max */
 int plex_servers(plex_ctx *c, plex_server *out, int max);

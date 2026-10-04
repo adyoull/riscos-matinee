@@ -215,7 +215,7 @@ static struct {
     char user_uuid[64], user_title[64];
 
     /* sign-in */
-    long pin_id;
+    long long pin_id;
     int pin_next;                   /* monotonic time of the next check */
     char code[16], si_status[160], si_addr[256], si_tok[256];
     /* Jellyfin: the servers signed in to (Choices); the sign-in page's
@@ -526,9 +526,22 @@ static FILE *choices_open(int write)
     return fopen(path, write ? "w" : "r");
 }
 
+/* A string fit for one Choices line: no line ends (a server's name could
+   have one, and the next line would be read as another key), and no '|' in
+   a Jellyfin server's fields */
+static const char *cv(const char *s, char *out, size_t size)
+{
+    size_t n = 0;
+    for (; s && *s && n + 1 < size; s++)
+        out[n++] = *s == '\n' || *s == '\r' || *s == '|' ? ' ' : *s;
+    out[n] = 0;
+    return out;
+}
+
 static void choices_save(void)
 {
     FILE *f = choices_open(1);
+    static char c[12][300];         /* each string's line-safe copy */
     int mw, mr, mb;
     if (!f)
         return;
@@ -538,16 +551,19 @@ static void choices_save(void)
             "server_name %s\nserver_id %s\nserver_local %d\nplayer %s\nquality %d\ndirect_play %d\n"
             "poster_size %d\nchoices_version 2\nhardware_overlay %d\npicture %d\nvolume %d\nimage_cache_mb %d\n"
             "keep_on_top %d\nmini_width %d\nmini_right %d\nmini_bottom %d\nuser_uuid %s\nuser_title %s\n",
-            S.px.client_id, S.px.account_token, S.px.base, S.px.token,
-            S.px.server_name, S.px.server_id, S.px.local, player_names[S.player], S.quality, S.direct,
+            cv(S.px.client_id, c[0], 300), cv(S.px.account_token, c[1], 300), cv(S.px.base, c[2], 300),
+            cv(S.px.token, c[3], 300), cv(S.px.server_name, c[4], 300), cv(S.px.server_id, c[5], 300), S.px.local,
+            player_names[S.player], S.quality, S.direct,
             S.psize, S.overlay, S.pic_mode, (int)(S.volume * 100 + 0.5), S.cache_mb,
-            player_ontop(), mw, mr, mb, S.user_uuid, S.user_title);
+            player_ontop(), mw, mr, mb, cv(S.user_uuid, c[6], 300), cv(S.user_title, c[7], 300));
     /* the server in use is Plex's or Jellyfin's; and the Jellyfin servers
        signed in to, a line each: name|id|address|token|user id|user name */
-    fprintf(f, "server_kind %d\nserver_user_id %s\nserver_user_name %s\n", S.px.kind, S.px.user_id, S.px.user_name);
+    fprintf(f, "server_kind %d\nserver_user_id %s\nserver_user_name %s\n", S.px.kind, cv(S.px.user_id, c[0], 300),
+            cv(S.px.user_name, c[1], 300));
     for (int i = 0; i < S.njf; i++)
-        fprintf(f, "jellyfin %s|%s|%s|%s|%s|%s\n", S.jf[i].name, S.jf[i].id, S.jf[i].base, S.jf[i].token, S.jf[i].uid,
-                S.jf[i].uname);
+        fprintf(f, "jellyfin %s|%s|%s|%s|%s|%s\n", cv(S.jf[i].name, c[0], 300), cv(S.jf[i].id, c[1], 300),
+                cv(S.jf[i].base, c[2], 300), cv(S.jf[i].token, c[3], 300), cv(S.jf[i].uid, c[4], 300),
+                cv(S.jf[i].uname, c[5], 300));
     fclose(f);
 }
 
@@ -794,9 +810,13 @@ static void make_windows(void)
 static void window_state(int w, int *st)
 {
     _kernel_swi_regs r;
+    memset(st, 0, 9 * sizeof(int));     /* all callers' blocks are 9 words; zero if the Wimp refuses */
     st[0] = w;
     r.r[1] = (intptr_t)st;
-    swi(Wimp_GetWindowState, &r);
+    if (swi(Wimp_GetWindowState, &r)) {
+        memset(st, 0, 9 * sizeof(int));
+        st[0] = w;
+    }
 }
 
 static void open_front(int w, int x0, int y0, int x1, int y1, int sx, int sy)
@@ -1122,7 +1142,7 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
         jpeg_into(p->area, w, h, jpeg, len, art != 0) != 0) {
         free(p->area);
         p->area = NULL;
-        p->bytes = 0;
+        p->bytes = sizeof(*p);      /* counted, so failed ones are trimmed too */
         p->failed = 1;
     } else if (art == 1) {
         sprite_fade(p->area, w, h);
@@ -2171,9 +2191,10 @@ static int lib_hit(int sx, int sy)
 
 static const plex_item *home_hero(void)
 {
-    if (!S.home.npick)
+    int i = S.home.row[0].start + S.home.pick;
+    if (!S.home.on || !S.home.npick || !S.have_list || S.home.nrows < 1 || i < 0 || i >= S.list.n)
         return NULL;
-    return &S.list.v[S.home.row[0].start + S.home.pick];
+    return &S.list.v[i];
 }
 
 /* Which row item i is in, and its place in the row (-1: none) */
@@ -2359,6 +2380,8 @@ static void home_layout(void)
             S.home.lay[r].ch = LIB_H;
         }
         fit = (w - 80 + GAP) / (S.home.lay[r].cw + GAP);
+        if (fit < 1)
+            fit = 1;
         if (kind == PR_LIBRARIES && fit < S.home.row[r].n) {    /* the libraries wrap */
             int rows = (S.home.row[r].n + fit - 1) / fit;
             S.home.lay[r].vis = S.home.row[r].n;
@@ -2640,6 +2663,8 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     }
     if (S.have_list)
         plex_list_free(&S.list);
+    free(S.disp);                   /* the old list's (cache_trim reads it): made again below */
+    S.disp = NULL;
     S.list = l;
     S.have_list = 1;
     S.det_i = -1;                   /* the details (if kept) are of a video in the old list */
@@ -2832,15 +2857,28 @@ static void tab_open(int k)
 
 static int users_get(void);
 
+/* The list shown let go, and the pages made from it (home, show, library bar) off */
+static void builtin_stop(int leave);
+
+static void list_forget(void)
+{
+    if (S.have_list)
+        plex_list_free(&S.list);
+    S.have_list = 0;
+    free(S.disp);
+    S.disp = NULL;
+    S.home.on = S.show.on = S.lib.on = 0;
+    S.home.nrows = S.home.npick = 0;
+}
+
 static void browser_top(void)
 {
     if (S.nusers < 0 && *S.px.account_token)
         users_get();                /* Plex Home: who's watching, for the title */
     S.nhist = 0;
-    if (S.have_list) {
-        plex_list_free(&S.list);
-        S.have_list = 0;
-    }
+    if (S.page == PG_PLAYER)
+        builtin_stop(1);            /* not under the grid */
+    list_forget();
     show_list("", "", 0, 0);
 }
 
@@ -3861,7 +3899,7 @@ static void si_redraw_fields(void)
 static void pin_new(void)
 {
     char code[16];
-    long id;
+    long long id;
     hourglass(1);
     if (plex_pin_create(&S.px, &id, code, sizeof(code)) != 0) {
         hourglass(0);
@@ -4222,7 +4260,7 @@ static void jf_remember(void)
 /* Moving to another server: what was shown of the last one goes */
 static void server_changed(void)
 {
-    builtin_stop(0);
+    builtin_stop(1);                /* off the player page too */
     if (S.libs.n || S.libs.v)
         plex_list_free(&S.libs);
     S.nhist = 0;
@@ -4318,9 +4356,7 @@ static void sign_out(void)
     if (S.browser_open)
         close_window(S.browser_w);
     S.browser_open = 0;
-    if (S.have_list)
-        plex_list_free(&S.list);
-    S.have_list = 0;
+    list_forget();
     S.nhist = 0;
     S.page = PG_GRID;
     if (S.have_det)
@@ -5436,6 +5472,18 @@ static const plex_item *sel_item(void)
     return S.have_list && S.sel >= 0 && S.sel < S.list.n ? &S.list.v[S.sel] : NULL;
 }
 
+/* What the item menu is for: the selected poster, or on a details page
+   opened from More like this (not one of the list's), that video */
+static int menu_rel(void)
+{
+    return S.page == PG_DETAILS && S.det_i < 0 && det_item() != NULL;
+}
+
+static const plex_item *menu_item(void)
+{
+    return menu_rel() ? det_item() : sel_item();
+}
+
 /* The subtitles of the video in S.det: None, then its tracks */
 static void subs_menu_build(void)
 {
@@ -5490,18 +5538,22 @@ static int in_continue(const plex_item *it)
 
 static void item_menu_build(void)
 {
-    const plex_item *it = sel_item();
-    int video = it && it->kind == PI_VIDEO, folder = it && it->kind == PI_FOLDER;
-    char t[80], when[32];
+    const plex_item *it = menu_item();
+    int video = it && it->kind == PI_VIDEO, folder = it && it->kind == PI_FOLDER, rel = menu_rel();
+    char t[80], when[32], head[80];
     save_prepare(it);
     /* a video's subtitle tracks are only in its details */
     if (video && !det_is(it))
         det_fetch(it, 0);
     if (video && det_is(it))
         subs_menu_build();
-    if (it)
+    if (it && !rel && S.disp)
         fit_disp(S.sel);
-    menu_begin(&m_item, it ? S.disp[S.sel].line[0] : APP);
+    if (rel)
+        latin1(it->title, head, sizeof(head));
+    else
+        snprintf(head, sizeof(head), "%s", it && S.disp ? S.disp[S.sel].line[0] : APP);
+    menu_begin(&m_item, head);
     menu_add(&m_item, folder ? "Open" : "Play", 0, !video && !folder, -1, 0);
     menu_add(&m_item, "Details...", 0, !video, -1, 0);
     if (video && it->view_offset_ms > 0) {
@@ -5870,13 +5922,17 @@ static void choose_sub(int k)
         return;
     }
     hourglass(0);
-    det_refresh();
-    if (k && S.player == PLAYER_BUILTIN && caps_sub_own(&it->subs[k - 1]))
-        set_status("Subtitles: %s.", name);
-    else if (k)
-        set_status("Subtitles: %s. The server burns them into the picture.", name);
-    else
-        set_status("Subtitles off.");
+    {
+        int own = k && caps_sub_own(&it->subs[k - 1]);      /* before det_refresh lets it go */
+        det_refresh();
+        it = NULL;
+        if (own && S.player == PLAYER_BUILTIN)
+            set_status("Subtitles: %s.", name);
+        else if (k)
+            set_status("Subtitles: %s. The server burns them into the picture.", name);
+        else
+            set_status("Subtitles off.");
+    }
 }
 
 /* Watched (1) or not (0), on the server and here. it: the list's item or
@@ -6082,22 +6138,21 @@ static int menu_select(const int *sel)
             return 1;
         }
     } else if (kind == 2) {
-        const plex_item *it = sel_item();
+        const plex_item *it = menu_item();
+        int rel = menu_rel();
         switch (sel[0]) {
         case MI_PLAY:
-            if (it)
-                open_item(S.sel, PLAY_DEFAULT);
-            break;
         case MI_RESUME:
-            if (it)
-                open_item(S.sel, PLAY_RESUME);
+        case MI_START: {
+            int how = sel[0] == MI_RESUME ? PLAY_RESUME : sel[0] == MI_START ? PLAY_START : PLAY_DEFAULT;
+            if (it && rel)
+                play_item(it, how);
+            else if (it)
+                open_item(S.sel, how);
             break;
-        case MI_START:
-            if (it)
-                open_item(S.sel, PLAY_START);
-            break;
+        }
         case MI_DETAILS:
-            if (it)
+            if (it && !rel)
                 det_show(S.sel);
             break;
         case MI_SUBS:
@@ -6328,7 +6383,9 @@ static void show_action(int id)
         plex_list se;
         mark(it, w);
         it->watched = w;
-        if (plex_list_get(&S.px, it->key, &se) == 0 && (plex_list_keep(&se, "season"), se.n == S.show.seasons.n)) {
+        memset(&se, 0, sizeof(se));
+        if (it->key && plex_list_get(&S.px, it->key, &se) == 0 &&
+            (plex_list_keep(&se, "season"), se.n == S.show.seasons.n)) {
             plex_list_free(&S.show.seasons);    /* their unwatched counts */
             S.show.seasons = se;
         } else if (se.n || se.v)
@@ -6722,8 +6779,10 @@ static void close_request(int *b)
         close_window(S.browser_w);
         S.browser_open = 0;
         S.in_browser = 0;
-        if (S.page == PG_SIGNIN)
+        if (S.page == PG_SIGNIN) {
             signin_close();
+            S.page = PG_GRID;       /* opened again: from the start (bar_select) */
+        }
     }
 }
 

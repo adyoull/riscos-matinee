@@ -178,9 +178,15 @@ void imgcache_put(const char *key, const char *data, size_t len)
 {
     char path[400];
     FILE *f;
-    if (!*dir || !len || (max_size > 0 && size + (long long)len > max_size))
-        return;                     /* full: kept until the next start trims it */
+    long old = -1;
+    if (!*dir || !len || max_size <= 0 || size + (long long)len > max_size)
+        return;                     /* off (image_cache_mb 0), or full: kept until the next start trims it */
     path_of(key, path, sizeof(path), 1);
+    if ((f = fopen(path, "rb")) != NULL) {      /* there already (it couldn't be read): replaced */
+        if (fseek(f, 0, SEEK_END) == 0)
+            old = ftell(f);
+        fclose(f);
+    }
     if (!(f = fopen(path, "wb")))
         return;
     if (fwrite(data, 1, len, f) != len) {
@@ -191,6 +197,10 @@ void imgcache_put(const char *key, const char *data, size_t len)
     if (fclose(f) != 0) {
         remove(path);
         return;
+    }
+    if (old >= 0) {
+        size -= old;
+        files--;
     }
     size += len;
     files++;
@@ -203,23 +213,23 @@ long long imgcache_size(int *n)
     return size;
 }
 
-static void remove_one(const char *path, long len, long long stamp, void *ctx)
-{
-    int *gone = ctx;
-    (void)stamp;
-    if (remove(path) == 0) {
-        (*gone)++;
-        size -= len;
-        files--;
-    }
-}
-
 int imgcache_clear(void)
 {
+    list_t l = { NULL, 0, 0 };
     int gone = 0;
     if (!*dir)
         return 0;
-    each(remove_one, &gone);
+    /* the files listed first, then removed: removing while a directory is
+       read a batch at a time would skip some */
+    size = 0;
+    files = 0;
+    each(count_one, &l);
+    for (int i = 0; i < l.n; i++) {
+        char path[400];
+        snprintf(path, sizeof(path), "%s%s", dir, l.v[i].path);
+        gone += remove(path) == 0;
+    }
+    free(l.v);
     size = 0;                       /* whatever's left is counted again next time */
     files = 0;
     return gone;

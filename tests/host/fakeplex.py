@@ -425,7 +425,7 @@ class H(BaseHTTPRequestHandler):
             return self.send(404, {})
         if p == "/api/v2/pins":
             PIN_POLLS["n"] = 0
-            return self.send(201, {"id": 4242, "code": "ABCD", "authToken": None})
+            return self.send(201, {"id": 3141592653, "code": "ABCD", "authToken": None})
         self.send(404, {})
 
     def post_playqueue(self, q):
@@ -468,9 +468,9 @@ class H(BaseHTTPRequestHandler):
         self.record()
         if p.startswith(JF_PREFIXES):
             return self.jf()
-        if p == "/api/v2/pins/4242":
+        if p == "/api/v2/pins/3141592653":
             PIN_POLLS["n"] += 1
-            return self.send(200, {"id": 4242, "code": "ABCD",
+            return self.send(200, {"id": 3141592653, "code": "ABCD",
                                    "authToken": ACCOUNT if PIN_POLLS["n"] >= 2 else None})
         if p.startswith("/api/v2/pins/"):
             return self.send(404, {"errors": [{"code": 1020, "message": "Code not found or expired"}]})

@@ -1315,6 +1315,10 @@ static void full_delete(void)
         return;
     r.r[1] = (intptr_t)&P.full;
     swi(Wimp_DeleteWindow, &r);
+    if (ov.win == P.full) {         /* the overlay isn't on it any more: placed again on the next */
+        ov.win = 0;
+        memset(ov.placed, 0, sizeof(ov.placed));
+    }
     P.full = 0;
 }
 
@@ -1589,13 +1593,16 @@ void player_init(int task, int overlay, int pic_mode, double volume)
 #endif
 int player_hevc_block(void)
 {
-    static int known = -1;
+    static int known = -1, again;   /* a "no" is asked again a minute later (the block may have been busy) */
     if (getenv("Matinee$NoHEVCBlock"))
         return 0;
 #ifdef MATINEE_TEST
     (void)known;
+    (void)again;
     return player_test_hevc_block;
 #elif defined(__riscos__)
+    if (known == 0 && now_cs() - again >= 0)
+        known = -1;
     if (known < 0) {
         hevcdec_config c;
         hevcdec *d = NULL;
@@ -1606,11 +1613,13 @@ int player_hevc_block(void)
         if (d)
             hevcdec_close(d);
         lg("the HEVC block: %s%s", known ? "there" : "not there: ", known ? "" : hevcdec_open_error());
+        again = now_cs() + 6000;
         page_check("after asking for the HEVC block");
     }
     return known;
 #else
     (void)known;
+    (void)again;
     return 0;
 #endif
 }
@@ -1801,6 +1810,8 @@ static void opened(void)
         panel_update(0);
 }
 
+static int paused_short(void);
+
 int player_poll_cs(void)
 {
     ReelCoreNet ns;
@@ -1808,6 +1819,8 @@ int player_poll_cs(void)
         return -1;
     if (!P.ready || P.ov_pending)
         return 0;
+    if (!P.ended && reelcore_paused(P.v) && paused_short())
+        return 0;                   /* paused, reading ahead: null events to give the reader time */
     if (P.ended || reelcore_paused(P.v))
         return P.fullscreen || P.card || P.note[0] ? 25 : -1;  /* the bar and the card still need time */
     /* reading ahead over the network: the reader thread only runs while
@@ -1891,7 +1904,14 @@ static void feed_reader(int cs)
 #endif
 }
 
-static void net_feed(int t)
+/* Paused with the read-ahead short of FEED_STOP: the reader still wants time */
+static int paused_short(void)
+{
+    ReelCoreNet ns;
+    return reelcore_net(P.v, &ns) && !ns.opening && !ns.ended && ns.ahead < FEED_STOP;
+}
+
+static void net_feed(int t, int new_frame)
 {
     ReelCoreNet ns;
     if (!reelcore_net(P.v, &ns) || ns.opening || ns.ended) {
@@ -1918,7 +1938,7 @@ static void net_feed(int t)
     }
     if (!P.feeding)
         return;
-    if (P.idle_cs > 0) {
+    if (P.idle_cs > 0 && !new_frame) {     /* not while a picture is due to be shown */
         int cs = P.idle_cs < FEED_MAX_CS ? P.idle_cs : FEED_MAX_CS;
         feed_reader(cs);
         P.feed_cs += cs;
@@ -1958,12 +1978,14 @@ int player_null(void)
             P.note[0] = 0;
             bar_refresh();
         }
+        if (!P.ended && paused_short())
+            feed_reader(FEED_MAX_CS);   /* paused to let it catch up: it reads meanwhile */
         return PE_NONE;
     }
     mini_keep_on_top(t);
     r2 = reelcore_update(P.v);
     P.idle_cs = (int)(reelcore_idle_time(P.v) * 100);
-    net_feed(t);
+    net_feed(t, r2 == REELCORE_NEW_FRAME);
     if (r2 == REELCORE_NEW_FRAME) {
         if (!P.based) {             /* a converted stream counting from where it started? */
             double p = reelcore_position(P.v);
@@ -2055,6 +2077,7 @@ void player_mode_change(void)
     read_screen();
     ov_destroy();                   /* the old one isn't freed by the mode change */
     ov.failed = 0;
+    sprite_free();                  /* its header's mode word is the old mode's: made again */
     if (P.fullscreen) {
         player_set_fullscreen(0);
         player_set_fullscreen(1);
@@ -2062,6 +2085,11 @@ void player_mode_change(void)
         mini_show();                /* back on the screen, above the icon bar */
     else
         player_layout();
+    if (!P.area) {
+        pic_make();
+        pic_refresh();
+        force_redraw(cur_win(), 0, -0x7FFFFFF, 0x7FFFFFF, 0);
+    }
 }
 
 static int in_box(const box_t *b, int x, int y) { return x >= b->x0 && x < b->x1 && y >= b->y0 && y < b->y1; }

@@ -375,7 +375,7 @@ int main(int argc, char **argv)
     plex_server servers[4];
     plex_list top, films, tv, seasons, eps, deck;
     caps_t k1080, k720;
-    long pin;
+    long long pin;
     char code[16], why[160];
     cJSON *log;
     int n;
@@ -390,7 +390,7 @@ int main(int argc, char **argv)
 
     /* ---- sign in with a PIN */
     CHECK(plex_pin_create(&c, &pin, code, sizeof(code)) == 0, "pin create: %s", c.err);
-    CHECK(pin == 4242 && !strcmp(code, "ABCD"), "pin %ld code %s", pin, code);
+    CHECK(pin == 3141592653LL && !strcmp(code, "ABCD"), "pin %lld code %s", pin, code);
     CHECK(plex_pin_check(&c, pin) == 0, "first poll should wait");
     CHECK(plex_pin_check(&c, pin) == 1, "second poll should sign in");
     CHECK(!strcmp(c.account_token, "ACCT-TOKEN"), "account token %s", c.account_token);
