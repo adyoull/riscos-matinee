@@ -186,6 +186,11 @@ typedef struct {
     char path[256];
 } pend_t;
 
+/* The details page's rows of other videos, and the order they're shown in:
+   the collection first, then More like this, then the extras */
+enum { REL_SIMILAR, REL_EXTRAS, REL_COLLECTION, REL_ROWS };
+static const int rel_order[REL_ROWS] = { REL_COLLECTION, REL_SIMILAR, REL_EXTRAS };
+
 /* A Jellyfin server signed in to: kept in Choices, one of the Servers menu */
 #define JF_SAVED 6
 #define SRV_ADD (-100)
@@ -260,9 +265,12 @@ static struct {
     int det_ncred;
     struct { poster_t *photo; char name[64], role[64]; int x0, y0; } cast[16];
     /* under the cast: More like this (posters) and extras (trailers, 16:9) */
-    plex_list rel[2];
-    struct { int x0, y0, x1, y1; poster_t *pic; char line[2][80]; } relc[2][16];
-    int nrel[2], rel_y[2], rel_wanted;
+    /* the details page's rows of other videos (REL_*): More like this, the
+       trailers and extras, and the rest of the collection it's in */
+    plex_list rel[REL_ROWS];
+    struct { int x0, y0, x1, y1; poster_t *pic; char line[2][80]; } relc[REL_ROWS][16];
+    int nrel[REL_ROWS], rel_y[REL_ROWS], rel_wanted;
+    char rel_head[REL_ROWS][100];
     int ncast, cast_wanted;         /* cast_wanted: photos still to fetch (null events) */
     struct { int id, x0, y0, x1, y1; char label[48]; } btn[DET_BTN_MAX + 4];
     int nbtn;
@@ -908,10 +916,10 @@ static void cache_free_all(void)
     S.home.fw = 0;
     for (int i = 0; i < S.ncast; i++)
         S.cast[i].photo = NULL;
-    for (int k = 0; k < 2; k++)
+    for (int k = 0; k < REL_ROWS; k++)
         for (int i = 0; i < 16; i++)
             S.relc[k][i].pic = NULL;
-    S.cast_wanted = S.ncast > 0 || S.nrel[0] || S.nrel[1];
+    S.cast_wanted = S.ncast > 0 || S.nrel[0] || S.nrel[1] || S.nrel[2];
 }
 
 /* Frees posters the list shown doesn't use, once the cache is big */
@@ -927,7 +935,7 @@ static void cache_trim(void)
             used = S.disp[i].poster == p;
         for (int i = 0; i < S.ncast && !used; i++)
             used = S.cast[i].photo == p;
-        for (int k = 0; k < 2 && !used; k++)
+        for (int k = 0; k < REL_ROWS && !used; k++)
             for (int i = 0; i < S.nrel[k] && !used; i++)
                 used = S.relc[k][i].pic == p;
         if (!used && p != S.det_art && p != S.det_poster && p != S.show.art && p != S.show.poster && p != S.home.art) {
@@ -1116,12 +1124,25 @@ static int picture_get(const char *thumb, int w, int h, char **jpeg, size_t *len
 {
     char key[600];
     snprintf(key, sizeof(key), "%s|%s|%dx%d", S.px.server_id, thumb, w, h);
-    if (imgcache_get(key, jpeg, len) == 0)
-        return 0;
-    if (plex_poster(&S.px, thumb, w, h, jpeg, len) != 0)
-        return -1;
-    imgcache_put(key, *jpeg, *len);
-    return 0;
+    if (imgcache_get(key, jpeg, len) == 0) {
+        if (imgcache_jpeg_whole(*jpeg, *len))
+            return 0;
+        free(*jpeg);                /* cut short (kept by test28 or before): fetched again */
+        *jpeg = NULL;
+    }
+    for (int tries = 0; tries < 2; tries++) {
+        if (plex_poster(&S.px, thumb, w, h, jpeg, len) != 0)
+            return -1;
+        if (imgcache_jpeg_whole(*jpeg, *len)) {
+            imgcache_put(key, *jpeg, *len);     /* (it replaces one cut short) */
+            return 0;
+        }
+        if (tries == 0) {           /* cut short on the way: once more */
+            free(*jpeg);
+            *jpeg = NULL;
+        }
+    }
+    return 0;                       /* the part there is, shown but not kept */
 }
 
 /* art: 0 a poster (rounded corners), 1 a backdrop (faded), 2 a person's
@@ -3085,16 +3106,36 @@ static int det_fetch(const plex_item *it, int with_art)
         S.cast[i].photo = NULL;
     S.ncast = 0;
     S.cast_wanted = 1;              /* laid out by det_layout, fetched from null events */
-    for (int k = 0; k < 2; k++) {   /* More like this (not for an episode), and its extras */
-        char path[160];
+    for (int k = 0; k < REL_ROWS; k++) {    /* More like this (not for an episode), its extras, its collection */
+        const plex_item *v = &S.det.v[0];
+        char path[260];
         if (S.rel[k].n || S.rel[k].v)
             plex_list_free(&S.rel[k]);
         S.nrel[k] = 0;
-        if (!S.det.v[0].rating_key || (k == 0 && S.det.v[0].type && !strcmp(S.det.v[0].type, "episode")))
+        S.rel_head[k][0] = 0;
+        if (!v->rating_key || (k == REL_SIMILAR && v->type && !strcmp(v->type, "episode")))
             continue;
-        snprintf(path, sizeof(path), "/library/metadata/%s/%s", S.det.v[0].rating_key, k ? "extras" : "similar");
+        if (k == REL_COLLECTION) {
+            if (!v->collection || !v->collection_key)
+                continue;
+            snprintf(path, sizeof(path), "%s", v->collection_key);
+            latin1(v->collection, S.rel_head[k], sizeof(S.rel_head[k]));
+        } else {
+            snprintf(path, sizeof(path), "/library/metadata/%s/%s", v->rating_key, k == REL_EXTRAS ? "extras" : "similar");
+            snprintf(S.rel_head[k], sizeof(S.rel_head[k]), "%s", k == REL_EXTRAS ? "Trailers and extras" : "More like this");
+        }
         if (plex_list_get(&S.px, path, &S.rel[k]) != 0)
             memset(&S.rel[k], 0, sizeof(S.rel[k]));
+        if (k == REL_COLLECTION) {  /* the others in it: not this one */
+            plex_list *c = &S.rel[k];
+            for (int i = 0; i < c->n; i++)
+                if (c->v[i].rating_key && !strcmp(c->v[i].rating_key, v->rating_key)) {
+                    plex_item_free(&c->v[i]);
+                    memmove(&c->v[i], &c->v[i + 1], (c->n - i - 1) * sizeof(plex_item));
+                    c->n--;
+                    i--;
+                }
+        }
     }
     if (with_art)
         det_fetch_art();
@@ -3209,7 +3250,7 @@ static void det_layout_more(const plex_item *it, int y)
     /* the cast: rows of photos with the name and the part under them */
     y = cast_top;
     S.ncast = it->ncast < (int)(sizeof(S.cast) / sizeof(S.cast[0])) ? it->ncast : (int)(sizeof(S.cast) / sizeof(S.cast[0]));
-    for (int k = 0; k < 2; k++)
+    for (int k = 0; k < REL_ROWS; k++)
         for (int i = 0; i < 16; i++)
             S.relc[k][i].pic = NULL;
     det_cast_y = 0;
@@ -3232,9 +3273,11 @@ static void det_layout_more(const plex_item *it, int y)
     }
     if (wide && det_cred_y - n * 40 - 24 < y)
         y = det_cred_y - n * 40 - 24;
-    /* More like this, extras: a row each, as many as fit */
-    for (int k = 0; k < 2; k++) {
-        int cw = k ? EP_TW : TILE_W, ch = k ? EP_TH : POSTER_H, fit = (det_wd - 80 + GAP) / (cw + GAP);
+    /* the collection, More like this, extras: a row each, as many as fit */
+    for (int o = 0; o < REL_ROWS; o++) {
+        int k = rel_order[o];
+        int cw = k == REL_EXTRAS ? EP_TW : TILE_W, ch = k == REL_EXTRAS ? EP_TH : POSTER_H,
+            fit = (det_wd - 80 + GAP) / (cw + GAP);
         S.nrel[k] = S.rel[k].n < fit ? S.rel[k].n : fit;
         if (S.nrel[k] > 16)
             S.nrel[k] = 16;
@@ -3281,19 +3324,19 @@ static int det_cast_step(void)
         force_redraw(S.browser_w, S.cast[i].x0, S.cast[i].y0, S.cast[i].x0 + CAST_W, S.cast[i].y0 + CAST_H);
         return 1;
     }
-    for (int k = 0; k < 2; k++)     /* More like this, extras */
-        for (int i = 0; i < S.nrel[k]; i++) {
+    for (int o = 0; o < REL_ROWS; o++)     /* the collection, More like this, extras */
+        for (int k = rel_order[o], i = 0; i < S.nrel[k]; i++) {
             const plex_item *r = &S.rel[k].v[i];
             char key[320];
             int cw = S.relc[k][i].x1 - S.relc[k][i].x0, ch = S.relc[k][i].y1 - S.relc[k][i].y0;
             if (!r->thumb || S.relc[k][i].pic)
                 continue;
-            if (k)
+            if (k == REL_EXTRAS)
                 snprintf(key, sizeof(key), "ep:%s@%dx%d", r->thumb, cw, ch);
             else
                 snprintf(key, sizeof(key), "%s", r->thumb);     /* as on the grid */
             if (!(S.relc[k][i].pic = cache_find(key))) {
-                S.relc[k][i].pic = poster_fetch(r->thumb, key, cw >> S.xeig, ch >> S.yeig, k ? 3 : 0);
+                S.relc[k][i].pic = poster_fetch(r->thumb, key, cw >> S.xeig, ch >> S.yeig, k == REL_EXTRAS ? 3 : 0);
                 cache_trim();
             }
             force_redraw(S.browser_w, S.relc[k][i].x0 - 8, S.relc[k][i].y0 - 8, S.relc[k][i].x1 + 8, S.relc[k][i].y1 + 8);
@@ -3520,10 +3563,10 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
         draw_text(D_BODY, ox + det_cred_x, oy + det_cred_y - l * 40, S.det_cred[l][0], C_SUB, C_BG);
         draw_text(D_BOLD, ox + det_cred_x + CRED_X, oy + det_cred_y - l * 40, S.det_cred[l][1], C_TEXT, C_BG);
     }
-    for (int k = 0; k < 2; k++) {
+    for (int k = 0; k < REL_ROWS; k++) {
         if (!S.nrel[k] || S.rel_y[k] - 60 > cy1 || S.relc[k][0].y0 - 100 > cy1 || S.relc[k][0].y1 + 80 < cy0)
             continue;
-        draw_text(D_HEAD, ox + 40, oy + S.rel_y[k], k ? "Trailers and extras" : "More like this", C_TEXT, C_BG);
+        draw_text(D_HEAD, ox + 40, oy + S.rel_y[k], S.rel_head[k], C_TEXT, C_BG);
         for (int i = 0; i < S.nrel[k]; i++) {
             int x0 = S.relc[k][i].x0, y0 = S.relc[k][i].y0, x1 = S.relc[k][i].x1, y1 = S.relc[k][i].y1;
             draw_round(ox + x0 + 6, oy + y0 - 10, ox + x1 + 6, oy + y1 - 6, 16, C_SHADOW, C_BG);
@@ -3643,7 +3686,7 @@ static int det_rel_at(int sx, int sy)
     window_state(S.browser_w, st);
     wx = sx - (st[1] - st[5]);
     wy = sy - (st[4] - st[6]);
-    for (int k = 0; k < 2; k++)
+    for (int k = 0; k < REL_ROWS; k++)
         for (int i = 0; i < S.nrel[k]; i++)
             if (wx >= S.relc[k][i].x0 && wx < S.relc[k][i].x1 && wy >= S.relc[k][i].y0 - 96 && wy < S.relc[k][i].y1)
                 return 1000 * (k + 1) + i;
@@ -6427,19 +6470,19 @@ static void open_item(int i, int how)
 
 /* ---- events --------------------------------------------------------------------- */
 
-/* More like this (k 0): that film's details, in place; an extra (k 1):
+/* More like this or the collection: that film's details, in place; an extra:
    play it, from the start */
 static void det_open_rel(int k, int i)
 {
-    if (k < 0 || k > 1 || i < 0 || i >= S.rel[k].n)
+    if (k < 0 || k >= REL_ROWS || i < 0 || i >= S.rel[k].n)
         return;
-    if (k == 1) {
+    if (k == REL_EXTRAS) {
         play_item(&S.rel[k].v[i], PLAY_START);
         return;
     }
     /* (det_fetch uses the item only to ask the server, before it lets
        S.rel go) */
-    if (det_fetch(&S.rel[0].v[i], 1) != 0)
+    if (det_fetch(&S.rel[k].v[i], 1) != 0)
         return;
     S.det_i = -1;                   /* not one of the list's */
     det_repaint();
@@ -7144,6 +7187,11 @@ const char *ui_test_signin(int what)
     return what == 0 ? S.code : what == 1 ? S.si_status : what == 2 ? S.si_addr : what == 3 ? S.si_tok :
            what == 4 ? S.jf_code : what == 5 ? S.jf_addr : what == 6 ? S.jf_user : S.px.server_name;
 }
+const char *ui_test_rel(int k, int *n)
+{
+    *n = k >= 0 && k < REL_ROWS ? S.nrel[k] : 0;
+    return k >= 0 && k < REL_ROWS ? S.rel_head[k] : "";
+}
 int ui_test_signin_jf(void) { return S.page == PG_SIGNIN && S.si_mode == SI_JF; }
 int ui_test_signin_mode(void) { return S.page == PG_SIGNIN ? S.si_mode : -1; }
 int ui_test_jf_servers(void) { return S.njf; }
@@ -7164,7 +7212,7 @@ int ui_test_button_xy(int w, int id, int *x, int *y)
                 found = 1;
             }
     }
-    if (w == S.browser_w && S.page == PG_DETAILS && id >= 1000 && id < 3000 && (id % 1000) < S.nrel[id / 1000 - 1]) {
+    if (w == S.browser_w && S.page == PG_DETAILS && id >= 1000 && id < 1000 * (REL_ROWS + 1) && (id % 1000) < S.nrel[id / 1000 - 1]) {
         int k = id / 1000 - 1, i = id % 1000;      /* More like this, extras */
         x0 = S.relc[k][i].x0; y0 = S.relc[k][i].y0; x1 = S.relc[k][i].x1; y1 = S.relc[k][i].y1;
         found = 1;

@@ -603,6 +603,20 @@ static void add_metadata(plex_list *l, int *cap, const cJSON *m, const char *pat
     it->studio = dup_s(jstr(m, "studio"));
     it->released = dup_s(jstr(m, "originallyAvailableAt"));
     it->guid = dup_s(jstr(m, "guid"));
+    {   /* its collection: "Collection": [{"id": 77, "tag": "..."}] with the library it's in */
+        const cJSON *col = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(m, "Collection"), 0);
+        long sec = (long)jnum(m, "librarySectionID", 0), cid = (long)jnum(col, "id", 0);
+        const char *f = jstr(col, "filter");      /* "collection=12345", where the server gives it */
+        if (col && jstr(col, "tag") && *jstr(col, "tag") && sec > 0 && (cid > 0 || (f && *f))) {
+            char k[200];
+            if (f && *f && !strchr(f, '&') && strlen(f) < 100)
+                snprintf(k, sizeof(k), "/library/sections/%ld/all?%s&sort=year", sec, f);
+            else
+                snprintf(k, sizeof(k), "/library/sections/%ld/all?collection=%ld&sort=year", sec, cid);
+            it->collection = dup_s(jstr(col, "tag"));
+            it->collection_key = dup_s(k);
+        }
+    }
     it->audience_rating = jnum(m, "audienceRating", 0);
     it->user_rating = jnum(m, "userRating", 0);
     cast(it, m);
@@ -799,7 +813,7 @@ void item_free(plex_item *it)
     free(it->summary); free(it->art); free(it->content_rating); free(it->tagline);
     free(it->grandparent_key); free(it->grandparent_title);
     free(it->genres); free(it->directors); free(it->writers); free(it->studio); free(it->country);
-    free(it->released); free(it->guid);
+    free(it->released); free(it->guid); free(it->collection); free(it->collection_key);
     for (int i = 0; i < it->ncast; i++) {
         free(it->cast[i].name); free(it->cast[i].role); free(it->cast[i].thumb);
     }
@@ -886,6 +900,12 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, 
     snprintf(out->title, sizeof(out->title), "%s", c->server_name);
     *nrows = nr;
     return 0;
+}
+
+void plex_item_free(plex_item *it)
+{
+    item_free(it);
+    memset(it, 0, sizeof(*it));
 }
 
 void plex_list_keep(plex_list *l, const char *type)

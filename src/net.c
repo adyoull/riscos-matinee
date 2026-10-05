@@ -172,6 +172,25 @@ int net_send(const char *url, const char *headers, const char *method, const cha
         }
         out->len += got;
     }
+    /* avio_read says "end of file" for a connection that failed part way
+       too (the error is kept in io->error), and a server that closes early
+       looks the same: then the answer is short of its Content-Length.
+       Either way it's an error, not the whole answer (a poster cut short
+       was kept in the image cache: the top of it, then black). */
+    if (e >= 0 && io->error < 0 && io->error != AVERROR_EOF)
+        e = io->error;
+    if (e >= 0 && !(headers && strstr(headers, "Accept-Encoding: gzip"))) {
+        /* (a compressed answer's Content-Length is the compressed size: it
+           can't be checked against what came out) */
+        int64_t want = avio_size(io);
+        if (want > 0 && (int64_t)out->len < want) {
+            snprintf(err, errlen, "the answer was cut short (%lld of %lld bytes)", (long long)out->len,
+                     (long long)want);
+            avio_closep(&io);
+            net_buf_free(out);
+            return AVERROR(EIO);
+        }
+    }
     avio_closep(&io);
     if (e < 0) {
         describe(e, url, err, errlen);
@@ -220,8 +239,8 @@ int64_t net_size(net_stream *s)
 int net_read(net_stream *s, void *buf, int size)
 {
     int got = avio_read(s->io, buf, size);
-    if (got == AVERROR_EOF)
-        return 0;
+    if (got == AVERROR_EOF)         /* the end, or a connection that failed (kept in error) */
+        return s->io->error < 0 && s->io->error != AVERROR_EOF ? s->io->error : 0;
     return got;
 }
 

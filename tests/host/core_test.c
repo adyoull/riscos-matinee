@@ -380,6 +380,7 @@ int main(int argc, char **argv)
     cJSON *log;
     int n;
 
+    setvbuf(stdout, NULL, _IONBF, 0);   /* the failures seen even if it crashes */
     if (argc < 2)
         return 2;
     snprintf(base, sizeof(base), "http://127.0.0.1:%s", argv[1]);

@@ -24,6 +24,12 @@ int imgcache_get(const char *key, char **data, size_t *len);
 /* Keeps a picture */
 void imgcache_put(const char *key, const char *data, size_t len);
 
+/* 1 if data is a whole JPEG: it starts with SOI (FF D8) and ends with EOI
+   (FF D9), allowing a few bytes of padding after it. A picture cut short
+   on the way decodes as its top part, then black: not kept, and not used
+   from the cache. */
+int imgcache_jpeg_whole(const char *data, size_t len);
+
 /* What it holds: bytes (files in *files if not NULL) */
 long long imgcache_size(int *files);
 /* Empties it; how many files went */

@@ -938,6 +938,7 @@ static int player_button(int *b, int w, int id)
     return ev_click(b, w, -1, x, y, 0x400);
 }
 
+static int prev103;
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
 static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0;
@@ -1300,9 +1301,18 @@ static int script(int *b, int mask)
             CHECK(spr && spr[4] + 1 == 72 && spr[9] != spr[8], "a photo: round (masked), 72 pixels");
             {
                 int x, y;
-                CHECK(strstr(plotted_text, "More like this|Hevc Film|2020|Sixty|2021|"), "More like this: %s", plotted_text);
+                int nm = 0;
+                CHECK(!strcmp(ui_test_rel(0, &nm), "More like this") && nm == 2, "More like this: %d", nm);
                 CHECK(log_count("/library/metadata/101/extras", NULL, NULL) >= 1 && ui_test_button_xy(w_browser, 2000, &x, &y) == 0,
                       "and its trailer, under it");
+                {
+                    int n = 0;
+                    const char *h = ui_test_rel(2, &n);
+                    CHECK(!strcmp(h, "Open Movies") && n == 2 && ui_test_button_xy(w_browser, 3001, &x, &y) == 0 &&
+                          strstr(plotted_text, "Open Movies|Hevc Film|2020|Remux|2015|") &&
+                          log_count("/library/sections/1/all", "collection", "77") >= 1,
+                          "its collection: the others in it, first (%s, %d): %s", h, n, plotted_text);
+                }
             }
             save_picture("cast.ppm", w_browser);
             pc = 15030;
@@ -2011,7 +2021,7 @@ static int script(int *b, int mask)
             pc = 90404;
             return NULL_EVENT;
         case 90404:
-            if (n_null++ < 6) {
+            if (n_null++ < 12) {        /* the collection's posters and More like this's come first */
                 fake_cs += 20;
                 return NULL_EVENT;
             }
@@ -2943,6 +2953,8 @@ static int script(int *b, int mask)
             return ev_redraw(b, w_browser);
         case 10110:
             save_picture("home-wide.ppm", w_browser);
+            CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/103/thumb/1700000000") > prev103,
+                  "a poster cut short (no JPEG end) wasn't kept: fetched again");
             CHECK(ui_test_posters(NULL) >= 1 && log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000") == prev_count,
                   "the posters from the image cache: not fetched again (%d)",
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000") - prev_count);
@@ -3340,6 +3352,7 @@ int main(int argc, char **argv)
         CHECK(system(cmd) == 0, "the pictures kept on disc, in the image cache");
     }
     prev_count = log_count("/photo/:/transcode", "url", "/library/metadata/101/thumb/1700000000");    /* a poster seen in the first run */
+    prev103 = log_count("/photo/:/transcode", "url", "/library/metadata/103/thumb/1700000000");
     nwins = 0; pc = 100; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
     CHECK(matinee_main(1, argv) == 0, "second run ends cleanly");
@@ -3380,6 +3393,9 @@ int main(int argc, char **argv)
         CHECK(imgcache_size(NULL) == 2000 && imgcache_get("pic0", &d, &n) != 0 && imgcache_get("pic1", &d, &n) != 0,
               "trimmed: the two oldest gone (%lld)", imgcache_size(NULL));
         CHECK(imgcache_get("pic3", &d, &n) == 0 && n == 1000 && d[0] == 'd', "the newest kept");
+        CHECK(imgcache_jpeg_whole("\xff\xd8\x01\x02\xff\xd9", 6) && imgcache_jpeg_whole("\xff\xd8\x01\xff\xd9\0\0", 7) &&
+              !imgcache_jpeg_whole("\xff\xd8\x01\x02\x03\x04", 6) && !imgcache_jpeg_whole("GIF89a\xff\xd9", 8),
+              "a whole JPEG told from one cut short");
         free(d);
     }
     printf("ui_test: %d checks, %d failed\n", checks, fails);

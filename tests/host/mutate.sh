@@ -295,6 +295,14 @@ mutate "the PIN id in a 32-bit long" src/ui.c \
 mutate "window_state's block left as it was when refused" src/ui.c \
   '    memset(st, 0, 9 * sizeof(int));     /* all callers'"'"' blocks are 9 words; zero if the Wimp refuses */\n    st[0] = w;\n    r.r[1] = (intptr_t)st;\n    if (swi(Wimp_GetWindowState, &r)) {\n        memset(st, 0, 9 * sizeof(int));\n        st[0] = w;\n    }' '    st[0] = w;\n    r.r[1] = (intptr_t)st;\n    swi(Wimp_GetWindowState, &r);'
 
+# test29: posters cut short; the collection
+mutate "a poster cut short taken for a whole one" src/imgcache.c \
+  '        if (d[n - 2] == 0xFF && d[n - 1] == 0xD9)\n            return 1;\n    return 0;' '        if (d[n - 2] == 0xFF && d[n - 1] == 0xD9)\n            return 1;\n    return 1;'
+mutate "the collection's row left out" src/plex.c \
+  '            it->collection = dup_s(jstr(col, "tag"));' '            it->collection = NULL;'
+mutate "the film itself in its collection's row" src/ui.c \
+  '                if (c->v[i].rating_key && !strcmp(c->v[i].rating_key, v->rating_key)) {' '                if (0) {'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

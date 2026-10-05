@@ -206,6 +206,18 @@ void imgcache_put(const char *key, const char *data, size_t len)
     files++;
 }
 
+int imgcache_jpeg_whole(const char *data, size_t len)
+{
+    const unsigned char *d = (const unsigned char *)data;
+    size_t n = len;
+    if (!d || len < 4 || d[0] != 0xFF || d[1] != 0xD8)
+        return 0;
+    for (int pad = 0; pad < 32 && n > 2; pad++, n--)
+        if (d[n - 2] == 0xFF && d[n - 1] == 0xD9)
+            return 1;
+    return 0;
+}
+
 long long imgcache_size(int *n)
 {
     if (n)

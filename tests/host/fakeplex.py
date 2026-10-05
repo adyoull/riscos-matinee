@@ -33,6 +33,8 @@ PART = bytes((i * 7 + (i >> 11)) & 255 for i in range(5 * 1024 * 1024))
 def jpeg(url):
     """A stand-in JPEG: the right first and last bytes, and the picture's
     address inside (so each poster is different)."""
+    if "/library/metadata/103/thumb" in url:     # cut short on the way (no EOI): not to be cached
+        return b"\xff\xd8\xff\xe0" + b"MATINEE-TEST-JPEG" + url.encode()
     return b"\xff\xd8\xff\xe0" + b"MATINEE-TEST-JPEG" + url.encode() + b"\xff\xd9"
 
 
@@ -85,6 +87,7 @@ def movie(rk, title, year, vcodec, w, h, kbps, acodec="aac", container="mp4", pr
         m["viewOffset"] = offset
     if rk == 101:               # the rest of the metadata, as the details of one item give it
         m.update({"guid": "plex://movie/5d776825880197001ec967c6", "studio": "Blender Foundation",
+                  "librarySectionID": 1, "Collection": [{"id": 77, "filter": "collection=77", "tag": "Open Movies"}],
                   "originallyAvailableAt": "2008-04-10", "audienceRating": 8.1,
                   "Genre": [{"tag": "Animation"}, {"tag": "Comedy"}, {"tag": "Short"}],
                   "Director": [{"tag": "Sacha Goedegebure"}],
@@ -520,6 +523,8 @@ class H(BaseHTTPRequestHandler):
                 films.reverse()
             if (q.get("unwatched") or [""])[0] == "1":
                 films = [m for m in films if not m.get("viewCount")]
+            if (q.get("collection") or [""])[0] == "77":     # the collection Open Movies
+                films = MOVIES[:2] + [MOVIES[3]]
             return self.send(200, {"MediaContainer": {"size": len(films), "totalSize": len(films),
                                                       "librarySectionTitle": "Films", "title1": "Films",
                                                       "Metadata": films}})

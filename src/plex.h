@@ -133,6 +133,9 @@ typedef struct {
        joined with ", ", or NULL */
     char *genres, *directors, *writers, *studio, *country;
     char *released;         /* originallyAvailableAt: "2008-04-10" (an episode's air date) */
+    /* the collection it's in (the first, if several; plex_details() only):
+       its name, and the path that lists its videos; or NULL */
+    char *collection, *collection_key;
     char *guid;             /* plex://movie/..., for the timeline */
     double audience_rating; /* out of 10; 0 = none */
     double user_rating;     /* yours, out of 10 (2 a star); 0 = not rated */
@@ -184,6 +187,8 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token);
    or a key from an item. 0 = ok. */
 int plex_list_get(plex_ctx *c, const char *path, plex_list *out);
 void plex_list_free(plex_list *l);
+/* One item's strings and tracks let go (the item itself is the caller's) */
+void plex_item_free(plex_item *it);
 /* Moves src's items to the end of dst (src left empty). 0 = ok. */
 int plex_list_append(plex_list *dst, plex_list *src);
 

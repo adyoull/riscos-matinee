@@ -1,4 +1,4 @@
-!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test28
+!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test29
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -160,9 +160,10 @@ gave again to take the rating away); and how it will play. Under them: the cast,
 the parts they play (the photos arrive a moment after the page), and
 beside the cast (under it in a narrow window) who directed and wrote it,
 the studio, when it came out (or was first shown) and the file (such as
-"1080p H.264 . AAC 5.1 . MKV . 4.2 GB"). Under those: More like this
-(a film's: click one for its details) and Trailers and extras (click one
-to play it).
+"1080p H.264 . AAC 5.1 . MKV . 4.2 GB"). Under those: the collection
+it's in, with the other films in it (on a Plex server; click one for its
+details), More like this (a film's: click one for its details) and
+Trailers and extras (click one to play it).
 
   Return         play
   Left, Right    the video before or after it in the list
