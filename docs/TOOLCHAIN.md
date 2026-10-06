@@ -79,6 +79,14 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
+- `riscos-ffmpeg/releases/download/v5.1.10-riscos19/riscos-ffmpeg-devkit-5.1.10-riscos19.tgz`
+  (sha256 `f416ba9f6c5be9c79f619f81692b15a82b6fd7f9e86bd25613fec30bd53a6c65`), used from
+  test33: the riscos19 release (commit `b3a6e24`, tags `v5.1.10-riscos19` and `reel-0.1.26`):
+  Reel 0.1.26's reelcore, opt1-opt12 (the HEVC block kept up with at 4K, its pictures
+  converted while it works on the next, the layers' rectangle in cached memory) and its
+  review's fixes (the hardware fallback resets skipping, idle only while the next picture is
+  due). The API only grew (more stats), so Matinee only needed relinking. Tests use its
+  sources at that tag (`REEL_SRC`).
 - `riscos-ffmpeg-devkit-5.1.10-riscos18-opt9.tgz` (sha256
   `1726975b6827898acdc78a978af18841d56db419c0fed0764b1d72743f87bebd`), used from test30:
   riscos-ffmpeg `ae81fed` (its opt9 test build, dist/r96, on the v5.1.10-riscos18 release
