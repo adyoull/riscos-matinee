@@ -5,20 +5,22 @@
 # 2GB: its libavformat built against 5.0.2's headers calls
 # __unixlib_fstat64 (the 64-bit st_size), not the old fstat64.
 #
-# UnixLib 5.0.3.1's (and 5.0.3.2's: its changes are LLONG_MIN,
+# UnixLib 5.0.3.1's (and 5.0.3.2's and 5.0.3.3's: 5.0.3.2's changes are LLONG_MIN,
 # getservbyname_r and eventfd, none of which Matinee links) start-up code claims a 640-byte pthread block in the
 # RMA (the ticker code and its counters; 5.0.1 to 5.0.3.1-rc8 claimed 472,
 # the Warzone toolchain's earlier UnixLib 248, GCCSDK's own 120). A program linked with the wrong
 # library would still run, but without the fixes the apps' !Run files load
 # PThreadTicker for. Same test as riscos-unixlib's tools/check-lib.sh:
 # the "mov r3, #<size>" before OS_Module 6 in no_dynamic_area.
-# And (REQUIRE, default __exit_status) a symbol the UnixLib wanted has:
-# __exit_status came with 5.0.3.1-rc7 (_exit(n) exits with n; rc8's
-# library is the same). Run by build/build.sh.
+# And (REQUIRE) symbols the UnixLib wanted has: __exit_status came with
+# 5.0.3.1-rc7 (_exit(n) exits with n); __pthread_held_wait with 5.0.3.3
+# (waiting for another thread inside write(), read() and stdio: Matinee's
+# stdio pulls it in), which also tells 5.0.3.3 from 5.0.3.2 (the same
+# pthread block). Run by build/build.sh.
 CROSS=${CROSS:-/root/gccsdk/env/bin/arm-riscos-gnueabihf-}
 EXPECTED=${EXPECTED:-640}
-REQUIRE=${REQUIRE:-__exit_status}
-WANT=${WANT:-UnixLib 5.0.3.2}
+REQUIRE=${REQUIRE:-__exit_status __pthread_held_wait}
+WANT=${WANT:-UnixLib 5.0.3.3}
 bad=0
 for f in "$@"; do
   if ! ${CROSS}nm "$f" 2>/dev/null | grep -q ' __pthread_call_every_code$'; then
@@ -30,8 +32,12 @@ for f in "$@"; do
   if echo "$syms" | grep -q ' ff_file_protocol$' && ! echo "$syms" | grep -q ' __unixlib_fstat64$'; then
     echo "$f: FFmpeg's file protocol without UnixLib 5.0.2's large files: rebuild libavformat against 5.0.2" >&2; bad=1; continue
   fi
-  if [ -n "$REQUIRE" ] && ! echo "$syms" | grep -q " $REQUIRE\$"; then
-    echo "$f: no $REQUIRE: relink with $WANT" >&2; bad=1; continue
+  missing=
+  for r in $REQUIRE; do
+    echo "$syms" | grep -q " $r\$" || missing="$missing $r"
+  done
+  if [ -n "$missing" ]; then
+    echo "$f: no$missing: relink with $WANT" >&2; bad=1; continue
   fi
   if [ "$size" = "$EXPECTED" ]; then
     echo "  $(basename "$f"): $WANT (the $EXPECTED-byte pthread block$(echo "$syms" | grep -q ' __unixlib_fstat64$' && echo ', files over 2GB'))"
