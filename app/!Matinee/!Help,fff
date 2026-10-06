@@ -1,4 +1,4 @@
-!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test31
+!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test32
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -99,6 +99,10 @@ Title, Date added, Year or Rating, newest or best first) and Unwatched
 letter to go to the first title starting with it (grey letters have
 none). Back and Refresh keep what you chose; the library's tab sets it
 back to all, by title.
+
+A big library comes 2000 at a time: the first 2000 straight away, then the
+rest while you look (the status line says "2000 of 5400: the rest
+coming."). A to Z's letters light up as their titles arrive.
 
 Poster size on the icon's menu: Small, Medium (the default) or Large,
 remembered.

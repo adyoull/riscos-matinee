@@ -31,6 +31,7 @@
 #include "sources.h"            /* Reel's (riscos-ffmpeg player/sources.c) */
 #include "panel_font.h"         /* Reel's bitmap font (riscos-ffmpeg reelcore/), for the pictures */
 #include "player.h"
+#include "plex.h"
 #include "reelcore.h"
 #include "fake_reelcore.h"
 #include "imgcache.h"
@@ -1936,9 +1937,44 @@ static int script(int *b, int mask)
         case 6511: {
             int v = -1, so = -1, un = -1;
             CHECK(ui_test_lib(&v, &so, &un) && v == 0 && so == 0 && !un && ui_test_items() == 6, "Films again, by title");
+            plex_set_page_size(4);              /* a library bigger than one fetch */
+            pc = 6520;
+            return ev_button(b, w_browser, B_REFRESH, 0x400);
+        }
+        case 6520:
+            CHECK(ui_test_items() == 4 && strstr(ui_test_status(), "4 of 6: the rest coming") && find_tile("Dvd Rip") < 0,
+                  "a library of more than a page: the first shown at once (%d: %s)", ui_test_items(), ui_test_status());
+            n_null = 0;
+            pc = 6521;
+            return NULL_EVENT;
+        case 6521:                          /* the posters in view, then the next page */
+            if (ui_test_items() < 6 && n_null++ < 40) {
+                CHECK(!(mask & 1), "null events while there's more to come");
+                return NULL_EVENT;
+            }
+            CHECK(ui_test_items() == 6 && find_tile("Dvd Rip") == 5 && !strcmp(ui_test_item(0, 0), "Big Buck Bunny") &&
+                  strstr(ui_test_status(), "6 items.") && log_count("/library/sections/1/all", "X-Plex-Container-Start", "4") >= 1,
+                  "and the rest after it, a page at a time (%d: %s)", ui_test_items(), ui_test_status());
+            pc = 6522;
+            return ev_button(b, w_browser, LB_AZ + 'D' - 'A' + 1, 0x400);   /* D: in the second page */
+        case 6522:
+            CHECK(ui_test_sel() == 5, "A to Z knows the second page's titles (%d)", ui_test_sel());
+            pc = 6524;
+            return ev_button(b, w_browser, B_REFRESH, 0x400);   /* Refresh: the films, Dvd Rip selected */
+        case 6524:
+            CHECK(ui_test_items() == 4 && ui_test_sel() == 0, "Refresh: the first page again (%d, %d)", ui_test_items(),
+                  ui_test_sel());
+            n_null = 0;
+            pc = 6525;
+            return NULL_EVENT;
+        case 6525:
+            if (ui_test_items() < 6 && n_null++ < 40)
+                return NULL_EVENT;
+            CHECK(ui_test_items() == 6 && ui_test_sel() == 5, "and Dvd Rip selected again once its page came (%d)",
+                  ui_test_sel());
+            plex_set_page_size(0);
             pc = 650;
             continue;
-        }
         case 650:                                           /* the posters first */
             if (!(mask & 1))
                 return NULL_EVENT;

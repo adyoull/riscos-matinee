@@ -744,7 +744,13 @@ int plex_list_parse(const char *json, const char *path, plex_list *out)
     return 0;
 }
 
-static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out);
+static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_list *out);
+static int page_size = PAGE_SIZE;
+
+void plex_set_page_size(int n)
+{
+    page_size = n > 0 ? n : PAGE_SIZE;
+}
 
 int plex_list_get(plex_ctx *c, const char *path, plex_list *out)
 {
@@ -779,20 +785,42 @@ int plex_list_get(plex_ctx *c, const char *path, plex_list *out)
         snprintf(out->title, sizeof(out->title), "%s", c->server_name);
         return 0;
     }
-    return list_fetch(c, path, PAGE_SIZE, out);
+    return list_fetch(c, path, 0, page_size, out);
 }
 
-/* One list from the server: at most size items */
-static int list_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
+int plex_list_more(plex_ctx *c, const char *path, plex_list *l)
+{
+    plex_list m;
+    int total;
+    if (l->n >= l->total || !*path || !strncmp(path, "search:", 7))
+        return 0;
+    if (list_fetch(c, path, l->n, page_size, &m) != 0)
+        return -1;
+    total = m.total;
+    if (!m.n) {                     /* fewer than it said (some went since): that's all */
+        plex_list_free(&m);
+        l->total = l->n;
+        return 0;
+    }
+    if (plex_list_append(l, &m) != 0) {
+        set_err(c, "there wasn't the memory for more of the list%s", "");
+        return -1;
+    }
+    l->total = total > l->n ? total : l->n;
+    return 1;
+}
+
+/* One list from the server: at most size items, from start */
+static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_list *out)
 {
     char url[1024];
     char headers[1024];
     net_buf b;
     memset(out, 0, sizeof(*out));
     if (c->kind == SRV_JELLYFIN)    /* the same paths, from Jellyfin's API */
-        return jf_fetch(c, path, size, out);
-    snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=0&X-Plex-Container-Size=%d",
-             c->base, path, strchr(path, '?') ? "&" : "?", size);
+        return jf_fetch(c, path, start, size, out);
+    snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=%d&X-Plex-Container-Size=%d",
+             c->base, path, strchr(path, '?') ? "&" : "?", start, size);
     api_headers(c, c->token, headers, sizeof(headers));
     if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
@@ -862,7 +890,7 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, 
     if (plex_list_get(c, "/library/sections", &secs) != 0)
         return -1;
     /* Continue watching */
-    if (list_fetch(c, "/library/onDeck", HOME_ROW, &l) == 0) {
+    if (list_fetch(c, "/library/onDeck", 0, HOME_ROW, &l) == 0) {
         int start = out->n, n = l.n;
         if (plex_list_append(out, &l) == 0 && n && nr < max) {     /* a row only for what was added */
             rows[nr].kind = PR_CONTINUE;
@@ -882,7 +910,7 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, 
         if (s2->kind != PI_FOLDER || !k || sscanf(k, "/library/sections/%d", &id) != 1)
             continue;
         snprintf(path, sizeof(path), "/library/sections/%d/recentlyAdded", id);
-        if (list_fetch(c, path, HOME_ROW, &l) != 0)
+        if (list_fetch(c, path, 0, HOME_ROW, &l) != 0)
             continue;
         {
             int start = out->n, n = l.n;

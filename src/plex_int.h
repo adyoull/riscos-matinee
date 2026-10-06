@@ -10,7 +10,7 @@
 
 #define API_TIMEOUT   15000     /* ms */
 #define PROBE_TIMEOUT 3000      /* ms, trying one of a server's addresses */
-#define PAGE_SIZE     2000      /* items fetched for one list */
+#define PAGE_SIZE     2000      /* items fetched for one list (one page: plex_list_more for the rest) */
 
 void px_err(plex_ctx *c, const char *fmt, const char *arg);
 /* GET (post NULL) or POST, the answer parsed; NULL on error (c->err) */

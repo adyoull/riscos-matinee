@@ -187,6 +187,13 @@ int plex_use_address(plex_ctx *c, const char *base, const char *token);
    or a key from an item. 0 = ok. */
 int plex_list_get(plex_ctx *c, const char *path, plex_list *out);
 void plex_list_free(plex_list *l);
+/* A list's next page (a library holds more than one fetch: total > n),
+   added to the end of l, path being what plex_list_get was given. 1 = some
+   added, 0 = none left (total is then n), -1 = an error (c->err; l as it
+   was). */
+int plex_list_more(plex_ctx *c, const char *path, plex_list *l);
+/* The items one fetch asks for (PAGE_SIZE; the tests make it small) */
+void plex_set_page_size(int n);
 /* One item's strings and tracks let go (the item itself is the caller's) */
 void plex_item_free(plex_item *it);
 /* Moves src's items to the end of dst (src left empty). 0 = ok. */

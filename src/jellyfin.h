@@ -55,7 +55,8 @@ int jf_login(plex_ctx *c, const char *user, const char *password);
 int jf_logout(plex_ctx *c);
 
 /* plex.c's calls, for a Jellyfin server */
-int jf_fetch(plex_ctx *c, const char *path, int size, plex_list *out);
+/* start: the first item wanted (a library's later pages); size: how many */
+int jf_fetch(plex_ctx *c, const char *path, int start, int size, plex_list *out);
 int jf_search(plex_ctx *c, const char *query, plex_list *out);
 int jf_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id);
 int jf_set_audio(plex_ctx *c, const plex_item *it, long stream_id);

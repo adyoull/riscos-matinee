@@ -167,6 +167,19 @@ static void jellyfin_tests(void)
           !strcmp(qv(q, "Recursive"), "true") && !strcmp(qv(q, "SortBy"), "SortName") &&
           strstr(hdr(q, "Authorization"), "Token=\"JF-TOKEN\""), "asked as Jellyfin: films, by name, with the token");
     cJSON_Delete(log);
+    /* a library bigger than one fetch: the rest a page at a time */
+    plex_set_page_size(2);
+    CHECK(plex_list_get(&c, "/library/sections/1/all", &l) == 0 && l.n == 2 && l.total == 3 &&
+          plex_list_more(&c, "/library/sections/1/all", &l) == 1 && l.n == 3 && l.total == 3 &&
+          !strcmp(l.v[0].title, "Jelly Bunny") && !strcmp(l.v[2].rating_key, "jm3") &&
+          plex_list_more(&c, "/library/sections/1/all", &l) == 0 && l.n == 3,
+          "Jellyfin: a library in pages (%d of %d)", l.n, l.total);
+    plex_list_free(&l);
+    log = server_log();
+    q = last(log, "/Users/u1/Items");
+    CHECK(q && !strcmp(qv(q, "StartIndex"), "2") && !strcmp(qv(q, "Limit"), "2"), "the next page: StartIndex 2");
+    cJSON_Delete(log);
+    plex_set_page_size(0);
     CHECK(plex_list_get(&c, "/library/sections/1/all?sort=year:desc&unwatched=1", &l) == 0 && l.n == 2 &&
           !strcmp(l.v[0].title, "Jelly Hevc"), "sorted by year, unwatched only (%d)", l.n);
     plex_list_free(&l);
@@ -490,6 +503,30 @@ int main(int argc, char **argv)
         CHECK(r && !strcmp(qv(r, "X-Plex-Container-Size"), "2000"), "paged request");
     }
     cJSON_Delete(log);
+    {
+        plex_list pg;
+        plex_set_page_size(4);              /* a library bigger than one fetch */
+        CHECK(plex_list_get(&c, "/library/sections/1/all", &pg) == 0 && pg.n == 4 && pg.total == 6,
+              "Plex: the first page (%d of %d)", pg.n, pg.total);
+        CHECK(plex_list_more(&c, "/library/sections/1/all", &pg) == 1 && pg.n == 6 && pg.total == 6 &&
+              !strcmp(pg.v[4].title, films.v[4].title) && !strcmp(pg.v[5].rating_key, films.v[5].rating_key) &&
+              !strcmp(pg.v[0].title, films.v[0].title), "and the rest after it, in order (%d)", pg.n);
+        log = server_log();
+        {
+            const cJSON *r = last(log, "/library/sections/1/all");
+            CHECK(r && !strcmp(qv(r, "X-Plex-Container-Start"), "4") && !strcmp(qv(r, "X-Plex-Container-Size"), "4"),
+                  "asked from item 4");
+        }
+        cJSON_Delete(log);
+        CHECK(plex_list_more(&c, "/library/sections/1/all", &pg) == 0 && pg.n == 6, "then nothing more to ask for");
+        pg.total = 9;                       /* the server said more than it has (some went since) */
+        CHECK(plex_list_more(&c, "/library/sections/1/all", &pg) == 0 && pg.n == 6 && pg.total == 6,
+              "an empty page: that's all (%d of %d)", pg.n, pg.total);
+        pg.total = 9;
+        CHECK(plex_list_more(&c, "search:bunny", &pg) == 0 && pg.n == 6 && pg.total == 9, "a search isn't paged");
+        plex_list_free(&pg);
+        plex_set_page_size(0);
+    }
     caps_for(Q_1080, &k1080);
     caps_for(Q_720, &k720);
     {

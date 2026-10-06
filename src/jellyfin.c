@@ -823,10 +823,10 @@ static void segments(plex_ctx *c, plex_item *it)
     cJSON_Delete(j);
 }
 
-int jf_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
+int jf_fetch(plex_ctx *c, const char *path, int start, int size, plex_list *out)
 {
     char p[256], u[1400], what[64], id[64], rest[64];
-    const char *q = strchr(path, '?'), *fields = size <= HOME_ROW ? ROW_FIELDS : LIST_FIELDS;
+    const char *q = strchr(path, '?'), *fields = size == HOME_ROW && !start ? ROW_FIELDS : LIST_FIELDS;   /* a home row's, or a list's */
     int n, e;
     memset(out, 0, sizeof(*out));
     if (!signed_in(c))
@@ -841,7 +841,7 @@ int jf_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
     }
     if (!strcmp(p, "/playlists")) {
         snprintf(u, sizeof(u), "/Users/%s/Items?IncludeItemTypes=Playlist&Recursive=true&SortBy=SortName"
-                 "&Fields=%s%s&StartIndex=0&Limit=%d", c->user_id, fields, IMAGES, size);
+                 "&Fields=%s%s&StartIndex=%d&Limit=%d", c->user_id, fields, IMAGES, start, size);
         e = get_items(c, u, 0, out);
         plex_list_keep(out, "playlist");
         for (int i = 0; i < out->n; i++)    /* the videos' only */
@@ -867,14 +867,14 @@ int jf_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
             e = get_items(c, u, 1, out);
         } else if (!strcmp(what, "collections")) {
             snprintf(u, sizeof(u), "/Users/%s/Items?IncludeItemTypes=BoxSet&Recursive=true&SortBy=SortName"
-                     "&Fields=%s%s&StartIndex=0&Limit=%d", c->user_id, fields, IMAGES, size);
+                     "&Fields=%s%s&StartIndex=%d&Limit=%d", c->user_id, fields, IMAGES, start, size);
             e = get_items(c, u, 0, out);
         } else if (!strcmp(what, "all")) {
             const char *types = !strcmp(ct, "movies") ? "&IncludeItemTypes=Movie&Recursive=true" :
                                 !strcmp(ct, "tvshows") ? "&IncludeItemTypes=Series&Recursive=true" : "";
-            snprintf(u, sizeof(u), "/Users/%s/Items?ParentId=%s%s%s%s&Fields=%s%s&StartIndex=0&Limit=%d",
+            snprintf(u, sizeof(u), "/Users/%s/Items?ParentId=%s%s%s%s&Fields=%s%s&StartIndex=%d&Limit=%d",
                      c->user_id, secs[s].id, types, *types ? sort_by(q) : "&SortBy=IsFolder,SortName",
-                     q && strstr(q, "unwatched=1") ? "&Filters=IsUnplayed" : "", fields, IMAGES, size);
+                     q && strstr(q, "unwatched=1") ? "&Filters=IsUnplayed" : "", fields, IMAGES, start, size);
             e = get_items(c, u, 0, out);
         } else {
             px_err(c, "the server has no %s", path);
@@ -901,11 +901,11 @@ int jf_fetch(plex_ctx *c, const char *path, int size, plex_list *out)
                 snprintf(u, sizeof(u), "/Shows/%s/Episodes?UserId=%s&SeasonId=%s&IsMissing=false&Fields=%s%s",
                          *sid ? sid : id, c->user_id, id, fields, IMAGES);
             } else if (par) {       /* a collection's, a playlist's or a folder's items */
-                snprintf(u, sizeof(u), "/Users/%s/Items?ParentId=%s%s&Fields=%s%s&StartIndex=0&Limit=%d",
+                snprintf(u, sizeof(u), "/Users/%s/Items?ParentId=%s%s&Fields=%s%s&StartIndex=%d&Limit=%d",
                          c->user_id, id,
                          !strncmp(par + 7, "box", 3) ? "&SortBy=ProductionYear,SortName" :
                          !strncmp(par + 7, "folder", 6) ? "&SortBy=IsFolder,SortName" : "",
-                         fields, IMAGES, size);
+                         fields, IMAGES, start, size);
             } else {                /* a show's series */
                 snprintf(u, sizeof(u), "/Shows/%s/Seasons?UserId=%s&Fields=%s%s", id, c->user_id, fields, IMAGES);
             }

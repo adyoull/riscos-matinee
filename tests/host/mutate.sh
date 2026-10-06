@@ -309,6 +309,22 @@ mutate "a details row left out of a redraw below its heading" src/ui.c \
 mutate "the grid's posters looked for under the pointer on the details" src/ui.c \
   '            set_hover(p[3] == S.browser_w && S.page == PG_GRID ? tile_at(p[0], p[1]) : -1);' '            set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);'
 
+# test32: a whole library, a page at a time
+mutate "a library's later pages never fetched" src/ui.c \
+  '    if (S.more_wanted && list_more_step())\n        return;\n' ''
+mutate "Plex's later pages asked from the start" src/plex.c \
+  'c->base, path, strchr(path, '"'"'?'"'"') ? "&" : "?", start, size);' 'c->base, path, strchr(path, '"'"'?'"'"') ? "&" : "?", 0, size);'
+mutate "Jellyfin's later pages asked from the start" src/jellyfin.c \
+  '"&Filters=IsUnplayed" : "", fields, IMAGES, start, size);' '"&Filters=IsUnplayed" : "", fields, IMAGES, 0, size);'
+mutate "Refresh's selection in a later page forgotten" src/ui.c \
+  '    S.sel_want = sel >= l.n && sel < l.total ? sel : -1;' '    S.sel_want = -1;'
+mutate "A to Z not made again with a new page" src/ui.c \
+  '        lib_layout();\n        force_redraw(S.browser_w, 0, -HEADER_H - libbar_h(), S.scr_w, -HEADER_H);' '        force_redraw(S.browser_w, 0, -HEADER_H - libbar_h(), S.scr_w, -HEADER_H);'
+mutate "an empty page leaves more to ask for" src/plex.c \
+  '        l->total = l->n;\n        return 0;' '        return 0;'
+mutate "a later page's items not shown as fetched" src/ui.c \
+  '    S.more_wanted = l.total > l.n && *path && strncmp(path, "search:", 7) && !S.home.on && !S.show.on;' '    S.more_wanted = 0;'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

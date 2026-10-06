@@ -246,6 +246,8 @@ static struct {
     char query[100];                /* the search field (Latin-1), while a search is shown */
     int search_due;                 /* when to search for what's been typed (0: nothing to do) */
     int posters_wanted;             /* a scan for missing posters is due */
+    int more_wanted;                /* the list (a library) has more on the server: fetched a page at a time */
+    int sel_want;                   /* the selection to come back to, in a page not fetched yet (-1 none) */
     int hover, in_browser;          /* the poster under the pointer (-1: none) */
     poster_t *cache;
     size_t cache_bytes;
@@ -2695,6 +2697,7 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     if (!strncmp(path, "search:", 7))       /* the field shows what was searched for */
         latin1(path + 7, S.query, sizeof(S.query));
     S.sel = sel >= 0 && sel < l.n ? sel : l.n ? 0 : -1;
+    S.sel_want = sel >= l.n && sel < l.total ? sel : -1;
     /* a library's list: its bar */
     lib_parse(path);
     /* the top: the home page */
@@ -2732,6 +2735,8 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     make_disp();
     if (S.lib.on)
         lib_layout();
+    /* a library of more than one fetch: the rest, a page at a time, between other things */
+    S.more_wanted = l.total > l.n && *path && strncmp(path, "search:", 7) && !S.home.on && !S.show.on;
     set_where();
     if (!S.browser_open)
         browser_open();
@@ -2749,7 +2754,7 @@ static int show_list(const char *path, const char *back_title, int push, int sel
     else if (!l.n)
         set_status("Nothing here.");
     else if (l.total > l.n)
-        set_status("The first %d of %d.", l.n, l.total);
+        set_status(S.more_wanted ? "%d of %d: the rest coming." : "The first %d of %d.", l.n, l.total);
     else
         set_status("%d item%s.", l.n, l.n == 1 ? "" : "s");
     return 0;
@@ -2890,6 +2895,8 @@ static void list_forget(void)
     S.disp = NULL;
     S.home.on = S.show.on = S.lib.on = 0;
     S.home.nrows = S.home.npick = 0;
+    S.more_wanted = 0;
+    S.sel_want = -1;
 }
 
 static void browser_top(void)
@@ -2969,6 +2976,7 @@ static void det_show(int i);
 static void select_tile(int i)
 {
     int old = S.sel;
+    S.sel_want = -1;                /* chosen now: not the one Back came to */
     if (i == old)
         return;
     S.sel = i;
@@ -6922,6 +6930,73 @@ static int message(int event, int *b)
     return 0;
 }
 
+/* A library's next page, while the grid shows it (the server sends a
+   library PAGE_SIZE at a time): added to the list, its tiles drawn, A to Z
+   made again. 1 if one was fetched (or tried). */
+static int list_more_step(void)
+{
+    int old = S.list.n, e, x0, y0, x1, y1;
+    disp_t *d;
+    if (!S.have_list || S.home.on || S.show.on) {
+        S.more_wanted = 0;
+        return 0;
+    }
+    if (S.page != PG_GRID || !S.browser_open)
+        return 0;                   /* on with it when the grid's back */
+    hourglass(1);
+    e = plex_list_more(&S.px, S.path, &S.list);
+    hourglass(0);
+    if (e < 0) {
+        S.more_wanted = 0;
+        set_status("%d of %d: the rest couldn't be fetched (%s). Refresh to try again.", S.list.n, S.list.total,
+                   S.px.err);
+        return 1;
+    }
+    if (e == 0) {
+        S.more_wanted = 0;
+        set_status("%d item%s.", S.list.n, S.list.n == 1 ? "" : "s");
+        return 0;
+    }
+    d = realloc(S.disp, (size_t)S.list.n * sizeof(disp_t));
+    if (!d) {                       /* no room for their lines: the new page let go */
+        for (int i = old; i < S.list.n; i++)
+            plex_item_free(&S.list.v[i]);
+        S.list.n = S.list.total = old;
+        S.more_wanted = 0;
+        set_status("The first %d: there isn't the memory for more.", old);
+        return 1;
+    }
+    S.disp = d;
+    memset(d + old, 0, (size_t)(S.list.n - old) * sizeof(disp_t));
+    for (int i = old; i < S.list.n; i++) {      /* as make_disp's grid */
+        const plex_item *it = &S.list.v[i];
+        latin1(it->title, d[i].line[0], sizeof(d[i].line[0]));
+        latin1(it->subtitle ? it->subtitle : "", d[i].line[1], sizeof(d[i].line[1]));
+        d[i].poster = it->thumb ? cache_find(it->thumb) : NULL;
+    }
+    S.more_wanted = S.list.n < S.list.total;
+    if (S.lib.on) {                 /* A to Z: letters further on */
+        lib_layout();
+        force_redraw(S.browser_w, 0, -HEADER_H - libbar_h(), S.scr_w, -HEADER_H);
+    }
+    set_extent();
+    tile_box(old, &x0, &y0, &x1, &y1);
+    force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, y1 + GAP);
+    if (S.sel_want >= 0 && S.sel_want < S.list.n) {     /* where Back came to */
+        int was = S.sel;
+        S.sel = S.sel_want;
+        S.sel_want = -1;
+        redraw_tile(was);
+        redraw_tile(S.sel);
+    }
+    if (S.more_wanted)
+        set_status("%d of %d: the rest coming.", S.list.n, S.list.total);
+    else
+        set_status("%d item%s.", S.list.n, S.list.n == 1 ? "" : "s");
+    S.posters_wanted = 1;
+    return 1;
+}
+
 /* What null events are for: saving, posters, and the sign-in checks */
 static void nulls(void)
 {
@@ -6969,6 +7044,8 @@ static void nulls(void)
         return;
     }
     if (S.posters_wanted && poster_step())
+        return;
+    if (S.more_wanted && list_more_step())
         return;
     if (S.in_browser && S.browser_open) {   /* the poster under the pointer */
         int p[5];
@@ -7080,7 +7157,8 @@ int matinee_main(int argc, char **argv)
         } else if (art_due && S.page == PG_DETAILS && S.browser_open) {
             reason = Wimp_PollIdle;         /* the backdrop at the new size, once resizing stops */
             r.r[2] = art_due;
-        } else if (S.posters_wanted || (S.cast_wanted && S.page == PG_DETAILS && S.browser_open)) {
+        } else if (S.posters_wanted || (S.cast_wanted && S.page == PG_DETAILS && S.browser_open) ||
+                   (S.more_wanted && S.page == PG_GRID && S.browser_open)) {
             /* null events at once */
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;

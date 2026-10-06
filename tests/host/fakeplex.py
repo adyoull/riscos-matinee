@@ -338,7 +338,8 @@ class H(BaseHTTPRequestHandler):
                     ids.sort(key=lambda i: -jf_item(i)["ProductionYear"])
                 if (q.get("Filters") or [""])[0] == "IsUnplayed":
                     ids = [i for i in ids if i not in JF_PLAYED]
-                return self.send(200, jf_items(ids))
+                start = int((q.get("StartIndex") or ["0"])[0])         # a page of it
+                return self.send(200, jf_items(ids[start:start + int((q.get("Limit") or ["100000"])[0])], len(ids)))
             if par == "lib-t":
                 return self.send(200, jf_items(["js1"]))
             if par in ("jb1", "jp1"):
@@ -525,7 +526,10 @@ class H(BaseHTTPRequestHandler):
                 films = [m for m in films if not m.get("viewCount")]
             if (q.get("collection") or [""])[0] == "77":     # the collection Open Movies
                 films = MOVIES[:2] + [MOVIES[3]]
-            return self.send(200, {"MediaContainer": {"size": len(films), "totalSize": len(films),
+            total = len(films)                              # a page of it, as Plex sends
+            start = int((q.get("X-Plex-Container-Start") or ["0"])[0])
+            films = films[start:start + int((q.get("X-Plex-Container-Size") or ["100000"])[0])]
+            return self.send(200, {"MediaContainer": {"size": len(films), "totalSize": total,
                                                       "librarySectionTitle": "Films", "title1": "Films",
                                                       "Metadata": films}})
         if p == "/library/sections/1/collections":
