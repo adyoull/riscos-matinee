@@ -2018,6 +2018,23 @@ int player_null(void)
                    ns.bytes_ahead / 1024, ns.bytes_read);
             else
                 lg("%s", d);
+            {   /* keeping up (reelcore 0.1.25's figures), and the HEVC block's own, since the last line */
+                static ReelCoreStats p;
+                ReelCoreStats st;
+                reelcore_stats(P.v, &st);
+                if (st.decoded < p.decoded || st.hb_cache_cleans < p.hb_cache_cleans ||
+                    st.hb_convert_waits < p.hb_convert_waits || st.hb_skipped < p.hb_skipped)
+                    memset(&p, 0, sizeof(p));       /* a new video, or a new decoder */
+                if (st.late_skips != p.late_skips || st.clock_slips != p.clock_slips)
+                    lg("  keeping up: %u late pictures not decoded, %u clock slips", st.late_skips - p.late_skips,
+                       st.clock_slips - p.clock_slips);
+                if (st.hb_stats)
+                    lg("  HEVC block: %u pictures left a moment (not done when due), %u conversions waited (%u cs), "
+                       "%u frames cleaned (%u cs), %u non-reference pictures skipped (behind)", st.hb_not_done - p.hb_not_done,
+                       st.hb_convert_waits - p.hb_convert_waits, st.hb_cs_convert_wait - p.hb_cs_convert_wait,
+                       st.hb_cache_cleans - p.hb_cache_cleans, st.hb_cs_cache - p.hb_cs_cache, st.hb_skipped - p.hb_skipped);
+                p = st;
+            }
         }
     }
     if (P.stats && t - G.prev_cs >= 100)

@@ -79,6 +79,21 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
+- `riscos-ffmpeg-devkit-5.1.10-riscos18-opt9.tgz` (sha256
+  `1726975b6827898acdc78a978af18841d56db419c0fed0764b1d72743f87bebd`), used from test30:
+  riscos-ffmpeg `ae81fed` (its opt9 test build, dist/r96, on the v5.1.10-riscos18 release
+  `9621eb6`: Reel 0.1.25's reelcore with opt1-opt9 — HEVC default weights, VP9/AV1
+  skipping, 10-bit narrowed in NEON, the HEVC block's pictures converted once and kept up
+  with by a clock slip and by skipping non-reference pictures, ReelHWAccel devkit 0.2.11;
+  riscos-mesa devkit 20.3.5-12 for its deps). Built here from source with its own scripts
+  (`build-deps.sh`, `RECONFIGURE=1 build-ffmpeg.sh`, `build-apps.sh`,
+  `REEL_VERSION=0.1.25-opt9 package.sh 5.1.10-riscos18-opt9`) on a fresh src/ and stage/;
+  its package step wants UnixLib 5.0.3.1's library installed, so 5.0.3.1 was put back for
+  it (the libraries were compiled with 5.0.3.2's headers, whose only change is
+  `LLONG_MIN`). Switch to riscos-ffmpeg's own devkit when it releases these.
+- `riscos-mesa/releases/download/v20.3.5-13/riscos-mesa-devkit-20.3.5-13.tgz` (sha256
+  `329dc543eaea3449d5e1ed1a7b9714b6d2af85612353b92f296562ad2210317e`), from test30: its libz.
+
 - `riscos-ffmpeg/releases/download/v5.1.10-riscos17/riscos-ffmpeg-devkit-5.1.10-riscos17.tgz`
   (sha256 `83089de546b576fac83137558d3be5d620ac43b7965933eea97db1901b11e792`), used from
   test28: the riscos17 release (commit `2acad6a`, Reel 0.1.24's reelcore): h264_vchiq,
