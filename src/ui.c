@@ -1248,7 +1248,7 @@ static void force_redraw(int w, int x0, int y0, int x1, int y1)
 static void redraw_tile(int i)
 {
     int x0, y0, x1, y1;
-    if (i < 0 || !S.browser_open)
+    if (i < 0 || !S.browser_open || S.page != PG_GRID)      /* the grid's: not over the details */
         return;
     tile_box(i, &x0, &y0, &x1, &y1);
     force_redraw(S.browser_w, x0 - 16, y0 - 16, x1 + 20, y1 + 16);
@@ -3564,7 +3564,8 @@ static void det_redraw(int ox, int oy, int vis_w, int cy0, int cy1)
         draw_text(D_BOLD, ox + det_cred_x + CRED_X, oy + det_cred_y - l * 40, S.det_cred[l][1], C_TEXT, C_BG);
     }
     for (int k = 0; k < REL_ROWS; k++) {
-        if (!S.nrel[k] || S.rel_y[k] - 60 > cy1 || S.relc[k][0].y0 - 100 > cy1 || S.relc[k][0].y1 + 80 < cy0)
+        /* the row: its heading above the pictures, two lines of title below */
+        if (!S.nrel[k] || S.relc[k][0].y0 - 100 > cy1 || S.rel_y[k] + 60 < cy0)
             continue;
         draw_text(D_HEAD, ox + 40, oy + S.rel_y[k], S.rel_head[k], C_TEXT, C_BG);
         for (int i = 0; i < S.nrel[k]; i++) {
@@ -6974,7 +6975,7 @@ static void nulls(void)
         _kernel_swi_regs r;
         r.r[1] = (intptr_t)p;
         if (!swi(Wimp_GetPointerInfo, &r))
-            set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);
+            set_hover(p[3] == S.browser_w && S.page == PG_GRID ? tile_at(p[0], p[1]) : -1);
     }
 }
 
@@ -7191,6 +7192,16 @@ const char *ui_test_rel(int k, int *n)
 {
     *n = k >= 0 && k < REL_ROWS ? S.nrel[k] : 0;
     return k >= 0 && k < REL_ROWS ? S.rel_head[k] : "";
+}
+/* A details row's picture i: the screen y of its foot (the return) and of its top */
+int ui_test_rel_foot(int k, int i, int *top)
+{
+    int st[9];
+    if (k < 0 || k >= REL_ROWS || i < 0 || i >= S.nrel[k])
+        return *top = 0;
+    window_state(S.browser_w, st);
+    *top = S.relc[k][i].y1 + st[4] - st[6];
+    return S.relc[k][i].y0 + st[4] - st[6];
 }
 int ui_test_signin_jf(void) { return S.page == PG_SIGNIN && S.si_mode == SI_JF; }
 int ui_test_signin_mode(void) { return S.page == PG_SIGNIN ? S.si_mode : -1; }

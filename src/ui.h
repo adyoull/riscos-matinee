@@ -63,6 +63,7 @@ int ui_test_windows(int *browser, int *save);   /* 1 if the browser window is op
 int ui_test_page(void);
 const char *ui_test_signin(int what);           /* 0 the code, 1 status, 2 address, 3 token; Jellyfin's:
                                                    4 its code, 5 address, 6 name, 7 the server's name */
+int ui_test_rel_foot(int k, int i, int *top);   /* a details row picture's foot and top, screen y */
 const char *ui_test_rel(int k, int *n);         /* a details page row's heading (0 similar, 1 extras,
                                                    2 the collection) and its videos shown */
 int ui_test_signin_jf(void);                    /* the sign-in page is Jellyfin's */

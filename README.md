@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test30).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test31).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -43,7 +43,8 @@ block's pictures converted once, straight into the overlay), UnixLib 5.0.3.2 and
 20.3.5-11's zlib; test29 shows the collection a film is in on its details page, and doesn't keep
 posters that arrived cut short (they showed as their top, then black); test30 is built on
 riscos-ffmpeg's opt9 test build (5.1.10-riscos18, Reel 0.1.25's reelcore with its optimisations)
-and riscos-mesa 20.3.5-13, and logs the HEVC block's and keeping-up figures.
+and riscos-mesa 20.3.5-13, and logs the HEVC block's and keeping-up figures; test31 draws the
+collection and More like this rows on a details page whole, with their titles (they came in strips).
 It's tested on Linux too: the core against a fake Plex and Jellyfin server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 

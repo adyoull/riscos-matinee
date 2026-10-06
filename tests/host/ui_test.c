@@ -126,6 +126,7 @@ static int clip[4] = { 0, 0, FB_W * 2, FB_H * 2 };      /* OS units, x1 y1 exclu
 static unsigned gcol, text_fg, font_fg;
 static int pts[2][2];                   /* the last two points plotted */
 static int redraw_ox, redraw_oy;        /* the window being redrawn: its work area origin */
+static int band_on, band_y[2];          /* the next redraw: only this band of the screen (y0, y1) */
 static int shapes, glyphs;
 static int *last_glyph;                 /* the last smooth shape plotted */
 
@@ -555,7 +556,12 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         memcpy(b + 1, x->vis, 16);
         b[5] = x->sx; b[6] = x->sy;
         memcpy(b + 7, x->vis, 16);
-        clip[0] = x->vis[0]; clip[1] = x->vis[1]; clip[2] = x->vis[2]; clip[3] = x->vis[3];
+        if (band_on) {                              /* a strip of it, as a window dragged over leaves */
+            b[8] = band_y[0];
+            b[10] = band_y[1];
+            band_on = 0;
+        }
+        clip[0] = b[7]; clip[1] = b[8]; clip[2] = b[9]; clip[3] = b[10];
         redraw_ox = x->vis[0] - x->sx;
         redraw_oy = x->vis[3] - x->sy;
         out->r[0] = 1;
@@ -1315,9 +1321,45 @@ static int script(int *b, int mask)
                 }
             }
             save_picture("cast.ppm", w_browser);
+            pc = 15036;
+            band_on = 1;                        /* a strip across the middle of the collection's pictures */
+            band_y[1] = ui_test_rel_foot(2, 1, &band_y[0]);
+            band_y[1] = (band_y[0] + band_y[1]) / 2 + 20;
+            band_y[0] = band_y[1] - 40;
+            return ev_redraw(b, w_browser);
+        }
+        case 15036:
+            CHECK(strstr(plotted_text, "Open Movies|Hevc Film|") != NULL, "a strip through a row's pictures: the row drawn: %s",
+                  plotted_text);
+            pc = 15037;
+            band_on = 1;                        /* a strip under them: their titles */
+            band_y[1] = ui_test_rel_foot(2, 1, &band_y[0]) - 30;
+            band_y[0] = band_y[1] - 60;
+            return ev_redraw(b, w_browser);
+        case 15037:
+            CHECK(strstr(plotted_text, "Remux|") != NULL, "a strip under a row's pictures: their titles: %s", plotted_text);
+            memset(b, 0, 64);
+            b[0] = w_browser;
+            pc = 15038;
+            return 5;                                           /* Pointer_Entering_Window */
+        case 15038: {                   /* the pointer over the page: the grid's posters aren't looked for there */
+            int x, y;
+            ui_test_button_xy(w_browser, D_PLAY, &x, &y);
+            pointer_x = x; pointer_y = y; pointer_w = w_browser; pointer_i = -1;
+            fake_cs = idle_time;
+            pc = 15039;
+            return NULL_EVENT;
+        }
+        case 15039:
+            CHECK(ui_test_hover() == -1, "the details: no grid poster under the pointer (%d)", ui_test_hover());
+            pointer_x = 640; pointer_y = 480; pointer_w = pointer_i = -1;
+            memset(b, 0, 64);
+            b[0] = w_browser;
+            pc = 15040;
+            return 4;                                           /* Pointer_Leaving_Window */
+        case 15040:
             pc = 15030;
             return ev_button(b, w_browser, 1000, 0x400);        /* More like this: Hevc Film */
-        }
         case 15030:
             CHECK(ui_test_page() == PG_DETAILS && !strcmp(ui_test_det(0), "Hevc Film") &&
                   log_count("/library/metadata/102", NULL, NULL) >= 1, "its details, in place: %s", ui_test_det(0));

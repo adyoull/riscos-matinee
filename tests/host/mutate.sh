@@ -303,6 +303,12 @@ mutate "the collection's row left out" src/plex.c \
 mutate "the film itself in its collection's row" src/ui.c \
   '                if (c->v[i].rating_key && !strcmp(c->v[i].rating_key, v->rating_key)) {' '                if (0) {'
 
+# test31: the details page's rows drawn in strips
+mutate "a details row left out of a redraw below its heading" src/ui.c \
+  '        if (!S.nrel[k] || S.relc[k][0].y0 - 100 > cy1 || S.rel_y[k] + 60 < cy0)' '        if (!S.nrel[k] || S.rel_y[k] - 60 > cy1 || S.relc[k][0].y0 - 100 > cy1 || S.rel_y[k] + 60 < cy0)'
+mutate "the grid's posters looked for under the pointer on the details" src/ui.c \
+  '            set_hover(p[3] == S.browser_w && S.page == PG_GRID ? tile_at(p[0], p[1]) : -1);' '            set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]
