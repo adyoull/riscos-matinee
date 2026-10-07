@@ -364,6 +364,14 @@ mutate "a DLNA server's home page without its libraries" src/plex.c \
 mutate "a DLNA poster that isn't a JPEG taken" src/dlna.c \
   '    if (b.len < 4 || (unsigned char)b.data[0] != 0xFF || (unsigned char)b.data[1] != 0xD8) {' '    if (b.len < 4) {'
 
+# test37: Forget a server
+mutate "a server forgotten without asking" src/ui.c \
+  '    if (!ask(q))\n        return;                     /* not confirmed: nothing forgotten */' '    ask(q);'
+mutate "a Jellyfin server forgotten but not signed out of" src/ui.c \
+  '        hourglass(1);\n        jf_logout(&c);\n        hourglass(0);\n        snprintf(name, sizeof(name), "%s", S.jf[k].name);' '        snprintf(name, sizeof(name), "%s", S.jf[k].name);'
+mutate "the server in use forgotten but still shown" src/ui.c \
+  '    if (in_use) {\n        sign_out();\n        return;\n    }' '    if (0) {\n        sign_out();\n        return;\n    }'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

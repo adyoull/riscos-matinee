@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test36).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test37).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -50,7 +50,8 @@ test33 is built on riscos-ffmpeg's 5.1.10-riscos19 release (Reel 0.1.26's reelco
 relinked with UnixLib 5.0.3.3; test35 is built on riscos-ffmpeg 5.1.10-riscos20 (Reel 0.1.27) and
 riscos-mesa 20.3.5-14, both releases with UnixLib 5.0.3.3; test36 adds DLNA servers (MiniDLNA, a
 NAS's, Plex's or Jellyfin's DLNA): found on the network, browsed, played as they are or as the
-server converts them, with where you got to kept by Matinee.
+server converts them, with where you got to kept by Matinee; test37 can forget any server kept
+(Servers, Forget a server), asking first.
 It's tested on Linux too: the core against a fake Plex, Jellyfin and DLNA server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 

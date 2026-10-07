@@ -1,4 +1,4 @@
-!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.0-test36
+!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.0-test37
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -408,6 +408,13 @@ big it was.
 Sign out (on the icon's menu) asks first. With a Plex server it forgets
 your Plex sign-in; with a Jellyfin server, that server only; with a DLNA
 server it's Forget this server.
+
+Forget a server (at the foot of Servers) lists every server Matinee
+keeps: your Plex sign-in (or a Plex server given by hand), each Jellyfin
+server and each DLNA server, whether or not it's the one in use. Choose
+one and Matinee asks first; only if you say OK is it forgotten (a
+Jellyfin server is signed out of too; where you got to on a DLNA server
+is kept). Forgetting the server in use closes the window, as Sign out.
 
 Who's watching (Plex Home)
 --------------------------

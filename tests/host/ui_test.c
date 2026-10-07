@@ -3084,7 +3084,13 @@ static int script(int *b, int mask)
         case 8001: {
             const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
             CHECK(sm && !menu_shaded(menu_open, MB_SERVERS) && !strcmp(menu_text(sm, 0), "Add a server...") &&
-                  (menu_flags(sm, 0) & 0x80), "Servers, not signed in to plex.tv: Add a server... only");
+                  !strcmp(menu_text(sm, 1), "Forget a server") && !menu_shaded(sm, 1) && (menu_flags(sm, 1) & 0x80),
+                  "Servers, not signed in to plex.tv: Add a server..., Forget a server");
+            {
+                const int *fm = sm && menu_sub(sm, 1) > 0 ? (const int *)(intptr_t)menu_sub(sm, 1) : NULL;
+                CHECK(fm && !strcmp(menu_text(fm, 0), "Plex (the server given by hand)") && (menu_flags(fm, 0) & 0x80),
+                      "Forget a server: the Plex server given by hand earlier (%s)", fm ? menu_text(fm, 0) : "-");
+            }
             CHECK(!strcmp(menu_text(menu_open, MB_SIGNIN), "Add a server..."), "and on the icon's menu");
             pc++;
             return ev_menu(b, MB_SERVERS, 0);
@@ -3556,6 +3562,65 @@ static int script(int *b, int mask)
                   "started again: the DLNA server from Choices, its description read again (%s; %s)", ui_test_path(),
                   ui_test_status());
             pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);             /* Menu on the icon */
+        }
+        case 9702: {                        /* Forget a server: every one kept, in a submenu of Servers */
+            const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
+            const int *fm = sm ? (const int *)(intptr_t)menu_sub(sm, 3) : NULL;
+            CHECK(sm && !strcmp(menu_text(sm, 0), "Cellar (Jellyfin)") && !strcmp(menu_text(sm, 1), "Attic NAS: minidlna (DLNA)") &&
+                  !strcmp(menu_text(sm, 2), "Add a server...") && !strcmp(menu_text(sm, 3), "Forget a server") &&
+                  !menu_shaded(sm, 3), "Servers: the two, Add a server, Forget a server");
+            CHECK(fm && !strcmp(menu_text(fm, 0), "Cellar (Jellyfin, andrew)") && !strcmp(menu_text(fm, 1), "Attic NAS: minidlna (DLNA)") &&
+                  (menu_flags(fm, 1) & 0x80), "Forget a server: both kept servers");
+            report_answer = 2;                                  /* asked: Cancel */
+            prev_reports = reports;
+            pc++;
+            return ev_menu3(b, MB_SERVERS, 3, 1);               /* the DLNA server, in use */
+        }
+        case 9703:
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "Forget Attic NAS: minidlna?"), "asked first: %s", last_report);
+            CHECK(ui_test_server_kind() == SRV_DLNA && ui_test_dl_servers() == 1 && win(w_browser)->open &&
+                  strstr(read_file(choices), "dlna Attic NAS"), "not confirmed: nothing forgotten");
+            report_answer = 1;
+            prev_reports = reports;
+            prev_count = log_count("/Sessions/Logout", NULL, NULL);
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 9704:
+            pc++;
+            return ev_menu3(b, MB_SERVERS, 3, 0);               /* the Jellyfin one, not in use: OK */
+        case 9705:
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "Forget Cellar?"), "asked: %s", last_report);
+            CHECK(ui_test_jf_servers() == 0 && !strstr(read_file(choices), "jellyfin ") &&
+                  log_count("/Sessions/Logout", NULL, NULL) == prev_count + 1, "Cellar forgotten, and signed out of (%d)",
+                  log_count("/Sessions/Logout", NULL, NULL) - prev_count);
+            CHECK(ui_test_server_kind() == SRV_DLNA && win(w_browser)->open && ui_test_page() == PG_GRID &&
+                  strstr(ui_test_status(), "Forgot Cellar."), "the one in use carries on (%s)", ui_test_status());
+            prev_reports = reports;
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 9706: {
+            const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
+            const int *fm = sm ? (const int *)(intptr_t)menu_sub(sm, 2) : NULL;
+            CHECK(fm && !strcmp(menu_text(fm, 0), "Attic NAS: minidlna (DLNA)") && (menu_flags(fm, 0) & 0x80),
+                  "Forget a server: the one left");
+            pc++;
+            return ev_menu3(b, MB_SERVERS, 2, 0);               /* the one in use: OK */
+        }
+        case 9707: {
+            char places[400];
+            snprintf(places, sizeof(places), "%s/choices/Places", outdir);
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "Forget Attic NAS: minidlna?"), "asked: %s", last_report);
+            CHECK(!win(w_browser)->open && ui_test_dl_servers() == 0 && !strstr(read_file(choices), "dlna ") &&
+                  strstr(read_file(places), "\tBig Bunny DLNA\t"), "forgotten, as Forget this server; its places kept");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 9708: {
+            const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
+            CHECK(sm && !strcmp(menu_text(sm, 0), "Add a server...") && menu_shaded(sm, 1) &&
+                  !strcmp(menu_text(sm, 1), "Forget a server"), "none kept: Forget a server shaded");
+            pc++;
             return ev_msg(b, 0, 0, 0);
         }
         default:
@@ -3641,7 +3706,15 @@ int main(int argc, char **argv)
     ntasks = 0;
     CHECK(matinee_main(1, argv) == 0, "fourth run ends cleanly");
 
-    /* fifth run: started again, the DLNA server in use from Choices */
+    /* fifth run: started again, the DLNA server in use from Choices (and a
+       Jellyfin server kept beside it, to forget) */
+    {
+        FILE *f = fopen(choices, "a");
+        if (f) {
+            fprintf(f, "jellyfin Cellar|JFID|%s|JF-TOKEN|u1|andrew\n", base);
+            fclose(f);
+        }
+    }
     nwins = 0; pc = 9700; menu_open = NULL; bar_icon_made = 0;
     ntasks = 0;
     CHECK(matinee_main(1, argv) == 0, "fifth run ends cleanly");

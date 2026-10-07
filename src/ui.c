@@ -201,6 +201,11 @@ typedef struct {
 /* A DLNA server used: its name, UDN and description's address (Choices) */
 #define DL_SAVED 6
 #define SRV_DL(k) (-200 - (k))      /* the Servers menu's DLNA server k */
+#define SRV_FORGET (-150)           /* the Servers menu's Forget a server (its submenu) */
+/* Forget a server's items: the Plex sign-in, Jellyfin server k, DLNA server k */
+#define FG_PLEX 0
+#define FG_JF(k) (100 + (k))
+#define FG_DL(k) (200 + (k))
 typedef struct {
     char name[64], udn[96], loc[256];
 } dl_saved;
@@ -247,7 +252,8 @@ static struct {
     int nfound, searched;
     char dl_addr[256];
     int srv_map[16];                /* the Servers menu: >= 0 Plex server n, -1 - k Jellyfin k, SRV_DL(k)
-                                       DLNA k, SRV_ADD */
+                                       DLNA k, SRV_ADD, SRV_FORGET */
+    int fg_map[16];                 /* Forget a server's submenu: FG_PLEX, FG_JF(k), FG_DL(k) */
 
     /* browser */
     plex_list list;
@@ -4648,6 +4654,66 @@ static void sign_out(void)
     choices_save();
 }
 
+/* Forget a server (from Forget a server: FG_*), asked first. The one in
+   use goes as Sign out does it; another is dropped from the list (a
+   Jellyfin one signed out of on the server, if it answers). */
+static void forget_server(int what)
+{
+    char q[300], name[80];
+    int k = what >= FG_DL(0) ? what - FG_DL(0) : what >= FG_JF(0) ? what - FG_JF(0) : 0;
+    int in_use;
+    if (what == FG_PLEX) {
+        in_use = S.px.kind == SRV_PLEX;
+        snprintf(q, sizeof(q), "Forget Plex? Matinee signs out of your Plex account and forgets its servers; "
+                 "you'll need a new code from plex.tv/link (or a server's token) to add it again.");
+    } else if (what >= FG_DL(0)) {
+        if (k >= S.ndl)
+            return;
+        in_use = S.px.kind == SRV_DLNA && !strcmp(S.dl[k].udn, S.px.server_id);
+        latin1(S.dl[k].name, name, sizeof(name));
+        snprintf(q, sizeof(q), "Forget %s? Matinee forgets this DLNA server; add it again with Add a server. "
+                 "(Where you got to in its videos is kept.)", name);
+    } else {
+        if (k >= S.njf)
+            return;
+        in_use = S.px.kind == SRV_JELLYFIN && !strcmp(S.jf[k].id, S.px.server_id) && !strcmp(S.jf[k].uid, S.px.user_id);
+        latin1(S.jf[k].name, name, sizeof(name));
+        snprintf(q, sizeof(q), "Forget %s? Matinee signs out of this Jellyfin server and forgets it; you'll need "
+                 "to sign in to it again (Add a server).", name);
+    }
+    if (!ask(q))
+        return;                     /* not confirmed: nothing forgotten */
+    if (in_use) {
+        sign_out();
+        return;
+    }
+    if (what == FG_PLEX) {          /* the server in use is another kind: it stays */
+        S.px.account_token[0] = 0;
+        S.nservers = 0;
+        S.nusers = -1;
+        S.user_uuid[0] = S.user_title[0] = 0;
+        set_status("Signed out of Plex.");
+    } else if (what >= FG_DL(0)) {
+        snprintf(name, sizeof(name), "%s", S.dl[k].name);
+        memmove(&S.dl[k], &S.dl[k + 1], (S.ndl - k - 1) * sizeof(dl_saved));
+        S.ndl--;
+        set_status("Forgot %s.", name);
+    } else {
+        plex_ctx c = S.px;          /* its token is no use after: signed out on the server too */
+        c.kind = SRV_JELLYFIN;
+        snprintf(c.base, sizeof(c.base), "%s", S.jf[k].base);
+        snprintf(c.token, sizeof(c.token), "%s", S.jf[k].token);
+        hourglass(1);
+        jf_logout(&c);
+        hourglass(0);
+        snprintf(name, sizeof(name), "%s", S.jf[k].name);
+        memmove(&S.jf[k], &S.jf[k + 1], (S.njf - k - 1) * sizeof(jf_saved));
+        S.njf--;
+        set_status("Forgot %s.", name);
+    }
+    choices_save();
+}
+
 /* Select on the icon bar icon */
 static void bar_select(void)
 {
@@ -5618,7 +5684,7 @@ typedef struct {
 } wmenu_t;
 typedef struct { wmenu_t m; char text[16][80]; int n; } menu_t;
 
-static menu_t m_bar, m_servers, m_player, m_quality, m_size, m_item, m_subs;
+static menu_t m_bar, m_servers, m_forget, m_player, m_quality, m_size, m_item, m_subs;
 static menu_t m_play, m_audio, m_vol, m_pic, m_psubs, m_chap, m_users, m_pin, m_rate;
 
 static void menu_begin(menu_t *m, const char *title)
@@ -5700,6 +5766,27 @@ static void bar_menu_build(void)
         m_servers.m.item[m_servers.n - 1].flags |= 2;
     S.srv_map[m_servers.n] = SRV_ADD;
     menu_add(&m_servers, "Add a server...", 0, 0, -1, 0);
+    /* Forget a server: each that Matinee keeps (asked first when chosen) */
+    menu_begin(&m_forget, "Forget");
+    if (signed_in || (S.px.kind == SRV_PLEX && *S.px.base)) {
+        S.fg_map[m_forget.n] = FG_PLEX;
+        menu_add(&m_forget, signed_in ? "Plex (your sign-in)" : "Plex (the server given by hand)", 0, 0, -1, 0);
+    }
+    for (int k = 0; k < S.njf && m_forget.n < 15; k++) {
+        char t[140];
+        snprintf(t, sizeof(t), "%s (Jellyfin, %s)", S.jf[k].name, S.jf[k].uname);
+        S.fg_map[m_forget.n] = FG_JF(k);
+        menu_add(&m_forget, t, 0, 0, -1, 0);
+    }
+    for (int k = 0; k < S.ndl && m_forget.n < 16; k++) {
+        char t[80];
+        snprintf(t, sizeof(t), "%s (DLNA)", S.dl[k].name);
+        S.fg_map[m_forget.n] = FG_DL(k);
+        menu_add(&m_forget, t, 0, 0, -1, 0);
+    }
+    menu_end(&m_forget);
+    S.srv_map[m_servers.n] = SRV_FORGET;
+    menu_add(&m_servers, "Forget a server", 0, !m_forget.n, m_forget.n ? (int)(intptr_t)&m_forget.m : -1, 0);
     menu_end(&m_servers);
     /* Plex Home: its people; one with a PIN has a writable PIN item to its right */
     menu_begin(&m_pin, "PIN");
@@ -6381,7 +6468,10 @@ static int menu_select(const int *sel)
                 int w = S.srv_map[sel[1]];
                 if (w == SRV_ADD)
                     signin_open();
-                else if (w <= -1 && w > -1 - S.njf)
+                else if (w == SRV_FORGET) {
+                    if (sel[2] >= 0 && sel[2] < m_forget.n)
+                        forget_server(S.fg_map[sel[2]]);
+                } else if (w <= -1 && w > -1 - S.njf)
                     use_jf(-1 - w);
                 else if (w <= SRV_DL(0) && w > SRV_DL(S.ndl))
                     use_dl(SRV_DL(0) - w);
