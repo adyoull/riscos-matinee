@@ -1,14 +1,14 @@
 # Matinee
 
-A Plex and Jellyfin client for RISC OS, built natively in C. It browses a Plex Media Server
-(or a Jellyfin server) and plays
+A Plex, Jellyfin and DLNA client for RISC OS, built natively in C. It browses a Plex Media Server
+(or a Jellyfin server, or a DLNA media server such as MiniDLNA) and plays
 the videos in its own window with a **built-in player** (riscos-ffmpeg's reelcore, the core
 of Reel), or hands them to **ReelEGL** or **Reel**. Files that can be played as they are
 are played directly. Everything else is converted by the server into a stream that can
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: phase 2, a test build (0.1.0-test35).** test1 to test3 worked on a Raspberry Pi;
+**Status: phase 2, a test build (0.1.0-test36).** test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -48,8 +48,10 @@ collection and More like this rows on a details page whole, with their titles (t
 test32 shows a whole library, however big (it stopped at 2000), the rest fetched a page at a time;
 test33 is built on riscos-ffmpeg's 5.1.10-riscos19 release (Reel 0.1.26's reelcore); test34 is
 relinked with UnixLib 5.0.3.3; test35 is built on riscos-ffmpeg 5.1.10-riscos20 (Reel 0.1.27) and
-riscos-mesa 20.3.5-14, both releases with UnixLib 5.0.3.3.
-It's tested on Linux too: the core against a fake Plex and Jellyfin server, and the Wimp front end
+riscos-mesa 20.3.5-14, both releases with UnixLib 5.0.3.3; test36 adds DLNA servers (MiniDLNA, a
+NAS's, Plex's or Jellyfin's DLNA): found on the network, browsed, played as they are or as the
+server converts them, with where you got to kept by Matinee.
+It's tested on Linux too: the core against a fake Plex, Jellyfin and DLNA server, and the Wimp front end
 against a scripted fake Wimp under qemu.
 
 - Sign-in with a plex.tv/link code, or a server's address and token typed by hand.

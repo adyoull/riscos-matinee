@@ -8,6 +8,8 @@
 #include "plex.h"
 #include "caps.h"
 #include "jellyfin.h"
+#include "dlna.h"
+#include "xml.h"
 #include "handoff.h"
 #include "cJSON.h"
 #include "sources.h"          /* Reel's (riscos-ffmpeg player/sources.c) */
@@ -18,6 +20,7 @@
 
 static int fails, checks;
 static char base[64];
+static int port;
 
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); \
     printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -382,6 +385,229 @@ static void jellyfin_tests(void)
     CHECK(jf_logout(&c) == 0, "signed out");
 }
 
+
+/* ---- the XML reader ---------------------------------------------------------------- */
+static void xml_tests(void)
+{
+    xml_node *x = xml_parse("<?xml version=\"1.0\"?><!-- a note --><d:root xmlns:d=\"x\"><a k='1' dlna:p=\"&lt;&amp;&#233;\">"
+                            " caf&#xE9; &amp; tea </a><b/><c><![CDATA[<i>raw</i>]]></c><a>two</a></d:root>");
+    const xml_node *a;
+    char e[64];
+    CHECK(x && !strcmp(x->name, "root"), "xml: the root, its prefix left off (%s)", x ? x->name : "-");
+    a = xml_child(x, "a");
+    CHECK(a && !strcmp(a->text, "caf\xc3\xa9 & tea") && !strcmp(xml_attr_get(a, "k"), "1") &&
+          !strcmp(xml_attr_get(a, "p"), "<&\xc3\xa9"), "xml: text and attributes, entities as UTF-8, trimmed (%s)",
+          a ? a->text : "-");
+    CHECK(xml_child(x, "b") && !*xml_text(x, "b") && !strcmp(xml_text(x, "c"), "<i>raw</i>") && !xml_child(x, "z"),
+          "xml: an empty element, CDATA as it is");
+    CHECK(a && a->next && a->next->next && !strcmp(a->next->next->next->text, "two"), "xml: siblings in order");
+    xml_free(x);
+    x = xml_parse("<r><a><b>1</c></b></a><d>2</d></r>");    /* a close tag that doesn't match */
+    CHECK(x && xml_find(x, "b") && !strcmp(xml_find(x, "b")->text, "1") && xml_child(x, "d"),
+          "xml: a stray close tag ignored");
+    xml_free(x);
+    CHECK(!xml_parse("no tags") && !xml_parse(""), "xml: no element, no tree");
+    xml_escape("a<b & \"c\"", e, sizeof(e));
+    CHECK(!strcmp(e, "a&lt;b &amp; &quot;c&quot;"), "xml: escaped (%s)", e);
+}
+
+/* ---- a DLNA server (the fake's: MiniDLNA-like, with a converted stream) ----------- */
+static void dlna_tests(void)
+{
+    plex_ctx d, d2;
+    dlna_server f[DLNA_FOUND];
+    plex_list l, films, deck, det;
+    play_t p;
+    caps_t k;
+    char err[256], places[300], want[300];
+    const cJSON *r;
+    cJSON *log;
+    const plex_item *bunny, *big, *old, *song;
+    int n;
+
+    server_reset();
+    dlna_set_ssdp("127.0.0.1", port);
+    n = dlna_discover(f, DLNA_FOUND, 800, err, sizeof(err));
+    snprintf(want, sizeof(want), "127.0.0.1:%d", port);
+    CHECK(n == 1 && !strcmp(f[0].name, "Attic NAS: minidlna") && !strcmp(f[0].udn, "uuid:4d696e69-444c-164e-9d41-b827eb000001") &&
+          strstr(f[0].location, "/dlna/rootDesc.xml") && !strcmp(f[0].host, want),
+          "SSDP: the media server found, the printer left out (%d: %s %s)", n, n > 0 ? f[0].name : "", err);
+    log = server_log();
+    r = last(log, "/ssdp");
+    CHECK(r && strstr(body(r), "M-SEARCH * HTTP/1.1\r\n") && strstr(body(r), "MAN: \"ssdp:discover\"\r\n") &&
+          strstr(body(r), "ST: urn:schemas-upnp-org:device:MediaServer:1\r\n") && strstr(body(r), "MX: ") &&
+          count(log, "/ssdp") == 2, "M-SEARCH for media servers, sent twice (%d)", count(log, "/ssdp"));
+    cJSON_Delete(log);
+
+    plex_ctx_init(&d, "client-123", "0.1.0");
+    CHECK(dlna_connect(&d, f[0].location) == 0 && d.kind == SRV_DLNA && !strcmp(d.server_name, "Attic NAS: minidlna") &&
+          !strcmp(d.server_id, f[0].udn) && !strcmp(d.base, f[0].location) &&
+          strstr(d.ctl, "/dlna/ctl/ContentDir") && !strncmp(d.ctl, "http://127.0.0.1:", 17) &&
+          !strcmp(d.svc, "urn:schemas-upnp-org:service:ContentDirectory:1"),
+          "the server used: its control address made absolute (%s, %s)", d.ctl, d.err);
+    plex_ctx_init(&d2, "client-123", "0.1.0");
+    CHECK(dlna_connect(&d2, "127.0.0.1") == 0 && !strcmp(d2.server_id, d.server_id) && !strcmp(d2.base, d.base),
+          "a server by its address alone: asked over SSDP where its description is (%s)", d2.err);
+    plex_ctx_init(&d2, "client-123", "0.1.0");
+    snprintf(want, sizeof(want), "%s/dlna/printer.xml", base);
+    CHECK(dlna_connect(&d2, want) == -2 && strstr(d2.err, "isn't a media server"), "a printer isn't one (%s)", d2.err);
+
+    snprintf(places, sizeof(places), "/tmp/matinee-tests-places-%d", port);
+    remove(places);
+    dlna_places_files(places, places);
+
+    CHECK(plex_list_get(&d, "/library/sections", &l) == 0 && l.n == 1 && !strcmp(l.v[0].title, "Video") &&
+          l.v[0].kind == PI_FOLDER && !strcmp(l.v[0].key, "/library/metadata/64/children") &&
+          !strcmp(l.title, "Attic NAS: minidlna"), "the libraries: the top level's folders, Music and Pictures left out (%d: %s)",
+          l.n, d.err);
+    plex_list_free(&l);
+    log = server_log();
+    r = last(log, "/dlna/ctl/ContentDir");
+    CHECK(r && !strcmp(method(r), "POST") && !strcmp(hdr(r, "SOAPACTION"), "\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"") &&
+          strstr(hdr(r, "Content-Type"), "text/xml") && strstr(body(r), "<ObjectID>0</ObjectID>") &&
+          strstr(body(r), "<BrowseFlag>BrowseDirectChildren</BrowseFlag>") && strstr(body(r), "<u:Browse xmlns:u="),
+          "a SOAP Browse (%s; %s)", hdr(r, "SOAPACTION"), hdr(r, "Content-Type"));
+    cJSON_Delete(log);
+    CHECK(plex_list_get(&d, "/library/metadata/64/children", &l) == 0 && l.n == 2 && !strcmp(l.title, "Video") &&
+          !strcmp(l.v[0].title, "Films") && !strcmp(l.v[0].subtitle, "4 items") &&
+          !strcmp(l.v[0].key, "/library/metadata/64%240/children") && !strcmp(l.v[1].title, "Box Sets & More"),
+          "a folder's folders: ids escaped in the keys, entities read (%d: %s)", l.n, l.n ? l.v[0].key : d.err);
+    plex_list_free(&l);
+    CHECK(plex_list_get(&d, "/library/metadata/64%240/children", &films) == 0 && films.n == 4 && films.total == 4 &&
+          !strcmp(films.title, "Films"), "the films (%d: %s)", films.n, d.err);
+    bunny = find(&films, "Big Bunny DLNA");
+    big = find(&films, "Big 4K Film");
+    old = find(&films, "Old Clip");
+    song = find(&films, "A Song");
+    snprintf(want, sizeof(want), "%s/dlna/media/0.mp4", base);
+    CHECK(bunny && bunny->kind == PI_VIDEO && !strcmp(bunny->rating_key, "64%240%240") && bunny->year == 2008 &&
+          !strcmp(bunny->subtitle, "2008") && bunny->width == 1920 && bunny->height == 1080 && bunny->bitrate_kbps == 5000 &&
+          !strcmp(bunny->container, "mp4") && !strcmp(bunny->vcodec, "h264") && !strcmp(bunny->acodec, "aac") &&
+          bunny->channels == 6 && bunny->duration_ms == 634000 && bunny->part_size == 3500000000LL &&
+          !strcmp(bunny->part_key, want) && !strcmp(bunny->part_file, "0.mp4") &&
+          !strcmp(bunny->summary, "A rabbit & a squirrel.") && !strcmp(bunny->genres, "Animation, Comedy") &&
+          bunny->ncast == 1 && !strcmp(bunny->cast[0].name, "Frank") && strstr(bunny->thumb, "/dlna/art/1.jpg"),
+          "a video: its file, size, type, profile (H.264, AAC), length and the rest");
+    snprintf(want, sizeof(want), "%s/dlna/media/2.avi", base);
+    CHECK(big && !big->vcodec && !strcmp(big->container, "mkv") && big->width == 3840 && big->bitrate_kbps == 20000 &&
+          old && !strcmp(old->part_key, want) && !strcmp(old->subtitle, "2 min") && !strcmp(old->container, "avi") &&
+          song && song->kind == PI_OTHER && !strcmp(song->subtitle, "Music"),
+          "no profile: no codec; a file's address made absolute; music shown, not played (%s)", old ? old->part_key : "-");
+    log = server_log();
+    r = last(log, "/dlna/ctl/ContentDir");
+    CHECK(r && strstr(body(r), "<ObjectID>64$0</ObjectID>") && strstr(body(r), "BrowseMetadata"),
+          "the folder's own name asked for (BrowseMetadata, its id unescaped)");
+    cJSON_Delete(log);
+
+    plex_set_page_size(3);              /* a page at a time */
+    CHECK(plex_list_get(&d, "/library/metadata/64%240/children", &l) == 0 && l.n == 3 && l.total == 4 &&
+          plex_list_more(&d, "/library/metadata/64%240/children", &l) == 1 && l.n == 4 && l.total == 4 &&
+          !strcmp(l.v[3].title, films.v[3].title) && plex_list_more(&d, "/library/metadata/64%240/children", &l) == 0,
+          "a folder in pages (%d of %d)", l.n, l.total);
+    plex_list_free(&l);
+    log = server_log();
+    r = last(log, "/dlna/ctl/ContentDir");
+    plex_set_page_size(0);
+    CHECK(r && strstr(body(r), "<StartingIndex>3</StartingIndex>") && strstr(body(r), "<RequestedCount>3</RequestedCount>"),
+          "the next page: StartingIndex 3");
+    cJSON_Delete(log);
+
+    CHECK(bunny && plex_details(&d, bunny, &det) == 0 && det.n == 1 && !strcmp(det.v[0].title, "Big Bunny DLNA") &&
+          det.v[0].kind == PI_VIDEO, "a video's details: BrowseMetadata (%s)", d.err);
+    plex_list_free(&det);
+    CHECK(plex_list_get(&d, "/library/metadata/64%240%240/similar", &l) == 0 && l.n == 0, "no similar ones: an empty list");
+    CHECK(plex_list_get(&d, "/library/metadata/nope/children", &l) != 0, "no such object: an error");
+
+    CHECK(plex_search(&d, "big", &l) == 0 && l.n == 2 && find(&l, "Big Bunny DLNA") && find(&l, "Big 4K Film"),
+          "Search: the server's (%d: %s)", l.n, d.err);
+    plex_list_free(&l);
+    log = server_log();
+    r = last(log, "/dlna/ctl/ContentDir");
+    CHECK(r && strstr(hdr(r, "SOAPACTION"), "#Search") &&
+          strstr(body(r), "upnp:class derivedfrom &quot;object.item.videoItem&quot; and dc:title contains &quot;big&quot;"),
+          "searched for videos with that in the title");
+    cJSON_Delete(log);
+    CHECK(plex_search(&d, "a \"b", &l) == 0 && l.n == 0, "a quote in what's searched for (%s)", d.err);
+    plex_list_free(&l);
+
+    {
+        char *jpeg = NULL;
+        size_t len = 0;
+        CHECK(bunny && plex_poster(&d, bunny->thumb, 240, 360, &jpeg, &len) == 0 && len > 4 &&
+              (unsigned char)jpeg[0] == 0xFF && (unsigned char)jpeg[1] == 0xD8, "its picture, from its own address (%s)", d.err);
+        free(jpeg);
+        jpeg = NULL;
+        CHECK(big && big->thumb && plex_poster(&d, big->thumb, 240, 360, &jpeg, &len) != 0 && !jpeg &&
+              strstr(d.err, "isn't a JPEG"), "a PNG poster: not taken (%s)", d.err);
+    }
+
+    /* playing: the file, or the server's converted stream */
+    caps_for(Q_1080, &k);
+    snprintf(want, sizeof(want), "%s/dlna/media/0.mp4", base);
+    CHECK(bunny && caps_play(&d, bunny, &k, 1, 1, &p) == 0 && p.direct && !strcmp(p.url, want) &&
+          strstr(p.why, "Direct Play: H.264 1920x1080") && !strcmp(p.key, "dlna:uuid:4d696e69-444c-164e-9d41-b827eb000001/64%240%240") &&
+          !*p.headers, "H.264 1080p: the file itself (%s)", p.why);
+    snprintf(want, sizeof(want), "%s/dlna/conv/1-1080.ts", base);
+    CHECK(big && caps_play(&d, big, &k, 1, 0, &p) == 0 && !p.direct && !strcmp(p.url, want) &&
+          strstr(p.why, "Transcoded by the server (3840x2160 is bigger than 1920x1080): 1920x1080"),
+          "4K with no HEVC block: the server's 1080p stream (%s %s)", p.url, p.why);
+    caps_for(Q_720, &k);
+    snprintf(want, sizeof(want), "%s/dlna/conv/1-720.ts", base);
+    CHECK(big && caps_play(&d, big, &k, 1, 0, &p) == 0 && !p.direct && !strcmp(p.url, want), "720p: its 720p stream (%s)", p.url);
+    caps_for(Q_1080, &k);
+    k.hevc = 1;
+    CHECK(big && caps_play(&d, big, &k, 1, 0, &p) == 0 && p.direct && strstr(p.why, "taken for HEVC"),
+          "4K with the HEVC block: the file itself (%s)", p.why);
+    k.hevc = 0;
+    CHECK(bunny && caps_play(&d, bunny, &k, 0, 0, &p) == 0 && p.direct &&
+          strstr(p.why, "direct play is off, but the server offers no converted stream"),
+          "direct play off, nothing converted offered: the file anyway (%s)", p.why);
+    CHECK(big && caps_play(&d, big, &k, 0, 0, &p) == 0 && !p.direct, "direct play off: converted (%s)", p.why);
+    CHECK(old && caps_play(&d, old, &k, 1, 0, &p) == 0 && p.direct && strstr(p.why, "avi 640x480"),
+          "an AVI with no profile, small: the file (%s)", p.why);
+    CHECK(song && caps_play(&d, song, &k, 1, 0, &p) != 0, "music isn't played");
+
+    /* where you got to, kept here */
+    CHECK(bunny && plex_timeline(&d, bunny, "paused", 120000, 634000, NULL) == 0, "a place kept (%s)", d.err);
+    CHECK(plex_list_get(&d, "/library/onDeck", &deck) == 0 && deck.n == 1 && !strcmp(deck.v[0].title, "Big Bunny DLNA") &&
+          deck.v[0].view_offset_ms == 120000 && !strcmp(deck.v[0].rating_key, "64%240%240") &&
+          deck.v[0].duration_ms == 634000 && deck.v[0].thumb && strstr(deck.v[0].thumb, "/dlna/art/1.jpg") &&
+          !strcmp(deck.v[0].key, "/library/metadata/64%240%240"), "Continue watching: it (%d)", deck.n);
+    plex_list_free(&deck);
+    dlna_places_files(places, places);  /* read again from the file */
+    CHECK(plex_list_get(&d, "/library/metadata/64%240/children", &l) == 0 && find(&l, "Big Bunny DLNA") &&
+          find(&l, "Big Bunny DLNA")->view_offset_ms == 120000 && !find(&l, "Big Bunny DLNA")->watched,
+          "the place in its folder's list too, from the file");
+    plex_list_free(&l);
+    CHECK(bunny && plex_timeline(&d, bunny, "stopped", 600000, 634000, NULL) == 0 &&
+          plex_list_get(&d, "/library/onDeck", &deck) == 0 && deck.n == 0, "played to 90%%: watched, off Continue watching");
+    plex_list_free(&deck);
+    CHECK(plex_list_get(&d, "/library/metadata/64%240/children", &l) == 0 && find(&l, "Big Bunny DLNA") &&
+          find(&l, "Big Bunny DLNA")->watched && !find(&l, "Big Bunny DLNA")->view_offset_ms, "and ticked");
+    plex_list_free(&l);
+    CHECK(bunny && plex_mark(&d, bunny, 0) == 0 && plex_list_get(&d, "/library/metadata/64%240/children", &l) == 0 &&
+          !find(&l, "Big Bunny DLNA")->watched, "marked not watched");
+    plex_list_free(&l);
+    CHECK(plex_mark(&d, &films.v[0], 1) == 0 || films.v[0].kind != PI_VIDEO, "a video marked");
+    {
+        plex_item folder;
+        memset(&folder, 0, sizeof(folder));
+        folder.kind = PI_FOLDER;
+        folder.rating_key = "64";
+        CHECK(plex_mark(&d, &folder, 1) != 0, "a folder can't be marked (%s)", d.err);
+    }
+    CHECK(big && plex_timeline(&d, big, "playing", 30000, 0, NULL) == 0 && plex_remove_continue(&d, big) == 0 &&
+          plex_list_get(&d, "/library/onDeck", &deck) == 0 && deck.n == 0, "Remove from Continue watching");
+    plex_list_free(&deck);
+    {
+        char u[1100];
+        plex_part_url(&d, bunny, u, sizeof(u));
+        CHECK(bunny && !strcmp(u, bunny->part_key), "Save: the file's own address (%s)", u);
+    }
+    plex_list_free(&films);
+    remove(places);
+}
+
 int main(int argc, char **argv)
 {
     plex_ctx c;
@@ -397,6 +623,7 @@ int main(int argc, char **argv)
     if (argc < 2)
         return 2;
     snprintf(base, sizeof(base), "http://127.0.0.1:%s", argv[1]);
+    port = atoi(argv[1]);
     net_init("Matinee/test");
     plex_ctx_init(&c, "client-123", "0.1.0");
     snprintf(c.plextv, sizeof(c.plextv), "%s", base);
@@ -857,6 +1084,8 @@ int main(int argc, char **argv)
         CHECK(!caps_direct_ok(&k, &h, why, sizeof(why)), "50 Mbit/s: converted (%s)", why);
     }
     jellyfin_tests();
+    xml_tests();
+    dlna_tests();
     printf("core_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

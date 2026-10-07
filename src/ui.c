@@ -56,6 +56,7 @@
 
 #include "plex.h"
 #include "jellyfin.h"
+#include "dlna.h"
 #include "caps.h"
 #include "handoff.h"
 #include "net.h"
@@ -197,6 +198,12 @@ static const int rel_order[REL_ROWS] = { REL_COLLECTION, REL_SIMILAR, REL_EXTRAS
 typedef struct {
     char name[64], id[64], base[256], token[128], uid[48], uname[64];
 } jf_saved;
+/* A DLNA server used: its name, UDN and description's address (Choices) */
+#define DL_SAVED 6
+#define SRV_DL(k) (-200 - (k))      /* the Servers menu's DLNA server k */
+typedef struct {
+    char name[64], udn[96], loc[256];
+} dl_saved;
 
 static struct {
     int task, bar_icon, proginfo;
@@ -227,12 +234,20 @@ static struct {
        Jellyfin half: the server being signed in to, its Quick Connect code */
     jf_saved jf[JF_SAVED];
     int njf;
-    int si_mode;                    /* the sign-in page: SI_PICK, SI_PLEX or SI_JF */
+    int si_mode;                    /* the sign-in page: SI_PICK, SI_PLEX, SI_JF or SI_DLNA */
     int si_prev;                    /* the page before it (Cancel goes back there) */
     plex_ctx jfc;
     char jf_addr[256], jf_user[64], jf_pw[128], jf_secret[96], jf_code[16];
     int qc_next;
-    int srv_map[16];                /* the Servers menu: >= 0 Plex server n, -1 - k Jellyfin k, SRV_ADD */
+    /* DLNA: the servers used (Choices); the sign-in page's DLNA half: the
+       servers found on the network, an address typed */
+    dl_saved dl[DL_SAVED];
+    int ndl;
+    dlna_server found[DLNA_FOUND];
+    int nfound, searched;
+    char dl_addr[256];
+    int srv_map[16];                /* the Servers menu: >= 0 Plex server n, -1 - k Jellyfin k, SRV_DL(k)
+                                       DLNA k, SRV_ADD */
 
     /* browser */
     plex_list list;
@@ -366,7 +381,7 @@ static struct {
     /* the save box, and a save in progress */
     char sv_name[256];
     char sv_leaf[200];
-    char sv_url_key[256], sv_title[80];
+    char sv_url_key[1024], sv_title[80];
     int64_t sv_size;
     int sv_type, sv_ok;             /* sv_ok: the item can be saved */
     int dragging, drag_sprite, datasave_ref;
@@ -574,6 +589,10 @@ static void choices_save(void)
         fprintf(f, "jellyfin %s|%s|%s|%s|%s|%s\n", cv(S.jf[i].name, c[0], 300), cv(S.jf[i].id, c[1], 300),
                 cv(S.jf[i].base, c[2], 300), cv(S.jf[i].token, c[3], 300), cv(S.jf[i].uid, c[4], 300),
                 cv(S.jf[i].uname, c[5], 300));
+    /* and the DLNA servers used: name|UDN|description's address */
+    for (int i = 0; i < S.ndl; i++)
+        fprintf(f, "dlna %s|%s|%s\n", cv(S.dl[i].name, c[0], 300), cv(S.dl[i].udn, c[1], 300),
+                cv(S.dl[i].loc, c[2], 300));
     fclose(f);
 }
 
@@ -589,6 +608,30 @@ static int value(const char *line, const char *key, char *out, size_t size)
     snprintf(out, size, "%s", line);
     out[strcspn(out, "\r\n")] = 0;
     return 1;
+}
+
+/* A DLNA server's Choices line (name|UDN|description's address) */
+static void dl_saved_parse(const char *v)
+{
+    dl_saved *d;
+    char t[700], *f[3], *p = t;
+    int n = 0;
+    if (S.ndl >= DL_SAVED)
+        return;
+    snprintf(t, sizeof(t), "%s", v);
+    while (n < 3) {
+        f[n++] = p;
+        p = strchr(p, '|');
+        if (!p)
+            break;
+        *p++ = 0;
+    }
+    if (n < 3 || !*f[1] || !*f[2])
+        return;
+    d = &S.dl[S.ndl++];
+    snprintf(d->name, sizeof(d->name), "%s", f[0]);
+    snprintf(d->udn, sizeof(d->udn), "%s", f[1]);
+    snprintf(d->loc, sizeof(d->loc), "%s", f[2]);
 }
 
 /* A Jellyfin server's Choices line (name|id|address|token|user id|user name) */
@@ -708,13 +751,15 @@ static void choices_load(void)
             else if (value(line, "server_local", v, sizeof(v)))
                 c->local = atoi(v) != 0;
             else if (value(line, "server_kind", v, sizeof(v)))
-                c->kind = atoi(v) == SRV_JELLYFIN ? SRV_JELLYFIN : SRV_PLEX;
+                c->kind = atoi(v) == SRV_JELLYFIN ? SRV_JELLYFIN : atoi(v) == SRV_DLNA ? SRV_DLNA : SRV_PLEX;
             else if (value(line, "server_user_id", v, sizeof(v)))
                 snprintf(c->user_id, sizeof(c->user_id), "%s", v);
             else if (value(line, "server_user_name", v, sizeof(v)))
                 snprintf(c->user_name, sizeof(c->user_name), "%s", v);
             else if (value(line, "jellyfin", v, sizeof(v)))
                 jf_saved_parse(v);
+            else if (value(line, "dlna", v, sizeof(v)))
+                dl_saved_parse(v);
         }
         fclose(f);
     }
@@ -722,6 +767,28 @@ static void choices_load(void)
         const char *tv = getenv(APP "$PlexTV");     /* another plex.tv (the tests' fake) */
         if (tv && *tv)
             snprintf(c->plextv, sizeof(c->plextv), "%s", tv);
+    }
+    {
+        /* DLNA: where you got to in its videos, kept beside Choices; and
+           where to look for servers (Matinee$SSDP addr:port: the tests' fake) */
+        const char *dir = getenv(APP "$ChoicesDir"), *ssdp = getenv(APP "$SSDP");
+        char r[300], w[300];
+        if (dir && *dir) {
+            snprintf(r, sizeof(r), "%s/Places", dir);
+            snprintf(w, sizeof(w), "%s/Places", dir);
+        } else {
+            snprintf(r, sizeof(r), "Choices:" APP ".Places");
+            snprintf(w, sizeof(w), "<Choices$Write>." APP ".Places");
+        }
+        dlna_places_files(r, w);
+        if (ssdp && *ssdp) {
+            char a[64], *colon;
+            snprintf(a, sizeof(a), "%s", ssdp);
+            colon = strchr(a, ':');
+            if (colon)
+                *colon++ = 0;
+            dlna_set_ssdp(a, colon ? atoi(colon) : 0);
+        }
     }
 }
 
@@ -1231,7 +1298,7 @@ static void set_extent(void)
 {
     int b[4];
     _kernel_swi_regs r;
-    int h = S.page == PG_DETAILS ? S.det_h : S.page == PG_SIGNIN || S.page == PG_PLAYER ? 1100 : list_height();
+    int h = S.page == PG_DETAILS ? S.det_h : S.page == PG_SIGNIN ? 1400 : S.page == PG_PLAYER ? 1100 : list_height();
     if (h < S.scr_h)
         h = S.scr_h;                /* at least the screen: the window can be made taller */
     b[0] = 0; b[1] = -h; b[2] = S.scr_w; b[3] = 0;
@@ -3730,7 +3797,7 @@ static void jf_signed_in(void);
 static void builtin_stop(int leave);
 static void browser_top(void);
 
-#define SI_MAX 8
+#define SI_MAX 24
 static struct { int id, x0, y0, x1, y1; } si_box[SI_MAX];
 static int si_n;
 
@@ -3765,6 +3832,9 @@ static const char *si_label(int id)
     case S_USE:     return "Use these";
     case S_PICK_PLEX: return "Plex";
     case S_PICK_JF: return "Jellyfin";
+    case S_PICK_DLNA: return "DLNA";
+    case S_DUSE:    return "Use";
+    case S_DSEARCH: return "Search again";
     case S_BACK:    return "Back";
     case S_CANCEL:  return "Cancel";
     case S_QC:      return S.jf_secret[0] ? "New code" : "Quick Connect";
@@ -3778,14 +3848,31 @@ static int si_bw(int id)
     return draw_width(D_BOLD, si_label(id)) + 64;
 }
 
+/* The DLNA page: where the part for an address starts, below the servers found */
+static int dl_below(void)
+{
+    int n = S.nfound < SI_FOUND_SHOWN ? S.nfound : SI_FOUND_SHOWN;
+    return -HEADER_H - 160 - (n ? n : 1) * 84;
+}
+
 static void si_layout(void)
 {
     int top = -HEADER_H;
     si_n = 0;
-    if (S.si_mode == SI_PICK) {         /* two cards, then Cancel */
+    if (S.si_mode == SI_PICK) {         /* three cards, then Cancel */
         si_add_h(S_PICK_PLEX, 40, top - 176, 1160, 150);
         si_add_h(S_PICK_JF, 40, top - 360, 1160, 150);
-        si_add(S_CANCEL, 40, top - 560, si_bw(S_CANCEL));
+        si_add_h(S_PICK_DLNA, 40, top - 544, 1160, 150);
+        si_add(S_CANCEL, 40, top - 744, si_bw(S_CANCEL));
+    } else if (S.si_mode == SI_DLNA) {  /* the servers found, Search again; an address, Use, Back, Cancel */
+        int y = dl_below(), n = S.nfound < SI_FOUND_SHOWN ? S.nfound : SI_FOUND_SHOWN;
+        for (int i = 0; i < n; i++)
+            si_add_h(S_FOUND + i, 40, top - 160 - i * 84, 1160, 72);
+        si_add(S_DSEARCH, 40, y - 16, si_bw(S_DSEARCH));
+        si_add(S_DADDR, 220, y - 200, 620);
+        si_add(S_DUSE, 220, y - 284, si_bw(S_DUSE));
+        si_add(S_BACK, 220 + si_bw(S_DUSE) + 32, y - 284, si_bw(S_BACK));
+        si_add(S_CANCEL, 220 + si_bw(S_DUSE) + si_bw(S_BACK) + 64, y - 284, si_bw(S_CANCEL));
     } else if (S.si_mode == SI_PLEX) {
         si_add(S_NEWCODE, 40, top - 372, si_bw(S_NEWCODE));
         si_add(S_ADDR, 220, top - 572, 620);
@@ -3821,7 +3908,7 @@ static int si_hit(int sx, int sy)
 static int si_field_of(int id)
 {
     switch (id) {
-    case S_ADDR: case S_JADDR: return 0;
+    case S_ADDR: case S_JADDR: case S_DADDR: return 0;
     case S_TOK: case S_JUSER:  return 1;
     case S_JPW:                return 2;
     }
@@ -3831,6 +3918,10 @@ static int si_field_of(int id)
 static char *si_field(int f, size_t *size)
 {
     char *p;
+    if (S.si_mode == SI_DLNA) {
+        *size = sizeof(S.dl_addr);
+        return S.dl_addr;
+    }
     if (S.si_mode != SI_JF) {
         p = f ? S.si_tok : S.si_addr;
         *size = f ? sizeof(S.si_tok) : sizeof(S.si_addr);
@@ -3843,7 +3934,7 @@ static char *si_field(int f, size_t *size)
 
 static int si_fields(void)
 {
-    return S.si_mode == SI_JF ? 3 : S.si_mode == SI_PLEX ? 2 : 0;
+    return S.si_mode == SI_JF ? 3 : S.si_mode == SI_PLEX ? 2 : S.si_mode == SI_DLNA ? 1 : 0;
 }
 
 /* The code, big and spaced out, on a card; the card's right edge (work area) */
@@ -3874,6 +3965,19 @@ static void signin_redraw(int ox, int oy, int vis_w)
     if (S.si_mode == SI_PICK) {
         draw_text(D_BOLD, ox + 40, oy + top - 76, "Add a server", C_TEXT, C_BG);
         draw_text(D_BODY, ox + 40, oy + top - 124, "Which kind is it?", C_SUB, C_BG);
+    } else if (S.si_mode == SI_DLNA) {
+        int y = dl_below();
+        draw_text(D_BOLD, ox + 40, oy + top - 76, "Add a DLNA server", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + top - 124,
+                  S.nfound ? "On your network (click one to use it):" :
+                  S.searched ? "None found on your network." : "Looking on your network...", C_SUB, C_BG);
+        draw_text(D_BODY, ox + 40 + si_bw(S_DSEARCH) + 32, oy + y - 58, S.si_status, C_SUB, C_BG);
+        draw_rect(ox + 40, oy + y - 108, ox + 1000, oy + y - 106, C_CARD);
+        draw_text(D_BOLD, ox + 40, oy + y - 160, "Or its address", C_TEXT, C_BG);
+        draw_text(D_BODY, ox + 40, oy + y - 242, "Address", C_SUB, C_BG);
+        draw_text(D_BODY, ox + 220, oy + y - 400, "As 192.168.1.10:8200 (MiniDLNA), :32469 (Plex), or its description's",
+                  C_SUB, C_BG);
+        draw_text(D_BODY, ox + 220, oy + y - 440, "address (http://.../rootDesc.xml).", C_SUB, C_BG);
     } else if (S.si_mode == SI_PLEX) {
         draw_text(D_BOLD, ox + 40, oy + top - 76, "Sign in to Plex with a code", C_TEXT, C_BG);
         draw_text(D_BODY, ox + 40, oy + top - 124, "On a phone or computer, go to plex.tv/link and type this code:",
@@ -3926,16 +4030,24 @@ static void signin_redraw(int ox, int oy, int vis_w)
                 int cx = tx + draw_width(D_BODY, t) + 2;
                 draw_rect(cx, y0 + 14, cx + 4, y1 - 14, C_ACCENT);
             }
-        } else if (si_box[i].id == S_PICK_PLEX || si_box[i].id == S_PICK_JF) {
-            int jf = si_box[i].id == S_PICK_JF;
+        } else if (si_box[i].id == S_PICK_PLEX || si_box[i].id == S_PICK_JF || si_box[i].id == S_PICK_DLNA) {
+            int id = si_box[i].id;
             draw_round(x0, y0, x1, y1, 20, C_CARD, C_BG);
-            draw_text(D_TITLE, x0 + 40, y1 - 70, jf ? "Jellyfin" : "Plex", C_TEXT, C_CARD);
+            draw_text(D_TITLE, x0 + 40, y1 - 70, si_label(id), C_TEXT, C_CARD);
             draw_text(D_BODY, x0 + 40, y0 + 28,
-                      jf ? "Quick Connect, or your name and password" :
+                      id == S_PICK_JF ? "Quick Connect, or your name and password" :
+                      id == S_PICK_DLNA ? "On your network: MiniDLNA, a NAS, Plex's or Jellyfin's" :
                            "A code at plex.tv/link, or a server's address and token", C_SUB, C_CARD);
+        } else if (si_box[i].id >= S_FOUND && si_box[i].id < S_FOUND + SI_FOUND_SHOWN) {
+            const dlna_server *d = &S.found[si_box[i].id - S_FOUND];
+            char nm[80];
+            latin1(d->name, nm, sizeof(nm));
+            draw_round(x0, y0, x1, y1, 16, C_CARD, C_BG);
+            draw_text(D_BOLD, x0 + 32, y0 + 22, nm, C_TEXT, C_CARD);
+            draw_text(D_BODY, x0 + 640, y0 + 22, d->host, C_SUB, C_CARD);
         } else {
             int id = si_box[i].id;
-            unsigned bg = id == S_USE || id == S_LOGIN ? C_ACCENT : C_CARD;
+            unsigned bg = id == S_USE || id == S_LOGIN || id == S_DUSE ? C_ACCENT : C_CARD;
             draw_round(x0, y0, x1, y1, BTN / 2, bg, C_BG);
             draw_text(D_BOLD, x0 + 32, y0 + 22, si_label(id), C_TEXT, bg);
         }
@@ -3945,7 +4057,8 @@ static void signin_redraw(int ox, int oy, int vis_w)
 static void si_redraw_fields(void)
 {
     if (S.browser_open && S.page == PG_SIGNIN)
-        force_redraw(S.browser_w, 0, -HEADER_H - 740, S.scr_w, (S.si_mode == SI_JF) ? -HEADER_H : -HEADER_H - 540);
+        force_redraw(S.browser_w, 0, S.si_mode == SI_DLNA ? -HEADER_H - 1400 : -HEADER_H - 740, S.scr_w,
+                     S.si_mode == SI_JF || S.si_mode == SI_DLNA ? -HEADER_H : -HEADER_H - 540);
 }
 
 static void pin_new(void)
@@ -3992,7 +4105,9 @@ static void signin_show(int mode)
     set_where();
     set_extent();
     set_status(mode == SI_JF ? "Sign in to a Jellyfin server." : mode == SI_PLEX ? "Sign in to Plex." :
-               "Add a Plex or a Jellyfin server.");
+               mode == SI_DLNA ? "Add a DLNA server." : "Add a Plex, a Jellyfin or a DLNA server.");
+    if (mode == SI_DLNA)
+        S.si_status[0] = 0;
     window_state(S.browser_w, st);
     open_front(S.browser_w, st[1], st[2], st[3], st[4], 0, 0);
     force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
@@ -4048,7 +4163,8 @@ static void signin_cancel(void)
     S.posters_wanted = S.page == PG_GRID;
 }
 
-/* A key on the sign-in page: 1 if it was used; 2 Use these (Plex), 3 Sign in (Jellyfin), 4 Cancel */
+/* A key on the sign-in page: 1 if it was used; 2 Use these (Plex), 3 Sign in (Jellyfin), 4 Cancel,
+   5 Use (DLNA) */
 static int signin_key(int k)
 {
     size_t size, n;
@@ -4077,7 +4193,7 @@ static int signin_key(int k)
         if (S.field + 1 < si_fields())
             S.field++;
         else
-            return (S.si_mode == SI_JF) ? 3 : 2;
+            return S.si_mode == SI_JF ? 3 : S.si_mode == SI_DLNA ? 5 : 2;
     } else {
         return 0;
     }
@@ -4331,6 +4447,8 @@ static void server_take(const plex_ctx *c)
     snprintf(d->server_id, sizeof(d->server_id), "%s", c->server_id);
     snprintf(d->user_id, sizeof(d->user_id), "%s", c->user_id);
     snprintf(d->user_name, sizeof(d->user_name), "%s", c->user_name);
+    snprintf(d->ctl, sizeof(d->ctl), "%s", c->ctl);
+    snprintf(d->svc, sizeof(d->svc), "%s", c->svc);
 }
 
 /* Signed in on the sign-in page's Jellyfin half: that server, then its home page */
@@ -4378,6 +4496,107 @@ static void jf_add(void)
     signin_show(SI_JF);
 }
 
+/* ---- DLNA servers ------------------------------------------------------------------ */
+
+/* The server in use (a DLNA one) kept, the same server replaced */
+static void dl_remember(void)
+{
+    dl_saved *d = NULL;
+    for (int i = 0; i < S.ndl; i++)
+        if (!strcmp(S.dl[i].udn, S.px.server_id))
+            d = &S.dl[i];
+    if (!d) {
+        if (S.ndl >= DL_SAVED) {        /* the oldest makes room */
+            memmove(&S.dl[0], &S.dl[1], (DL_SAVED - 1) * sizeof(dl_saved));
+            S.ndl--;
+        }
+        d = &S.dl[S.ndl++];
+    }
+    snprintf(d->name, sizeof(d->name), "%s", S.px.server_name);
+    snprintf(d->udn, sizeof(d->udn), "%s", S.px.server_id);
+    snprintf(d->loc, sizeof(d->loc), "%s", S.px.base);
+    no_bars(d->name);
+}
+
+/* The servers on the network looked for (2 s), and the page drawn again */
+static void dl_search(void)
+{
+    char err[256];
+    S.si_status[0] = 0;
+    hourglass(1);
+    S.nfound = dlna_discover(S.found, DLNA_FOUND, 2000, err, sizeof(err));
+    hourglass(0);
+    S.searched = 1;
+    if (S.nfound < 0) {
+        S.nfound = 0;
+        snprintf(S.si_status, sizeof(S.si_status), "Can't look: %s", err);
+    } else if (!S.nfound) {
+        snprintf(S.si_status, sizeof(S.si_status), "Type its address below.");
+    } else {
+        snprintf(S.si_status, sizeof(S.si_status), "Found %d.", S.nfound);
+    }
+    if (S.field >= si_fields())
+        S.field = 0;
+    if (S.browser_open && S.page == PG_SIGNIN)
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+}
+
+/* A DLNA server (a description's address, or a host and port) made the
+   one in use, then its home page */
+static void dl_use(const char *addr)
+{
+    plex_ctx c = S.px;
+    int e;
+    hourglass(1);
+    e = dlna_connect(&c, addr);
+    hourglass(0);
+    if (e != 0) {
+        si_set_status("%s", c.err);
+        return;
+    }
+    server_changed();
+    server_take(&c);
+    dl_remember();
+    choices_save();
+    signin_close();
+    browser_top();
+    set_status("%s: a DLNA server.", S.px.server_name);
+}
+
+/* DLNA server k of the saved ones */
+static int use_dl(int k)
+{
+    plex_ctx c = S.px;
+    if (k < 0 || k >= S.ndl)
+        return -1;
+    c.kind = SRV_DLNA;
+    c.local = 1;
+    snprintf(c.base, sizeof(c.base), "%s", S.dl[k].loc);
+    snprintf(c.server_name, sizeof(c.server_name), "%s", S.dl[k].name);
+    snprintf(c.server_id, sizeof(c.server_id), "%s", S.dl[k].udn);
+    c.token[0] = c.user_id[0] = c.user_name[0] = 0;
+    c.ctl[0] = c.svc[0] = 0;        /* its description read again (the address may have changed) */
+    server_changed();
+    server_take(&c);
+    choices_save();
+    browser_top();
+    return 0;
+}
+
+/* The DLNA page of the sign-in, and a look for servers */
+static void dl_add(void)
+{
+    if (!*S.dl_addr && S.px.kind == SRV_DLNA) {
+        const char *h = strstr(S.px.base, "://");
+        h = h ? h + 3 : S.px.base;
+        snprintf(S.dl_addr, sizeof(S.dl_addr), "%.*s", (int)strcspn(h, "/"), h);
+    }
+    S.nfound = 0;
+    S.searched = 0;
+    signin_show(SI_DLNA);
+    dl_search();
+}
+
 static void sign_out(void)
 {
     plex_ctx *c = &S.px;
@@ -4398,6 +4617,17 @@ static void sign_out(void)
             }
         c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
         c->user_id[0] = c->user_name[0] = 0;
+        c->kind = SRV_PLEX;
+    } else if (c->kind == SRV_DLNA) {
+        /* that DLNA server forgotten (where you got to in its videos is kept,
+           for if it's added again) */
+        for (int i = 0; i < S.ndl; i++)
+            if (!strcmp(S.dl[i].udn, c->server_id)) {
+                memmove(&S.dl[i], &S.dl[i + 1], (S.ndl - i - 1) * sizeof(dl_saved));
+                S.ndl--;
+                break;
+            }
+        c->base[0] = c->server_name[0] = c->server_id[0] = c->ctl[0] = c->svc[0] = 0;
         c->kind = SRV_PLEX;
     } else {
         c->account_token[0] = c->base[0] = c->token[0] = c->server_name[0] = c->server_id[0] = 0;
@@ -4430,6 +4660,8 @@ static void bar_select(void)
         choose_server();
     } else if (S.njf) {
         use_jf(S.njf - 1);
+    } else if (S.ndl) {
+        use_dl(S.ndl - 1);
     } else {
         signin_open();
     }
@@ -4589,8 +4821,9 @@ static void play_item(const plex_item *it, int how)
     }
     /* Resume from: the server starts its stream there (copying the video
        when it can); Reel can't be told where to start a file of its own */
-    if (how == PLAY_RESUME)
-        allow = 0;
+    if (how == PLAY_RESUME && S.px.kind != SRV_DLNA)
+        allow = 0;                  /* (a DLNA server's converted stream can't start part way: Reel's
+                                       own "carry on" for the file itself instead) */
     if (how == PLAY_START)
         resume = 0;
     caps_for(S.quality, &k);
@@ -5083,9 +5316,19 @@ static void save_stop(const char *why)
         set_status("%s", why);
 }
 
+/* A file's address: a key (a path on the server), or an address of its
+   own (a DLNA server's files) */
+static void media_url(const char *key, char *url, size_t size)
+{
+    if (!strncmp(key, "http://", 7) || !strncmp(key, "https://", 8))
+        snprintf(url, size, "%s", key);
+    else
+        snprintf(url, size, "%s%s", S.px.base, key);
+}
+
 static void save_start(const char *path)
 {
-    char url[600], headers[1024], err[256];
+    char url[1100], headers[1024], err[256];
     int64_t size;
     if (S.save.active) {
         report("Already saving %s: stop that first (on the menu).", S.save.title);
@@ -5097,7 +5340,7 @@ static void save_start(const char *path)
     }
     if (too_big(S.sv_size, S.sv_title))
         return;
-    snprintf(url, sizeof(url), "%s%s", S.px.base, S.sv_url_key);
+    media_url(S.sv_url_key, url, sizeof(url));
     plex_headers(&S.px, S.px.token, headers, sizeof(headers));
     hourglass(1);
     S.save.ns = net_open(url, headers, 30000, err, sizeof(err));
@@ -5214,7 +5457,7 @@ static void speed_close(void)
 
 static void speed_start(const plex_item *it)
 {
-    char url[600], headers[1024], err[256];
+    char url[1100], headers[1024], err[256];
     int t;
     if (S.save.active || S.speed.active) {
         report("Wait until the file being saved, or the speed test, has finished.");
@@ -5222,7 +5465,7 @@ static void speed_start(const plex_item *it)
     }
     if (!it || it->kind != PI_VIDEO || !it->part_key || !*it->part_key)
         return;
-    snprintf(url, sizeof(url), "%s%s", S.px.base, it->part_key);
+    media_url(it->part_key, url, sizeof(url));
     plex_headers(&S.px, S.px.token, headers, sizeof(headers));
     latin1(it->title, S.speed.title, sizeof(S.speed.title));
     hourglass(1);
@@ -5447,6 +5690,14 @@ static void bar_menu_build(void)
     }
     if (S.njf && m_servers.n)
         m_servers.m.item[m_servers.n - 1].flags |= 2;
+    for (int k = 0; k < S.ndl && m_servers.n < 15; k++) {
+        char t[80];
+        snprintf(t, sizeof(t), "%s (DLNA)", S.dl[k].name);
+        S.srv_map[m_servers.n] = SRV_DL(k);
+        menu_add(&m_servers, t, S.px.kind == SRV_DLNA && !strcmp(S.dl[k].udn, S.px.server_id), 0, -1, 0);
+    }
+    if (S.ndl && m_servers.n)
+        m_servers.m.item[m_servers.n - 1].flags |= 2;
     S.srv_map[m_servers.n] = SRV_ADD;
     menu_add(&m_servers, "Add a server...", 0, 0, -1, 0);
     menu_end(&m_servers);
@@ -5501,7 +5752,8 @@ static void bar_menu_build(void)
         snprintf(t, sizeof(t), "Clear image cache (%.1f MB)", b / 1048576.0);
         menu_add(&m_bar, t, 0, n == 0, -1, 0);
     }
-    menu_add(&m_bar, S.px.kind == SRV_JELLYFIN ? "Sign out of this server" : "Sign out", 0,
+    menu_add(&m_bar, S.px.kind == SRV_JELLYFIN ? "Sign out of this server" :
+                     S.px.kind == SRV_DLNA ? "Forget this server" : "Sign out", 0,
              !signed_in && !*S.px.base, -1, 0);
     menu_add(&m_bar, "Quit", 0, 0, -1, 0);
     menu_end(&m_bar);
@@ -5808,7 +6060,7 @@ static int sub_fetch(const plex_sub *sb, char *path, size_t size)
     snprintf(dir, sizeof(dir), "%s" SEP APP, scrap);
     make_dir(dir);
     snprintf(path, size, "%s" SEP "Sub%ld", dir, sb->id);
-    snprintf(url, sizeof(url), "%s%s", S.px.base, sb->key);
+    media_url(sb->key, url, sizeof(url));
     plex_headers(&S.px, S.px.token, hd, sizeof(hd));
     media_headers(hd, h2, sizeof(h2));
     hourglass(1);
@@ -6131,6 +6383,8 @@ static int menu_select(const int *sel)
                     signin_open();
                 else if (w <= -1 && w > -1 - S.njf)
                     use_jf(-1 - w);
+                else if (w <= SRV_DL(0) && w > SRV_DL(S.ndl))
+                    use_dl(SRV_DL(0) - w);
                 else if (w >= 0 && w < S.nservers && use_server(w) == 0)
                     browser_top();
             }
@@ -6173,7 +6427,10 @@ static int menu_select(const int *sel)
         }
         case MB_SIGNOUT: {          /* easily chosen by mistake: asked first */
             char q[300];
-            if (S.px.kind == SRV_JELLYFIN)
+            if (S.px.kind == SRV_DLNA)
+                snprintf(q, sizeof(q), "Forget %s? Matinee forgets this DLNA server; add it again with Servers, Add "
+                         "a server. (Where you got to in its videos is kept.)", S.px.server_name);
+            else if (S.px.kind == SRV_JELLYFIN)
                 snprintf(q, sizeof(q), "Sign out of %s? Matinee forgets this Jellyfin server, and you'll need to "
                          "sign in to it again (Servers, Add a server).", S.px.server_name);
             else
@@ -6472,6 +6729,8 @@ static void open_item(int i, int how)
         show_list(path, back, 1, 0);
     } else if (it->kind == PI_VIDEO) {
         play_item(it, how);
+    } else if (S.px.kind == SRV_DLNA) {     /* a song or a picture on a DLNA server */
+        set_status("%s isn't played: films and TV only.", it->subtitle && *it->subtitle ? it->subtitle : "That");
     } else {
         set_status("%s libraries can't be opened yet: films and TV only.", it->subtitle ? it->subtitle : "These");
     }
@@ -6603,6 +6862,14 @@ static void click(int *b)
                 use_manual();
             else if (id == S_PICK_JF)
                 jf_add();
+            else if (id == S_PICK_DLNA)
+                dl_add();
+            else if (id == S_DSEARCH)
+                dl_search();
+            else if (id == S_DUSE)
+                dl_use(S.dl_addr);
+            else if (id >= S_FOUND && id < S_FOUND + SI_FOUND_SHOWN && id - S_FOUND < S.nfound)
+                dl_use(S.found[id - S_FOUND].location);
             else if (id == S_PICK_PLEX)
                 signin_show(SI_PLEX);
             else if (id == S_BACK)
@@ -6701,6 +6968,8 @@ static void key(int *b)
             jf_password();
         else if (u == 4)
             signin_cancel();
+        else if (u == 5)
+            dl_use(S.dl_addr);
         if (u)
             return;
     }
@@ -7284,6 +7553,10 @@ int ui_test_rel_foot(int k, int i, int *top)
 int ui_test_signin_jf(void) { return S.page == PG_SIGNIN && S.si_mode == SI_JF; }
 int ui_test_signin_mode(void) { return S.page == PG_SIGNIN ? S.si_mode : -1; }
 int ui_test_jf_servers(void) { return S.njf; }
+int ui_test_dl_servers(void) { return S.ndl; }
+void ui_test_window_state(int w, int *st) { window_state(w, st); }
+int ui_test_dlna_found(void) { return S.page == PG_SIGNIN && S.si_mode == SI_DLNA ? S.nfound : -1; }
+int ui_test_server_kind(void) { return S.px.kind; }
 int ui_test_field(void) { return S.field; }
 int ui_test_button_xy(int w, int id, int *x, int *y)
 {

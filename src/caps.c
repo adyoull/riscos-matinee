@@ -4,6 +4,7 @@
  */
 #include "caps.h"
 #include "jellyfin.h"
+#include "dlna.h"
 #include "net.h"
 
 #include <stdio.h>
@@ -153,6 +154,8 @@ int caps_play_at(const plex_ctx *c, const plex_item *it, const caps_t *k, int al
     char why[160];
     if (c->kind == SRV_JELLYFIN)
         return jf_play(c, it, k, allow_direct, offset_s, session, out);
+    if (c->kind == SRV_DLNA)
+        return dlna_play(c, it, k, allow_direct, offset_s, session, out);
     memset(out, 0, sizeof(*out));
     if (it->kind != PI_VIDEO || !it->rating_key) {
         snprintf(out->why, sizeof(out->why), "that isn't a video");

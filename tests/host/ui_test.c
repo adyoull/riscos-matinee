@@ -3364,6 +3364,200 @@ static int script(int *b, int mask)
             CHECK(ui_test_signin_mode() == SI_PICK, "Select: Add a server's choice again");
             pc++;
             return ev_msg(b, 0, 0, 0);
+        /* ---- the fourth run: a DLNA server, found on the network */
+        case 9600:
+            CHECK(!win(w_browser)->open, "fourth run: nothing open yet");
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);             /* Menu on the icon */
+        case 9601:
+            pc++;
+            return ev_menu(b, MB_SERVERS, 0);                   /* Add a server... */
+        case 9602:
+            CHECK(ui_test_signin_mode() == SI_PICK, "Add a server: which kind");
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 9603:
+            CHECK(strstr(plotted_text, "Plex|") && strstr(plotted_text, "Jellyfin|") && strstr(plotted_text, "DLNA|") &&
+                  strstr(plotted_text, "On your network: MiniDLNA, a NAS, Plex's or Jellyfin's|"),
+                  "three kinds: Plex, Jellyfin, DLNA: %s", plotted_text);
+            pc++;
+            return ev_button(b, w_browser, S_PICK_DLNA, 0x400);
+        case 9604:
+            CHECK(ui_test_signin_mode() == SI_DLNA && ui_test_dlna_found() == 1 && strstr(ui_test_signin(1), "Found 1."),
+                  "the DLNA page: looked for servers, one found (%d: %s)", ui_test_dlna_found(), ui_test_signin(1));
+            CHECK(log_count("/ssdp", NULL, NULL) >= 2, "M-SEARCH sent");
+            pc++;
+            return ev_redraw(b, w_browser);
+        case 9605:
+            snprintf(want, sizeof(want), "Attic NAS: minidlna|127.0.0.1:%s|", base + 17);
+            CHECK(strstr(plotted_text, "Add a DLNA server|On your network (click one to use it):|") && strstr(plotted_text, want) &&
+                  strstr(plotted_text, "Search again|") && strstr(plotted_text, "Found 1.|") &&
+                  strstr(plotted_text, "Or its address|") && strstr(plotted_text, "Use|") && strstr(plotted_text, "Back|") &&
+                  strstr(plotted_text, "Cancel|"), "drawn: %s", plotted_text);
+            save_picture("signin-dlna.ppm", w_browser);
+            pc++;
+            return ev_button(b, w_browser, S_FOUND + 0, 0x400);
+        case 9606: {
+            int cur = -1;
+            CHECK(ui_test_page() == PG_GRID && ui_test_server_kind() == SRV_DLNA && ui_test_dl_servers() == 1 &&
+                  !strcmp(ui_test_path(), "Attic NAS: minidlna"), "using it: its home page (%s; %s)", ui_test_path(),
+                  ui_test_status());
+            CHECK(ui_test_tab(&cur) == 2 && cur == 0, "Home and one library (Video; Music and Pictures left out)");
+            snprintf(want, sizeof(want), "dlna Attic NAS: minidlna|uuid:4d696e69-444c-164e-9d41-b827eb000001|%s/dlna/rootDesc.xml\n",
+                     base);
+            CHECK(strstr(read_file(choices), want) && strstr(read_file(choices), "server_kind 2\n"), "kept in Choices:\n%s",
+                  read_file(choices));
+            pc = 96060;
+            return ev_redraw(b, w_browser);
+        }
+        case 96060: {
+            int rows = 0, pick = 0, st = 0, n = 0, vis = 0;
+            CHECK(ui_test_home(&rows, &pick) && rows == 1 && !strcmp(ui_test_home_row(0, &st, &n, &vis), "Libraries") &&
+                  n == 1 && !strcmp(ui_test_item(st, 0), "Video"),
+                  "the home page: nothing to carry on with yet, so its libraries (%d rows)", rows);
+            save_picture("home-dlna.ppm", w_browser);
+            pc = 9607;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 9607: {
+            const int *sm = menu_open ? (const int *)(intptr_t)menu_sub(menu_open, MB_SERVERS) : NULL;
+            CHECK(sm && !strcmp(menu_text(sm, 0), "Attic NAS: minidlna (DLNA)") && (menu_flags(sm, 0) & 1) &&
+                  !strcmp(menu_text(sm, 1), "Add a server..."), "Servers: it, ticked");
+            CHECK(!strcmp(menu_text(menu_open, MB_SIGNOUT), "Forget this server"), "Forget this server");
+            pc++;
+            return ev_button(b, w_browser, TB_TAB + 1, 0x400);  /* Video */
+        }
+        case 9608:
+            CHECK(ui_test_items() == 2 && find_tile("Films") >= 0 && find_tile("Box Sets & More") >= 0 &&
+                  !strcmp(ui_test_item(find_tile("Films"), 1), "4 items"), "its folders (%d)", ui_test_items());
+            pc++;
+            return ev_tile(b, find_tile("Films"), 4);
+        case 9609:
+            CHECK(ui_test_items() == 4 && find_tile("Big Bunny DLNA") >= 0 && !strcmp(ui_test_item(find_tile("Big Bunny DLNA"), 1), "2008") &&
+                  strstr(ui_test_path(), "Films") && strstr(ui_test_status(), "4 items."), "Films: its videos (%s; %s)",
+                  ui_test_path(), ui_test_status());
+            pc++;
+            return ev_tile(b, find_tile("A Song"), 4);
+        case 9610:
+            CHECK(strstr(ui_test_status(), "Music isn't played"), "a song: %s", ui_test_status());
+            n_null = 0;
+            pc++;
+            return NULL_EVENT;
+        case 9611:                          /* the posters, from the server's own addresses */
+            if (n_null++ < 10)
+                return NULL_EVENT;
+            CHECK(log_count("/dlna/art/1.jpg", NULL, NULL) >= 1, "a poster fetched from its albumArtURI");
+            pc = 96110;
+            return ev_redraw(b, w_browser);
+        case 96110:
+            save_picture("films-dlna.ppm", w_browser);
+            pc = 9612;
+            return ev_tile(b, find_tile("Big Bunny DLNA"), 4);
+        case 9612: {
+            int x, y;
+            CHECK(ui_test_page() == PG_DETAILS && strstr(ui_test_det(2), "Direct Play: H.264 1920x1080"), "its details: %s",
+                  ui_test_det(2));
+            CHECK(ui_test_button_xy(w_browser, D_STAR, &x, &y) != 0, "no stars: a DLNA server keeps none");
+            CHECK(strstr(ui_test_det(3), "A rabbit & a squirrel."), "its summary: %s", ui_test_det(3));
+            fake_rc.len = 634;
+            pc = 96120;
+            return ev_redraw(b, w_browser);
+        }
+        case 96120:
+            save_picture("details-dlna.ppm", w_browser);
+            open0 = fake_rc.opens;
+            pc = 9613;
+            return ev_button(b, w_browser, D_PLAY, 0x400);
+        case 9613:
+            snprintf(want, sizeof(want), "%s/dlna/media/0.mp4", base);
+            CHECK(ui_test_page() == PG_PLAYER && fake_rc.opens == open0 + 1 && !strcmp(fake_rc.url, want),
+                  "played: the file itself, from its own address (%s)", fake_rc.url);
+            CHECK(!strstr(fake_rc.headers, "X-Plex") && !strstr(fake_rc.headers, "Authorization"), "no Plex or Jellyfin headers: %s",
+                  fake_rc.headers);
+            n_null = 0;
+            pc++;
+            continue;
+        case 9614:
+            if (!player_ready() && n_null++ < 50) {
+                fake_cs += 2;
+                return NULL_EVENT;
+            }
+            fake_cs += 3000;                                    /* 30 s in */
+            pc++;
+            return NULL_EVENT;
+        case 9615:
+            pc++;
+            return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
+                            win(w_browser)->vis[3] - 100, 2);
+        case 9616:
+            pc++;
+            return ev_menu(b, MP_STOP, -1);
+        case 9617: {
+            char places[400];
+            snprintf(places, sizeof(places), "%s/choices/Places", outdir);
+            CHECK(ui_test_page() == PG_DETAILS && strstr(read_file(places), "uuid:4d696e69-444c-164e-9d41-b827eb000001\t64%240%240\t") &&
+                  strstr(read_file(places), "\tBig Bunny DLNA\t"), "stopped: where it got to kept beside Choices:\n%s",
+                  read_file(places));
+            pc++;
+            return ev_button(b, w_browser, TB_TAB + 0, 0x400);  /* Home */
+        }
+        case 9618: {
+            int rows = 0, pick = 0, st = 0, n = 0, vis = 0;
+            CHECK(ui_test_page() == PG_GRID && ui_test_home(&rows, &pick) && rows >= 1 &&
+                  !strcmp(ui_test_home_row(0, &st, &n, &vis), "Continue watching") && n == 1 &&
+                  !strcmp(ui_test_item(st, 0), "Big Bunny DLNA"), "Home: Continue watching it (%d rows)", rows);
+            report_answer = 1;
+            prev_reports = reports;
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        }
+        case 9619:
+            pc++;
+            return ev_menu(b, MB_SIGNOUT, -1);
+        case 9620:
+            CHECK(reports == prev_reports + 1 && strstr(last_report, "Forget Attic NAS: minidlna?"), "asked: %s", last_report);
+            CHECK(!win(w_browser)->open && ui_test_dl_servers() == 0 && !strstr(read_file(choices), "dlna ") &&
+                  strstr(read_file(choices), "server_kind 0\n"), "forgotten:\n%s", read_file(choices));
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 2);
+        case 9621:
+            pc++;
+            return ev_menu(b, MB_SERVERS, 0);                   /* Add a server... */
+        case 9622:
+            pc++;
+            return ev_button(b, w_browser, S_PICK_DLNA, 0x400);
+        case 9623:
+            snprintf(type_str, sizeof(type_str), "127.0.0.1");  /* by its address: asked over SSDP where it is */
+            type_i = 0;
+            pc++;
+            return ev_button(b, w_browser, S_DADDR, 0x400);
+        case 9624:
+            if (type_str[type_i])
+                return ev_key(b, w_browser, -1, (unsigned char)type_str[type_i++]);
+            pc++;
+            return ev_key(b, w_browser, -1, 13);                /* Return: Use */
+        case 9625: {
+            int rows = 0, pick = 0, st = 0, n = 0, vis = 0;
+            CHECK(ui_test_page() == PG_GRID && ui_test_server_kind() == SRV_DLNA && ui_test_dl_servers() == 1 &&
+                  ui_test_home(&rows, &pick) && !strcmp(ui_test_home_row(0, &st, &n, &vis), "Continue watching"),
+                  "added again by its address; where you got to was kept (%s)", ui_test_status());
+            pc++;
+            return ev_msg(b, 0, 0, 0);
+        }
+        /* ---- the fifth run: started with the DLNA server in Choices */
+        case 9700:
+            pc++;
+            return ev_click(b, -2, 3, 1000, 20, 4);             /* Select on the icon */
+        case 9701: {
+            int rows = 0, pick = 0, st = 0, n = 0, vis = 0;
+            CHECK(ui_test_page() == PG_GRID && ui_test_server_kind() == SRV_DLNA && !strcmp(ui_test_path(), "Attic NAS: minidlna") &&
+                  ui_test_home(&rows, &pick) && !strcmp(ui_test_home_row(0, &st, &n, &vis), "Continue watching") &&
+                  !strcmp(ui_test_item(st, 0), "Big Bunny DLNA"),
+                  "started again: the DLNA server from Choices, its description read again (%s; %s)", ui_test_path(),
+                  ui_test_status());
+            pc++;
+            return ev_msg(b, 0, 0, 0);
+        }
         default:
             printf("  script ran out at %d\n", pc);
             fails++;
@@ -3390,6 +3584,8 @@ int main(int argc, char **argv)
     snprintf(cmd, sizeof(cmd), "%s/choices", outdir);
     setenv("Matinee$ChoicesDir", cmd, 1);
     setenv("Matinee$PlexTV", base, 1);
+    snprintf(cmd, sizeof(cmd), "127.0.0.1:%s", argv[1]);
+    setenv("Matinee$SSDP", cmd, 1);             /* M-SEARCH to the fake, which answers there */
     {
         FILE *f = fopen(choices, "w");      /* the hand-off first: ReelEGL chosen */
         if (f) {
@@ -3440,6 +3636,16 @@ int main(int argc, char **argv)
     ntasks = 0;
     CHECK(matinee_main(1, argv) == 0, "third run ends cleanly");
 
+    /* fourth run: a DLNA server found, browsed, played from, forgotten and added again */
+    nwins = 0; pc = 9600; menu_open = NULL; bar_icon_made = 0;
+    ntasks = 0;
+    CHECK(matinee_main(1, argv) == 0, "fourth run ends cleanly");
+
+    /* fifth run: started again, the DLNA server in use from Choices */
+    nwins = 0; pc = 9700; menu_open = NULL; bar_icon_made = 0;
+    ntasks = 0;
+    CHECK(matinee_main(1, argv) == 0, "fifth run ends cleanly");
+
     /* a second copy: another Matinee task is running */
     nwins = 0; bar_icon_made = 0;
     tasks[0].handle = 0x999; tasks[0].name = "Matinee\r";
@@ -3475,6 +3681,16 @@ int main(int argc, char **argv)
               !imgcache_jpeg_whole("\xff\xd8\x01\x02\x03\x04", 6) && !imgcache_jpeg_whole("GIF89a\xff\xd9", 8),
               "a whole JPEG told from one cut short");
         free(d);
+    }
+    {
+        /* a window the Wimp doesn't know: the block given back zeroed, not
+           left with what was in it (callers read its size and scroll) */
+        int st[9], zero = 1;
+        memset(st, 0x55, sizeof(st));
+        ui_test_window_state(0x12345, st);
+        for (int i = 1; i < 9; i++)
+            zero &= st[i] == 0;
+        CHECK(st[0] == 0x12345 && zero, "window_state refused: its block zeroed (%x %x)", st[0], st[3]);
     }
     printf("ui_test: %d checks, %d failed\n", checks, fails);
     return fails != 0;

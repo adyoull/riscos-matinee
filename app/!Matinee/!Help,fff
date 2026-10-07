@@ -1,8 +1,8 @@
-!Matinee - a Plex and Jellyfin client for RISC OS     0.1.0-test35
+!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.0-test36
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
-a Jellyfin server) and plays them in its own window, with the player core of riscos-ffmpeg's
+a Jellyfin server, or a DLNA media server) and plays them in its own window, with the player core of riscos-ffmpeg's
 Reel (or hands them to ReelEGL or Reel, if you'd rather). Files it can
 play as they are are played directly. Everything else is converted by
 the server, as it plays, into a stream it can handle: H.264 video with
@@ -22,7 +22,7 @@ appears on the icon bar. The first time, click Select on it to sign in.
 Signing in
 ----------
 Matinee has one window. Until you've signed in, it shows Add a server:
-choose Plex or Jellyfin (below). Plex's sign-in page has a four-letter
+choose Plex, Jellyfin or DLNA (below). Plex's sign-in page has a four-letter
 code. On any computer or phone, go to plex.tv/link,
 sign in to your Plex account there, and type the code. Matinee checks every
 2 seconds, and carries on by itself once the code has been typed: it finds
@@ -36,7 +36,7 @@ account's X-Plex-Token; it's shown as dots), then Return or Use these.
 Backspace deletes, Ctrl-U empties the field.
 
 Add a server... (on the icon's menu, and at the foot of Servers) asks
-which kind the server is, Plex or Jellyfin, then shows its sign-in.
+which kind the server is, Plex, Jellyfin or DLNA, then shows its sign-in.
 Back goes to that choice again; Cancel (or Escape) adds nothing and goes
 back to where you were.
 
@@ -67,6 +67,38 @@ Continue watching forgets where you got to.
 
 Sign out of this server (the icon's menu, while a Jellyfin server is in
 use) signs out on the server and forgets it; your Plex sign-in is kept.
+
+DLNA servers
+------------
+A DLNA (UPnP) media server shares the files in its folders: MiniDLNA
+(ReadyMedia, on many NAS boxes), a NAS's own media server, or the DLNA
+side of Plex or Jellyfin. Choose DLNA under Add a server: Matinee looks
+on your network for 2 seconds and lists the servers it finds; click one
+to use it. Search again looks again. If yours isn't found (some routers
+and Wi-Fi access points don't pass on the look), type its address, such
+as 192.168.1.10:8200 (MiniDLNA) or 192.168.1.10:32469 (Plex's DLNA), or
+the address of its description (http://.../rootDesc.xml), and press
+Return or Use. There's nothing to sign in to.
+
+Its top-level folders are the libraries (Music and Pictures are left
+out); folders open as lists, a page at a time as other libraries do. Songs
+and pictures are shown but not played. Search asks the server, if it can
+search.
+
+A DLNA server seldom says how a file is encoded, so Matinee goes by its
+type, picture size and bit rate. A file that should play is played as it
+is. Otherwise, if the server offers converted versions (Plex's DLNA,
+Serviio and Universal Media Server do; MiniDLNA doesn't), the biggest
+that fits the Quality is played; if not, the file is tried anyway. A
+4K file on a Pi 4 is taken to be HEVC, for its HEVC block. Seeking in a
+converted stream depends on the server.
+
+DLNA servers don't keep where you got to or what you've watched, so
+Matinee keeps them, in Choices (Matinee.Places): Continue watching on the
+home page, Resume, the tick when watched, and Mark watched work as on a
+Plex server. There are no star ratings, subtitle or sound track choices,
+or Skip intro. Forget this server (the icon's menu) forgets the server;
+where you got to in its videos is kept, for if it's added again.
 
 The browser
 -----------
@@ -374,7 +406,8 @@ starts. Clear image cache on the icon's menu empties it, and says how
 big it was.
 
 Sign out (on the icon's menu) asks first. With a Plex server it forgets
-your Plex sign-in; with a Jellyfin server, that server only.
+your Plex sign-in; with a Jellyfin server, that server only; with a DLNA
+server it's Forget this server.
 
 Who's watching (Plex Home)
 --------------------------
@@ -391,7 +424,7 @@ Choices
 Kept in Choices:Matinee.Choices: the player, the quality, direct play,
 the poster size, the built-in player's picture, volume and hardware
 overlay, the server in use, who's watching (Plex Home), the Jellyfin
-servers you've signed in to, and the tokens that sign Matinee in to
+servers you've signed in to, the DLNA servers you've used, and the tokens that sign Matinee in to
 plex.tv and the servers. Anyone who can read your Choices can use those tokens: Sign out
 on the icon's menu removes them.
 

@@ -11,11 +11,13 @@ enum { PG_GRID, PG_DETAILS, PG_SIGNIN, PG_PLAYER };
 
 /* The sign-in page's buttons and fields (drawn, not icons): Plex's, then
    Jellyfin's (its address, Quick Connect, name, password, Sign in); the
-   first page's choice of kind (S_PICK_*); Back (to that choice) and Cancel */
+   first page's choice of kind (S_PICK_*); Back (to that choice) and Cancel;
+   DLNA's (its address, Use, Search again, and the servers found: S_FOUND + n) */
 enum { S_NEWCODE = 200, S_USE, S_ADDR, S_TOK, S_QC, S_JADDR, S_JUSER, S_JPW, S_LOGIN, S_PICK_PLEX, S_PICK_JF,
-       S_BACK, S_CANCEL };
-/* What the sign-in page shows: the choice of kind, Plex's sign-in, Jellyfin's */
-enum { SI_PICK, SI_PLEX, SI_JF };
+       S_BACK, S_CANCEL, S_PICK_DLNA, S_DADDR, S_DUSE, S_DSEARCH, S_FOUND = 240 };
+#define SI_FOUND_SHOWN 6            /* the servers found shown on the page */
+/* What the sign-in page shows: the choice of kind, Plex's sign-in, Jellyfin's, DLNA's */
+enum { SI_PICK, SI_PLEX, SI_JF, SI_DLNA };
 
 /* The browser's and details window's buttons (drawn, not icons) */
 enum { B_BACK = 100, B_REFRESH, D_PLAY, D_RESUME, D_START, D_SAVE, D_WATCHED, D_SUBS, B_SEARCH };
@@ -69,6 +71,10 @@ const char *ui_test_rel(int k, int *n);         /* a details page row's heading 
 int ui_test_signin_jf(void);                    /* the sign-in page is Jellyfin's */
 int ui_test_signin_mode(void);                  /* SI_*, or -1 if it isn't the sign-in page */
 int ui_test_jf_servers(void);                   /* Jellyfin servers saved */
+int ui_test_dl_servers(void);                   /* DLNA servers kept */
+void ui_test_window_state(int w, int *st);      /* window_state() itself */
+int ui_test_dlna_found(void);                   /* the DLNA page's servers found (-1: not on it) */
+int ui_test_server_kind(void);                  /* SRV_* of the server in use */
 int ui_test_field(void);
 int ui_test_button_xy(int w, int id, int *x, int *y);   /* a drawn button's middle */
 const char *ui_test_button(int id);             /* a details button's label, or NULL */

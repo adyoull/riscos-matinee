@@ -21,9 +21,10 @@
 
 #define PLEX_TV "https://plex.tv"
 
-/* What kind of server is in use: Plex, or Jellyfin (jellyfin.c, which
-   gives the same lists and playing through the same calls) */
-enum { SRV_PLEX, SRV_JELLYFIN };
+/* What kind of server is in use: Plex, Jellyfin (jellyfin.c) or a DLNA
+   server (dlna.c), the last two giving the same lists and playing through
+   the same calls */
+enum { SRV_PLEX, SRV_JELLYFIN, SRV_DLNA };
 
 typedef struct {
     int kind;               /* SRV_* */
@@ -43,6 +44,9 @@ typedef struct {
     char user_id[48];       /* Jellyfin: who's signed in on the server (its user's Id) */
     char user_name[64];
     char plextv[128];       /* https://plex.tv, or the tests' fake */
+    char ctl[256];          /* DLNA: ContentDirectory's control address ("" until the
+                               description is read again) */
+    char svc[96];           /* DLNA: its service type (ContentDirectory:1...) */
     char err[256];          /* what went wrong last */
 } plex_ctx;
 

@@ -25,6 +25,11 @@ if s.count(old) != 1:
     sys.exit("mutation not found once in %s: %r" % (path, old))
 open(path, 'w').write(s.replace(old, new))
 EOF
+  if [ $? != 0 ]; then              # the code has moved on: the mutation needs updating
+    echo "STALE: $1"
+    survived=$((survived + 1))
+    return
+  fi
   if OUT=$WORK/out PORT=$((18500 + n)) sh "$WORK/tests/host/run.sh" > "$WORK/log" 2>&1; then
     echo "SURVIVED: $1"
     survived=$((survived + 1))
@@ -56,7 +61,7 @@ mutate "1MB saved a null event" src/ui.c \
 mutate "Play from start keeps Reel's carry-on key" src/ui.c \
   'p.key[0] = 0;               /* not where' '(void)0;               /* not where'
 mutate "Resume doesn't turn direct play off" src/ui.c \
-  'if (how == PLAY_RESUME)\n        allow = 0;' ''
+  'if (how == PLAY_RESUME && S.px.kind != SRV_DLNA)\n        allow = 0;' ''
 mutate "posters drawn on the screen (output not switched)" src/ui.c \
   'r.r[2] = (intptr_t)(area + 4);\n    r.r[3] = 0;' 'r.r[2] = 0;\n    r.r[3] = 0;'
 mutate "subtitles chosen, yet played directly" src/caps.c \
@@ -72,7 +77,7 @@ mutate "typing ignored on the sign-in page" src/ui.c \
 mutate "the shapes' edges not smoothed" src/draw.c \
   'n += inside(g, (x + (i + 0.5) / 4) / w, (y + (j + 0.5) / 4) / h);' 'n = 16 * inside(g, (x + 0.5) / w, (y + 0.5) / h);'
 mutate "the pointer's poster not found" src/ui.c \
-  'set_hover(p[3] == S.browser_w ? tile_at(p[0], p[1]) : -1);' 'set_hover(-1);'
+  'set_hover(p[3] == S.browser_w && S.page == PG_GRID ? tile_at(p[0], p[1]) : -1);' 'set_hover(-1);'
 mutate "backdrop not faded" src/ui.c \
   '    } else if (art == 1) {\n        sprite_fade(p->area, w, h);\n    }' '    }'
 mutate "posters not rounded (no mask)" src/ui.c \
@@ -119,7 +124,7 @@ mutate "Back to a search forgets its words" src/ui.c \
   'latin1(path + 7, S.query, sizeof(S.query));' '(void)0;'
 # the image cache
 mutate "the image cache not read" src/ui.c \
-  'if (imgcache_get(key, jpeg, len) == 0)\n        return 0;' ''
+  'if (imgcache_get(key, jpeg, len) == 0) {\n        if (imgcache_jpeg_whole(*jpeg, *len))' 'if (0) {\n        if (imgcache_jpeg_whole(*jpeg, *len))'
 mutate "the cache trimmed in any order" src/imgcache.c \
   'qsort(l.v, l.n, sizeof(*l.v), older);' '(void)older;'
 mutate "Clear image cache deletes nothing" src/imgcache.c \
@@ -207,7 +212,7 @@ mutate "A to Z ignores The" src/ui.c \
 mutate "Unwatched not asked for" src/ui.c \
   'unwatched ? (sort ? "&unwatched=1" : "unwatched=1") : ""' '""'
 mutate "More like this not fetched" src/ui.c \
-  'snprintf(path, sizeof(path), "/library/metadata/%s/%s", S.det.v[0].rating_key, k ? "extras" : "similar");' 'snprintf(path, sizeof(path), "/nowhere");'
+  'snprintf(path, sizeof(path), "/library/metadata/%s/%s", v->rating_key, k == REL_EXTRAS ? "extras" : "similar");' 'snprintf(path, sizeof(path), "/nowhere");'
 
 # test16: skip intro and credits, chapters
 mutate "a marker's end counts as in it" src/plex.c \
@@ -324,6 +329,40 @@ mutate "an empty page leaves more to ask for" src/plex.c \
   '        l->total = l->n;\n        return 0;' '        return 0;'
 mutate "a later page's items not shown as fetched" src/ui.c \
   '    S.more_wanted = l.total > l.n && *path && strncmp(path, "search:", 7) && !S.home.on && !S.show.on;' '    S.more_wanted = 0;'
+
+# test36: DLNA servers
+mutate "SSDP answers' LOCATION not read" src/dlna.c \
+  'if (!strncasecmp(l, "LOCATION:", 9)) {' 'if (!strncasecmp(l, "LOCATIONX:", 10)) {'
+mutate "a relative control address taken from the host" src/dlna.c \
+  '    if (*rel == '"'"'/'"'"') {\n        snprintf(out, size, "%s%s", o, rel);' '    if (1) {\n        snprintf(out, size, "%s/%s", o, rel + (*rel == '"'"'/'"'"'));'
+mutate "a device with no ContentDirectory taken" src/dlna.c \
+  'if (!strcmp(s->name, "service") && t && strstr(t, ":service:ContentDirectory:")) {' 'if (!strcmp(s->name, "service") || !t || 1) {'
+mutate "object ids not escaped in keys" src/dlna.c \
+  '    net_escape(id, eid, sizeof(eid));\n    it->rating_key' '    snprintf(eid, sizeof(eid), "%s", id);\n    it->rating_key'
+mutate "Music and Pictures kept as libraries" src/dlna.c \
+  '    for (int i = 0; title && no[i]; i++)' '    for (int i = 0; title && no[i] && 0; i++)'
+mutate "a DLNA folder not paged" src/dlna.c \
+  '    out->total = meta ? out->n : total > start + out->n ? total : start + out->n;' '    out->total = out->n;'
+mutate "a converted stream bigger than the Quality chosen" src/dlna.c \
+  '        if ((r[i].w <= k->max_w && r[i].h <= k->max_h) && (best < 0' '        if ((1) && (best < 0'
+mutate "4K with the HEVC block not taken for HEVC" src/dlna.c \
+  '        if (k->hevc && t->width <= CAPS_HEVC_W' '        if (0 && k->hevc && t->width <= CAPS_HEVC_W'
+mutate "DLNA watched only at the very end" src/dlna.c \
+  '    if (p->dur > 0 && time_ms >= p->dur * 9 / 10) {' '    if (p->dur > 0 && time_ms >= p->dur) {'
+mutate "DLNA places not read again" src/dlna.c \
+  '    nplaces = places_read = 0;' '    nplaces = 0;'
+mutate "SOAPACTION without its quotes" src/dlna.c \
+  'snprintf(headers, sizeof(headers), "SOAPACTION: \\"%s#%s\\"\\r\\n", svc, action);' 'snprintf(headers, sizeof(headers), "SOAPACTION: %s#%s\\r\\n", svc, action);'
+mutate "XML &amp; not decoded" src/xml.c \
+  'else if (len == 4 && !strncmp(s, "&amp", 4)) c = '"'"'&'"'"';' 'else if (len == 4 && !strncmp(s, "&amp", 4)) c = 0;'
+mutate "a DLNA server in Choices taken for Plex" src/ui.c \
+  'atoi(v) == SRV_DLNA ? SRV_DLNA : SRV_PLEX;' 'SRV_PLEX;'
+mutate "Return on the DLNA page not Use" src/ui.c \
+  'return S.si_mode == SI_JF ? 3 : S.si_mode == SI_DLNA ? 5 : 2;' 'return S.si_mode == SI_JF ? 3 : 2;'
+mutate "a DLNA server's home page without its libraries" src/plex.c \
+  '    if (c->kind == SRV_DLNA && secs.n && nr < max) {' '    if (0) {'
+mutate "a DLNA poster that isn't a JPEG taken" src/dlna.c \
+  '    if (b.len < 4 || (unsigned char)b.data[0] != 0xFF || (unsigned char)b.data[1] != 0xD8) {' '    if (b.len < 4) {'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

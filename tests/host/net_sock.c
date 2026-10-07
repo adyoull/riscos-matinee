@@ -109,7 +109,8 @@ static int request(const char *url, const char *headers, const char *method, con
         snprintf(req, rl, "%s %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s"
                  "Content-Type: %s\r\nContent-Length: %d\r\n\r\n%s",
                  method, path, host, port, agent, headers ? headers : "",
-                 *body == '{' || *body == '[' ? "application/json" : "application/x-www-form-urlencoded",
+                 *body == '{' || *body == '[' ? "application/json" :
+                 *body == '<' ? "text/xml; charset=\"utf-8\"" : "application/x-www-form-urlencoded",
                  (int)strlen(body), body);
     } else {
         snprintf(req, rl, "GET %s HTTP/1.1\r\nHost: %s:%d\r\nUser-Agent: %s\r\nConnection: close\r\n%s\r\n",

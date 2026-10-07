@@ -136,7 +136,8 @@ int net_send(const char *url, const char *headers, const char *method, const cha
         h = malloc((headers ? strlen(headers) : 0) + 64);
         if (h) {
             sprintf(h, "%sContent-Type: %s\r\n", headers ? headers : "",
-                    *body == '{' || *body == '[' ? "application/json" : "application/x-www-form-urlencoded");
+                    *body == '{' || *body == '[' ? "application/json" :
+                    *body == '<' ? "text/xml; charset=\"utf-8\"" : "application/x-www-form-urlencoded");
             av_dict_set(&o, "headers", h, 0);
             free(h);
         }

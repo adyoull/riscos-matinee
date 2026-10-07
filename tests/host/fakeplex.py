@@ -6,7 +6,8 @@ returns the record as JSON, POST /_reset clears it.
 
 The part file /library/parts/11/111/file.mp4 is 5 MB of a fixed pattern
 (Range is honoured, as Plex does)."""
-import json, sys, threading, hashlib, gzip
+import json, sys, threading, hashlib, gzip, socket, re
+from xml.sax.saxutils import escape as xesc
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
@@ -222,6 +223,121 @@ def jf_items(ids, total=None):
     return {"Items": its, "TotalRecordCount": len(its) if total is None else total}
 
 
+# ---- a DLNA media server: SSDP on UDP PORT, its description, ContentDirectory ----
+DL_UDN = "uuid:4d696e69-444c-164e-9d41-b827eb000001"
+DL_BASE = "http://127.0.0.1:%d" % PORT
+DL_DESC = """<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion>
+<device><deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
+<friendlyName>Attic NAS: minidlna</friendlyName><manufacturer>Justin Maggard</manufacturer>
+<UDN>%s</UDN>
+<serviceList>
+<service><serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+<serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId><controlURL>/ctl/ConnectionMgr</controlURL></service>
+<service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>
+<serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId><controlURL>ctl/ContentDir</controlURL>
+<eventSubURL>/evt/ContentDir</eventSubURL><SCPDURL>/ContentDir.xml</SCPDURL></service>
+</serviceList></device></root>""" % DL_UDN
+# a device that isn't a media server (a printer, say): found, then left out
+DL_OTHER = """<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device>
+<deviceType>urn:schemas-upnp-org:device:Printer:1</deviceType><friendlyName>Printer</friendlyName>
+<UDN>uuid:printer</UDN><serviceList></serviceList></device></root>"""
+
+def dl_res(url, mime, pn=None, ci=0, w=0, h=0, bps=0, dur="0:10:34.000", size=0, ch=2):
+    pi = "http-get:*:%s:" % mime + (";".join(x for x in (
+        ("DLNA.ORG_PN=" + pn) if pn else None, "DLNA.ORG_OP=01", "DLNA.ORG_CI=%d" % ci,
+        "DLNA.ORG_FLAGS=01700000000000000000000000000000") if x) if pn or ci else "*")
+    a = ' protocolInfo="%s" duration="%s"' % (xesc(pi, {'"': "&quot;"}), dur)
+    if size: a += ' size="%d"' % size
+    if w: a += ' resolution="%dx%d"' % (w, h)
+    if bps: a += ' bitrate="%d"' % bps
+    if ch: a += ' nrAudioChannels="%d"' % ch
+    return '<res%s>%s</res>' % (a, xesc(url))
+
+# the tree: id -> (parent, kind, title, extra)
+DL_TREE = {
+    "0": (None, "c", "root", {}),
+    "64": ("0", "c", "Video", {}),
+    "1": ("0", "c", "Music", {}),
+    "3": ("0", "c", "Pictures", {}),
+    "64$0": ("64", "c", "Films", {}),
+    "64$1": ("64", "c", "Box Sets & More", {}),
+    "64$0$0": ("64$0", "v", "Big Bunny DLNA", {
+        "date": "2008-04-10", "desc": "A rabbit & a squirrel.", "genre": ["Animation", "Comedy"], "actor": ["Frank"],
+        "art": "/dlna/art/1.jpg",
+        "res": [dl_res(DL_BASE + "/dlna/media/0.mp4", "video/mp4", "AVC_MP4_HP_HD_AAC", 0, 1920, 1080, 625000,
+                       size=3500000000, ch=6)]}),
+    "64$0$1": ("64$0", "v", "Big 4K Film", {
+        "art": "/dlna/art/2.png",
+        "res": [dl_res(DL_BASE + "/dlna/media/1.mkv", "video/x-matroska", None, 0, 3840, 2160, 2500000),
+                dl_res(DL_BASE + "/dlna/conv/1-1080.ts", "video/mpeg", "MPEG_TS_HD_NA_ISO", 1, 1920, 1080),
+                dl_res(DL_BASE + "/dlna/conv/1-720.ts", "video/mpeg", "MPEG_TS_HD_NA_ISO", 1, 1280, 720)]}),
+    "64$0$2": ("64$0", "v", "Old Clip", {
+        "res": [dl_res("/dlna/media/2.avi", "video/x-msvideo", None, 0, 640, 480, 150000, dur="0:02:00.000")]}),
+    "64$0$3": ("64$0", "a", "A Song", {"res": [dl_res(DL_BASE + "/dlna/media/3.mp3", "audio/mpeg", "MP3")]}),
+}
+
+def dl_children(oid):
+    return [k for k, v in DL_TREE.items() if v[0] == oid]
+
+def dl_didl(ids):
+    out = ['<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" '
+           'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">']
+    for i in ids:
+        par, kind, title, x = DL_TREE[i]
+        if kind == "c":
+            out.append('<container id="%s" parentID="%s" restricted="1" searchable="1" childCount="%d">'
+                       '<dc:title>%s</dc:title><upnp:class>object.container.storageFolder</upnp:class></container>'
+                       % (xesc(i), xesc(par or "-1"), len(dl_children(i)), xesc(title)))
+            continue
+        cls = "object.item.videoItem" if kind == "v" else "object.item.audioItem.musicTrack"
+        body = "<dc:title>%s</dc:title><upnp:class>%s</upnp:class>" % (xesc(title), cls)
+        if "date" in x: body += "<dc:date>%s</dc:date>" % x["date"]
+        if "desc" in x: body += "<dc:description>%s</dc:description>" % xesc(x["desc"])
+        for g in x.get("genre", []): body += "<upnp:genre>%s</upnp:genre>" % xesc(g)
+        for a in x.get("actor", []): body += "<upnp:actor>%s</upnp:actor>" % xesc(a)
+        if "art" in x:
+            body += '<upnp:albumArtURI dlna:profileID="JPEG_TN">%s</upnp:albumArtURI>' % (DL_BASE + x["art"])
+        body += "".join(x.get("res", []))
+        out.append('<item id="%s" parentID="%s" restricted="1">%s</item>' % (xesc(i), xesc(par), body))
+    out.append("</DIDL-Lite>")
+    return "".join(out)
+
+def dl_soap(action, inner):
+    return ('<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+            's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
+            '<u:%sResponse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">%s</u:%sResponse>'
+            '</s:Body></s:Envelope>' % (action, inner, action)).encode()
+
+DL_FAULT = (b'<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault>'
+            b'<faultcode>s:Client</faultcode><faultstring>UPnPError</faultstring><detail><UPnPError '
+            b'xmlns="urn:schemas-upnp-org:control-1-0"><errorCode>701</errorCode><errorDescription>No such object'
+            b'</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>')
+
+def dl_arg(body, name):
+    m = re.search(r"<%s>(.*?)</%s>" % (name, name), body, re.S)
+    v = m.group(1) if m else ""
+    return v.replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+
+def dl_ssdp():
+    """Answers M-SEARCH for a MediaServer (or ssdp:all) with two devices'
+    descriptions: the media server's and a printer's"""
+    sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sk.bind(("127.0.0.1", PORT))
+    while True:
+        data, addr = sk.recvfrom(2048)
+        t = data.decode("latin-1")
+        with LOCK:
+            LOG.append({"method": "SSDP", "path": "/ssdp", "query": {}, "headers": {}, "body": t})
+        if not t.startswith("M-SEARCH") or ("MediaServer:1" not in t and "ssdp:all" not in t):
+            continue
+        for loc in ("/dlna/printer.xml", "/dlna/rootDesc.xml"):
+            sk.sendto(("HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLocation: %s%s\r\n"
+                       "SERVER: Linux UPnP/1.0 MiniDLNA/1.3.0\r\nST: urn:schemas-upnp-org:device:MediaServer:1\r\n"
+                       "USN: %s::urn:schemas-upnp-org:device:MediaServer:1\r\n\r\n" % (DL_BASE, loc, DL_UDN)).encode(),
+                      addr)
+
+
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -409,6 +525,28 @@ class H(BaseHTTPRequestHandler):
                 JF_QC.update({"polls": 0, "secret": None})
             return self.send(200, {})
         self.record(body)
+        if p == "/dlna/ctl/ContentDir":
+            b = body.decode("utf-8")
+            act = (self.headers.get("SOAPACTION") or "").strip('"').split("#")[-1]
+            start, count = int(dl_arg(b, "StartingIndex") or 0), int(dl_arg(b, "RequestedCount") or 0)
+            if act == "Browse":
+                oid, flag = dl_arg(b, "ObjectID"), dl_arg(b, "BrowseFlag")
+                if oid not in DL_TREE:
+                    return self.send(500, raw=DL_FAULT, ctype='text/xml; charset="utf-8"')
+                ids = [oid] if flag == "BrowseMetadata" else dl_children(oid)
+                total = len(ids)
+                ids = ids[start:start + count] if count else ids[start:]
+            elif act == "Search":
+                crit = dl_arg(b, "SearchCriteria")
+                m = re.search(r'dc:title contains "((?:[^"\\]|\\.)*)"', crit)
+                term = (m.group(1) if m else "").replace('\\"', '"').lower()
+                ids = [k for k, v in DL_TREE.items() if v[1] == "v" and term in v[2].lower()]
+                total = len(ids)
+            else:
+                return self.send(500, raw=DL_FAULT, ctype="text/xml")
+            inner = "<Result>%s</Result><NumberReturned>%d</NumberReturned><TotalMatches>%d</TotalMatches>" \
+                    "<UpdateID>1</UpdateID>" % (xesc(dl_didl(ids)), len(ids), total)
+            return self.send(200, raw=dl_soap(act, inner), ctype='text/xml; charset="utf-8"')
         if p.startswith(JF_PREFIXES):
             return self.jf(body)
         if p == "/playQueues":
@@ -472,6 +610,14 @@ class H(BaseHTTPRequestHandler):
         self.record()
         if p.startswith(JF_PREFIXES):
             return self.jf()
+        if p == "/dlna/rootDesc.xml":
+            return self.send(200, raw=DL_DESC.encode(), ctype='text/xml; charset="utf-8"')
+        if p == "/dlna/printer.xml":
+            return self.send(200, raw=DL_OTHER.encode(), ctype="text/xml")
+        if p.startswith("/dlna/art/") and p.endswith(".png"):     # a folder picture: not shown
+            return self.send(200, raw=b"\x89PNG\r\n\x1a\n" + p.encode(), ctype="image/png")
+        if p.startswith("/dlna/art/"):
+            return self.send(200, raw=jpeg(p), ctype="image/jpeg")
         if p == "/api/v2/pins/3141592653":
             PIN_POLLS["n"] += 1
             return self.send(200, {"id": 3141592653, "code": "ABCD",
@@ -650,4 +796,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("part md5", hashlib.md5(PART).hexdigest(), flush=True)
+    threading.Thread(target=dl_ssdp, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

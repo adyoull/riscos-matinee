@@ -5,6 +5,7 @@
 #include "plex.h"
 #include "plex_int.h"
 #include "jellyfin.h"
+#include "dlna.h"
 #include "net.h"
 #include "cJSON.h"
 
@@ -47,6 +48,11 @@ void plex_headers(const plex_ctx *c, const char *token, char *out, size_t size)
     int n;
     if (c->kind == SRV_JELLYFIN) {
         jf_headers(c, token, out, size);
+        return;
+    }
+    if (c->kind == SRV_DLNA) {      /* a DLNA server wants none */
+        if (size)
+            *out = 0;
         return;
     }
     n = snprintf(out, size,
@@ -819,6 +825,8 @@ static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_l
     memset(out, 0, sizeof(*out));
     if (c->kind == SRV_JELLYFIN)    /* the same paths, from Jellyfin's API */
         return jf_fetch(c, path, start, size, out);
+    if (c->kind == SRV_DLNA)        /* or from a DLNA server's ContentDirectory */
+        return dlna_fetch(c, path, start, size, out);
     snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=%d&X-Plex-Container-Size=%d",
              c->base, path, strchr(path, '?') ? "&" : "?", start, size);
     api_headers(c, c->token, headers, sizeof(headers));
@@ -924,6 +932,38 @@ int plex_home(plex_ctx *c, plex_list *out, plex_row *rows, int max, int *nrows, 
             }
         }
     }
+    /* a DLNA server has nothing "recently added": its libraries, as a row
+       (copies: the list given back has them for the tabs) */
+    if (c->kind == SRV_DLNA && secs.n && nr < max) {
+        plex_list lr;
+        int cap = 0;
+        memset(&lr, 0, sizeof(lr));
+        for (int i = 0; i < secs.n && !px_grow(&lr, &cap); i++) {
+            plex_item *d = &lr.v[lr.n++];
+            const plex_item *s2 = &secs.v[i];
+            memset(d, 0, sizeof(*d));
+            d->kind = s2->kind;
+            d->title = px_dup(s2->title);
+            d->subtitle = px_dup(s2->subtitle);
+            d->key = px_dup(s2->key);
+            d->rating_key = px_dup(s2->rating_key);
+            d->type = px_dup(s2->type);
+            d->thumb = px_dup(s2->thumb);
+        }
+        {
+            int start = out->n, n = lr.n;
+            if (n && plex_list_append(out, &lr) == 0) {
+                rows[nr].kind = PR_LIBRARIES;
+                rows[nr].start = start;
+                rows[nr].n = n;
+                snprintf(rows[nr].title, sizeof(rows[nr].title), "Libraries");
+                rows[nr].path[0] = 0;
+                nr++;
+            } else {
+                plex_list_free(&lr);
+            }
+        }
+    }
     *libs = secs;                   /* the libraries: the caller's, for its tabs */
     snprintf(out->title, sizeof(out->title), "%s", c->server_name);
     *nrows = nr;
@@ -989,6 +1029,10 @@ int plex_set_subtitle(plex_ctx *c, const plex_item *it, long stream_id)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_set_subtitle(c, it, stream_id);
+    if (c->kind == SRV_DLNA) {
+        set_err(c, "a DLNA server lists no subtitles%s", NULL);
+        return -1;
+    }
     char url[512], headers[1024];
     net_buf b;
     if (!it->part_id) {
@@ -1016,6 +1060,8 @@ int plex_remove_continue(plex_ctx *c, const plex_item *it)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_remove_continue(c, it);
+    if (c->kind == SRV_DLNA)
+        return dlna_remove_continue(c, it);
     char url[512], headers[1024];
     net_buf b;
     if (!it->rating_key) {
@@ -1034,6 +1080,10 @@ int plex_rate(plex_ctx *c, const plex_item *it, int rating)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_rate(c, it, rating);
+    if (c->kind == SRV_DLNA) {
+        set_err(c, "a DLNA server keeps no ratings%s", NULL);
+        return -1;
+    }
     char url[512], headers[1024];
     net_buf b;
     if (!it->rating_key) {
@@ -1117,6 +1167,10 @@ int plex_set_audio(plex_ctx *c, const plex_item *it, long stream_id)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_set_audio(c, it, stream_id);
+    if (c->kind == SRV_DLNA) {
+        set_err(c, "a DLNA server lists no sound tracks%s", NULL);
+        return -1;
+    }
     char url[512], headers[1024];
     net_buf b;
     if (!it->part_id) {
@@ -1138,6 +1192,11 @@ int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_play_queue(c, it, pl);
+    if (c->kind == SRV_DLNA) {      /* nothing to tell it */
+        pl->pq_id = pl->pq_item_id = 0;
+        pl->pq_version = 0;
+        return 0;
+    }
     char uri[256], esc[512], url[1024];
     cJSON *j, *mc, *m0;
     pl->pq_id = pl->pq_item_id = 0;
@@ -1171,6 +1230,8 @@ int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t t
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_timeline(c, it, state, time_ms, duration_ms, pl);
+    if (c->kind == SRV_DLNA)        /* kept here: the server keeps nothing */
+        return dlna_timeline(c, it, state, time_ms, duration_ms);
     char url[1400], esc[64], guid[300], headers[1200];
     net_buf b;
     size_t n, u;
@@ -1207,6 +1268,8 @@ int plex_search(plex_ctx *c, const char *query, plex_list *out)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_search(c, query, out);
+    if (c->kind == SRV_DLNA)
+        return dlna_search(c, query, out);
     static const char *const kinds[3] = { "movie", "show", "episode" };
     char esc[400], url[1024];
     cJSON *j, *hubs, *h, *m;
@@ -1250,6 +1313,8 @@ static int transcode_call(plex_ctx *c, const char *what, const char *session)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_transcode_call(c, what, session);
+    if (c->kind == SRV_DLNA)        /* its converting stops when the stream is closed */
+        return 0;
     char url[512], esc[96], headers[1024];
     net_buf b;
     if (!session || !*session)
@@ -1300,6 +1365,8 @@ int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_poster(c, thumb, w, h, jpeg, len);
+    if (c->kind == SRV_DLNA)        /* the picture as it is (the caller fits it) */
+        return dlna_poster(c, thumb, jpeg, len);
     char esc[512], url[1024], headers[1024];
     net_buf b;
     net_escape(thumb, esc, sizeof(esc));
@@ -1317,6 +1384,8 @@ int plex_mark(plex_ctx *c, const plex_item *it, int watched)
 {
     if (c->kind == SRV_JELLYFIN)
         return jf_mark(c, it, watched);
+    if (c->kind == SRV_DLNA)
+        return dlna_mark(c, it, watched);
     char url[512], esc[64], headers[1024];
     net_buf b;
     if (!it->rating_key)
@@ -1335,6 +1404,10 @@ void plex_part_url(const plex_ctx *c, const plex_item *it, char *url, size_t siz
 {
     if (c->kind == SRV_JELLYFIN && it->part_key) {    /* its token in the address too */
         snprintf(url, size, "%s%s&api_key=%s", c->base, it->part_key, c->token);
+        return;
+    }
+    if (c->kind == SRV_DLNA) {      /* the whole address */
+        snprintf(url, size, "%s", it->part_key ? it->part_key : "");
         return;
     }
     snprintf(url, size, "%s%s", c->base, it->part_key ? it->part_key : "");
