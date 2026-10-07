@@ -83,6 +83,15 @@ It takes well over an hour on one core.
 
 Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
 
+- `riscos-ffmpeg/releases/download/v5.1.10-riscos20/riscos-ffmpeg-devkit-5.1.10-riscos20.tgz`
+  (sha256 `1ad89f8670f72ebcb3e7484ea695e3ec35612255c30cc44f5329aa298e761167`), used from
+  test35: the riscos20 release (commit `61ff56a`, tags `v5.1.10-riscos20` and `reel-0.1.27`):
+  riscos19's code relinked with UnixLib 5.0.3.3 (FFmpeg rebuilt for `LLONG_MIN`). Headers
+  the same as riscos19's but the version. Tests use its sources at that tag (`REEL_SRC`).
+- `riscos-mesa/releases/download/v20.3.5-14/riscos-mesa-devkit-20.3.5-14.tgz` (sha256
+  `3c3c9bb0bd65b62bb7a58fda5a213a0683c2b8cb8687ca6c267bbf2f9b4588e4`), from test35: its libz
+  (the release's NEON texturing and GLSL JIT aren't in what Matinee links; built with
+  UnixLib 5.0.3.3).
 - `riscos-ffmpeg/releases/download/v5.1.10-riscos19/riscos-ffmpeg-devkit-5.1.10-riscos19.tgz`
   (sha256 `f416ba9f6c5be9c79f619f81692b15a82b6fd7f9e86bd25613fec30bd53a6c65`), used from
   test33: the riscos19 release (commit `b3a6e24`, tags `v5.1.10-riscos19` and `reel-0.1.26`):
