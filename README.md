@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: the first release candidate, 0.1.0-rc1** (after test builds 0.1.0-test1 to test37). test1 to test3 worked on a Raspberry Pi;
+**Status: 0.1.0, the first release** (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
