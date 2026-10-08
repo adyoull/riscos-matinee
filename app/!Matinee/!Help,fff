@@ -1,4 +1,4 @@
-!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.0-test37
+!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.0-rc1
 ===================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -8,7 +8,9 @@ play as they are are played directly. Everything else is converted by
 the server, as it plays, into a stream it can handle: H.264 video with
 stereo AAC sound.
 
-This is a test build.
+This is a release candidate: the first release, 0.1.0, follows once it has
+been tried more widely. Please report problems at
+https://github.com/adyoull/riscos-matinee/issues
 
 Matinee was called PlexRO in its first test builds (its choices and
 sign-in carry over). Plex is a trademark of Plex, Inc.; Matinee isn't
@@ -343,8 +345,9 @@ server starts converting from the new place, which can take a few
 seconds. While one is paused, Matinee tells the server now and then that
 it's still wanted.
 
-A log of what the player did goes to <Wimp$ScrapDir>.MatineeLog (*Set
-Matinee$Log off to stop it, or to a file's name).
+A log of what the player did can go to <Wimp$ScrapDir>.MatineeLog: it's
+off unless you *Set Matinee$Log on (or to a file's name) before starting
+Matinee. Send it with a report of a problem while playing.
 
 ReelEGL or Reel: if it's running, it gets the video at once; if not,
 Matinee starts it. The Filer must have seen the player's application
@@ -381,8 +384,8 @@ The built-in player reads ahead up to 10 seconds. RISC OS gives the
 reading only the time Matinee itself has, so while the read-ahead is
 under 6 seconds Matinee doesn't sleep between pictures: it gives that
 time to the reading until it's back to 9.5 seconds (the Task Manager
-shows Matinee busier meanwhile). Every 10 seconds MatineeLog (in the
-scrap directory) says how far ahead it is and how fast it came: send
+shows Matinee busier meanwhile). With the log on (above), every 10
+seconds MatineeLog says how far ahead it is and how fast it came: send
 it with a report of a video that buffers.
 
 Saving the original file

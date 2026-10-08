@@ -134,7 +134,8 @@ static int now_cs(void)
     return swi(OS_ReadMonotonicTime, &r) ? (int)(clock() * 100 / CLOCKS_PER_SEC) : r.r[0];
 }
 
-/* <Wimp$ScrapDir>.MatineeLog while playing (Matinee$Log: another file, or "off") */
+/* <Wimp$ScrapDir>.MatineeLog while playing (Matinee$Log: "on", another file, or
+   "off", as !Run sets it unless it's set already) */
 static void lg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lg(const char *fmt, ...)
 {
@@ -157,8 +158,8 @@ static void log_open(void)
         return;
     if (e && (!strcasecmp(e, "off") || !strcmp(e, "0")))
         return;
-    if (e && *e)
-        snprintf(path, sizeof(path), "%s", e);
+    if (e && *e && strcasecmp(e, "on") && strcmp(e, "1"))
+        snprintf(path, sizeof(path), "%s", e);       /* a file's name */
     else if (scrap && *scrap)
 #ifdef __riscos__
         snprintf(path, sizeof(path), "%s.MatineeLog", scrap);

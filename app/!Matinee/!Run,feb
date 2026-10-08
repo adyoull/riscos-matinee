@@ -1,6 +1,6 @@
-| !Run for !Matinee (a Plex client with a built-in player)
-| Puts Matinee on the icon bar: Select on it to sign in, or to browse your
-| Plex server. Videos play in Matinee's own window (riscos-ffmpeg's player
+| !Run for !Matinee (a Plex, Jellyfin and DLNA client with a built-in player)
+| Puts Matinee on the icon bar: Select on it to add a server, or to browse
+| the one in use. Videos play in Matinee's own window (riscos-ffmpeg's player
 | core), or in ReelEGL or Reel if chosen on the Player menu.
 Set Matinee$Dir <Obey$Dir>
 IconSprites <Matinee$Dir>.!Sprites
@@ -9,7 +9,7 @@ RMEnsure SharedUnixLibrary 1.16 IfThere System:Modules.SharedULib Then RMLoad Sy
 RMEnsure SharedUnixLibrary 1.16 Error Matinee needs SharedUnixLibrary 1.16 or later. Install it with PackMan.
 RMEnsure ARMEABISupport 0 IfThere System:Modules.ARMEABISupport Then RMLoad System:Modules.ARMEABISupport
 RMEnsure ARMEABISupport 0 Error Matinee needs the ARMEABISupport module. Install it with PackMan.
-| Threads: the thread timer of UnixLib 5.0.1 and later (Matinee is built with 5.0.3.1)
+| Threads: the thread timer of UnixLib 5.0.1 and later (Matinee is built with 5.0.3.3)
 | runs from the PThreadTicker module when it's loaded: a copy merged into
 | !System first, else the one in here. Without it UnixLib uses a copy in
 | the RMA, which also works.
@@ -32,5 +32,8 @@ RMEnsure SharedSoundBuffer 0.07 IfThere System:Modules.SSBuffer Then RMLoad Syst
 
 | The program is about 32MB (the player, and FFmpeg's format and codec
 | lists); the posters, pictures and sound are in a dynamic area ("Matinee Heap").
+| The player's log (<Wimp$ScrapDir>.MatineeLog) is off unless asked for:
+| *Set Matinee$Log on (or a file's name) before starting Matinee
+If "<Matinee$Log>" = "" Then Set Matinee$Log off
 WimpSlot -min 40960K -max 40960K
 Run <Matinee$Dir>.!RunImage %*0
