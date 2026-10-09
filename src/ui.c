@@ -152,7 +152,12 @@ static int libbar_h(void);
 #ifdef __riscos__
 /* UnixLib: the heap in a dynamic area of its own (the posters live there) */
 const char *const __dynamic_da_name = "Matinee Heap";
-int __dynamic_da_max_size = 512 << 20;    /* the posters, and the player's pictures and packets */
+/* The posters, and the player's pictures and packets. 128MB: an area
+   takes logical address space for its whole maximum when it's made, and
+   on a machine whose DALimit allows more, 512MB used to be taken however
+   little was in it. UnixLib adds "Matinee Heap 2" (and more) if the heap
+   needs it. */
+int __dynamic_da_max_size = 128 << 20;
 #endif
 
 static _kernel_oserror *swi(int n, _kernel_swi_regs *r) { return _kernel_swi(n, r, r); }
