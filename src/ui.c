@@ -46,6 +46,7 @@
  * Part of riscos-matinee. GPL v2 or later.
  */
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -367,6 +368,7 @@ static struct {
         int ping_cs;                /* a converted stream, paused: when to tell the server it's wanted */
         int prev_page;              /* the page to go back to */
         int tl_cs;                  /* when the server is told where it's got to next */
+        int tl_async;               /* builtin_timeline: this "playing" from the thread */
         int upnext_cs;              /* the next episode starts then (0: no card) */
         plex_list next;             /* the next episode */
         int menu_audio;             /* the Sound track submenu is the server's tracks */
@@ -4942,15 +4944,120 @@ static void builtin_subs_forget(void);
 #define PING_CS     3000            /* paused: the server's converting kept alive */
 #define UPNEXT_CS   1000
 
+/* The reports every 10 s while a video plays go from a thread of their
+   own. Each is a new connection to the server and its answer: 50 ms to a
+   few hundred, and on the desktop's own time that held up the pictures (a
+   stutter every 10 s). The thread has its own copies of what the request
+   needs (the server, the video's ids and its chosen tracks, the play
+   queue), so nothing it reads can change or be freed under it. One at a
+   time; the other reports (playing at the start, paused, stopped) are sent
+   as before, after waiting for it, so the server hears them in order. */
+static struct {
+    pthread_t th;
+    int running;                /* a thread to join */
+    volatile int done;
+    plex_ctx c;
+    plex_item it;
+    plex_playing pl;
+    int64_t t, d;
+    int cs, result;             /* how long it took; plex_timeline's answer */
+} TL;
+
+static void *timeline_thread(void *arg)
+{
+    int t0 = now_cs();
+    (void)arg;
+    TL.result = plex_timeline(&TL.c, &TL.it, "playing", TL.t, TL.d, &TL.pl);
+    TL.cs = now_cs() - t0;
+    TL.done = 1;
+    return NULL;
+}
+
+/* Waits for the thread's report (if any) and frees its copies */
+static void timeline_wait(void)
+{
+    if (!TL.running)
+        return;
+    pthread_join(TL.th, NULL);
+    TL.running = 0;
+    player_log("timeline: playing at %.1f s, told the server in %d cs%s%s", TL.t / 1000.0, TL.cs,
+               TL.result ? ": " : "", TL.result ? TL.c.err : "");
+    free(TL.it.rating_key);
+    free(TL.it.guid);
+    free(TL.it.source_id);
+    free(TL.it.subs);
+    free(TL.it.auds);
+    memset(&TL.it, 0, sizeof(TL.it));
+}
+
+static char *dup_or_null(const char *s)
+{
+    return s ? strdup(s) : NULL;
+}
+
+/* 0 = the thread is sending it */
+static int timeline_start(const plex_item *it, int64_t t, int64_t d)
+{
+    TL.c = S.px;
+    TL.pl = S.pl.pq;
+    TL.t = t;
+    TL.d = d;
+    memset(&TL.it, 0, sizeof(TL.it));
+    TL.it.rating_key = dup_or_null(it->rating_key);
+    TL.it.guid = dup_or_null(it->guid);
+    TL.it.source_id = dup_or_null(it->source_id);
+    if (it->nsubs && (TL.it.subs = malloc((size_t)it->nsubs * sizeof(*it->subs))) != NULL) {
+        memcpy(TL.it.subs, it->subs, (size_t)it->nsubs * sizeof(*it->subs));
+        TL.it.nsubs = it->nsubs;
+    }
+    if (it->nauds && (TL.it.auds = malloc((size_t)it->nauds * sizeof(*it->auds))) != NULL) {
+        memcpy(TL.it.auds, it->auds, (size_t)it->nauds * sizeof(*it->auds));
+        TL.it.nauds = it->nauds;
+    }
+    TL.done = 0;
+    {
+        pthread_attr_t at;
+        int bad = it->rating_key && !TL.it.rating_key;
+        /* its own stack: FFmpeg's HTTP and the server's answer, as the player's reader */
+        if (!bad) {
+            pthread_attr_init(&at);
+            pthread_attr_setstacksize(&at, 256 << 10);
+            bad = pthread_create(&TL.th, &at, timeline_thread, NULL) != 0;
+            pthread_attr_destroy(&at);
+        }
+        if (bad) {
+            free(TL.it.rating_key);
+            free(TL.it.guid);
+            free(TL.it.source_id);
+            free(TL.it.subs);
+            free(TL.it.auds);
+            memset(&TL.it, 0, sizeof(TL.it));
+            return -1;
+        }
+    }
+    TL.running = 1;
+    return 0;
+}
+
 static void builtin_timeline(const char *state)
 {
     const plex_item *it;
+    int64_t t, d;
     if (!S.pl.on || !S.pl.det.n)
         return;
     it = &S.pl.det.v[0];
-    plex_timeline(&S.px, it, state, (int64_t)(player_position() * 1000), (int64_t)(player_duration() * 1000),
-                  &S.pl.pq);
+    t = (int64_t)(player_position() * 1000);
+    d = (int64_t)(player_duration() * 1000);
     S.pl.tl_cs = now_cs() + TIMELINE_CS;
+    if (!strcmp(state, "playing") && S.pl.tl_async && S.px.kind != SRV_DLNA) {
+        if (TL.running && !TL.done)
+            return;                 /* the last one is still going: this one is left out */
+        timeline_wait();
+        if (timeline_start(it, t, d) == 0)
+            return;
+    }
+    timeline_wait();
+    plex_timeline(&S.px, it, state, t, d, &S.pl.pq);
 }
 
 /* The X-Plex headers, without Accept: JSON (the video isn't) */
@@ -5306,8 +5413,11 @@ static void builtin_nulls(void)
     }
     if (player_ready() && !player_ended())
         builtin_skip_update();
-    if (player_ready() && !player_paused() && !player_ended() && now_cs() - S.pl.tl_cs >= 0)
+    if (player_ready() && !player_paused() && !player_ended() && now_cs() - S.pl.tl_cs >= 0) {
+        S.pl.tl_async = 1;          /* the reports every 10 s: from a thread */
         builtin_timeline("playing");
+        S.pl.tl_async = 0;
+    }
     /* paused in a converted stream: the server stops converting for a
        client it hasn't heard from, so it's told the session is wanted */
     if (player_paused() && !S.pl.p.direct && now_cs() - S.pl.ping_cs >= 0) {

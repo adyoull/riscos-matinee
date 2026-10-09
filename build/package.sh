@@ -34,8 +34,9 @@ done
 cat > "$A/docs/source/ReadMe,fff" <<EOT
 Matinee $VERSION's own source (c and h), with cJSON 1.7.18. It is built
 by build/build.sh in the riscos-matinee repository, against riscos-ffmpeg's
-devkit (5.1.10-riscos16: FFmpeg's libraries with h264_vchiq, Reel 0.1.23's
-reelcore for the built-in player, and ReelHWAccel's vcdec) and UnixLib 5.0.3.1.
+devkit (5.1.10-riscos20: FFmpeg's libraries with h264_vchiq, Reel 0.1.27's
+reelcore for the built-in player, and ReelHWAccel's vcdec and hevcdec),
+riscos-mesa's devkit (20.3.5-14: zlib) and UnixLib 5.0.3.3.
 EOT
 # RISC OS names ignore case: two files that differ only in case would
 # overwrite each other when unzipped

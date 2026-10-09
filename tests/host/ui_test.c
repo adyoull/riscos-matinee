@@ -23,6 +23,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <time.h>
 #include <unistd.h>
 #include "kernel.h"
 #include "ui.h"
@@ -2149,8 +2150,39 @@ static int script(int *b, int mask)
             CHECK(strstr(fake_rc.headers, "X-Plex-Session-Identifier: ") && strstr(fake_rc.headers, "X-Plex-Provides: player"),
                   "the stream asked for with the session id");
             n_null = 0;
-            pc++;
+            pc = 9071;
             continue;
+        case 9071: {
+            /* 10 s on: the report goes from its thread, and the null event
+               that starts it comes straight back (it doesn't wait for the
+               server) */
+            static int playing0, started;
+            static struct timespec t0;
+            if (!started) {
+                started = 1;
+                playing0 = log_count("/:/timeline", "state", "playing");
+                fake_cs += 1100;
+                clock_gettime(CLOCK_MONOTONIC, &t0);
+                return NULL_EVENT;
+            }
+            if (started == 1) {     /* the server takes 0.5 s to answer; the null event didn't wait */
+                struct timespec t1;
+                clock_gettime(CLOCK_MONOTONIC, &t1);
+                started = 2;
+                CHECK((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 < 300,
+                      "the 10 s report didn't hold up the desktop (%ld ms)",
+                      (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000));
+            }
+            if (log_count("/:/timeline", "state", "playing") == playing0 && n_null++ < 200) {
+                usleep(20000);      /* the thread's own time */
+                return NULL_EVENT;
+            }
+            CHECK(log_count("/:/timeline", "state", "playing") == playing0 + 1, "the report every 10 s, from its thread (%d %d)",
+                  log_count("/:/timeline", "state", "playing"), playing0);
+            n_null = 0;
+            pc = 908;
+            continue;
+        }
         case 908: {
             int bw, bh;
             static int plots0;
@@ -2175,7 +2207,8 @@ static int script(int *b, int mask)
                   "scaled to fit the picture box %dx%d: %dx%d", bw, bh, ovl_scale[0], ovl_scale[1]);
             CHECK(ovl_pos[3] == -(win(w_browser)->vis[3] - win(w_browser)->vis[1]) + 168 && ovl_pos[5] == 0,
                   "clipped above the bar (%d)", ovl_pos[3]);
-            CHECK(strstr(player_test_time(), "42:1") && strstr(player_test_time(), "/ 1:30:00"), "the time: %s",
+            /* 42:10, then 11 s for the 10 s report (9071) and 1.2 s here */
+            CHECK(strstr(player_test_time(), "42:2") && strstr(player_test_time(), "/ 1:30:00"), "the time: %s",
                   player_test_time());
             CHECK(last_poll == 0x400E1 && idle_time == fake_cs + 4, "asleep between pictures (PollIdle %d)", idle_time - fake_cs);
             fake_rc.ahead = 2;                                  /* the read-ahead runs short */

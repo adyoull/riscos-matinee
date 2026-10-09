@@ -8,6 +8,7 @@ The part file /library/parts/11/111/file.mp4 is 5 MB of a fixed pattern
 (Range is honoured, as Plex does)."""
 import json, sys, threading, hashlib, gzip, socket, re
 from xml.sax.saxutils import escape as xesc
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
@@ -728,6 +729,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/library/streams/1002":         # the SRT file beside Big Buck Bunny
             return self.send(200, raw=b"1\r\n00:00:01,000 --> 00:00:04,000\r\nA big buck.\r\n")
         if p in ("/:/timeline", "/video/:/transcode/universal/stop", "/video/:/transcode/universal/ping"):
+            if p == "/:/timeline" and "state=playing" in self.path:
+                time.sleep(0.5)             # as a busy server: the player mustn't wait for it
             return self.send(200, raw=b"")
         if p == "/library/metadata/21/children":
             return self.send(200, {"MediaContainer": {"title2": "Series 1", "Metadata": episodes()}})

@@ -172,6 +172,19 @@ static void log_open(void)
     P.log_cs = now_cs();
 }
 
+/* A line in the log from ui.c */
+void player_log(const char *fmt, ...)
+{
+    char t[400];
+    va_list a;
+    if (!P.log)
+        return;
+    va_start(a, fmt);
+    vsnprintf(t, sizeof(t), fmt, a);
+    va_end(a);
+    lg("%s", t);
+}
+
 static void ff_log(int level, const char *line)
 {
     (void)level;

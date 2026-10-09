@@ -96,6 +96,8 @@ int player_key(int k);
 
 /* Where it is (seconds, in the video) */
 double player_position(void);
+/* A line in the player's log (MatineeLog), if it's on */
+void player_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 double player_duration(void);
 int player_paused(void);
 void player_pause(int paused);
