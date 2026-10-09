@@ -1232,36 +1232,46 @@ int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t t
         return jf_timeline(c, it, state, time_ms, duration_ms, pl);
     if (c->kind == SRV_DLNA)        /* kept here: the server keeps nothing */
         return dlna_timeline(c, it, state, time_ms, duration_ms);
-    char url[1400], esc[64], guid[300], headers[1200];
+    char url[1400], headers[1200];
     net_buf b;
-    size_t n, u;
-    if (!it->rating_key)
+    if (plex_timeline_request(c, it, state, time_ms, duration_ms, pl, url, sizeof(url), headers, sizeof(headers)))
         return -1;
-    net_escape(it->rating_key, esc, sizeof(esc));
-    if (time_ms < 0)
-        time_ms = 0;
-    u = snprintf(url, sizeof(url),
-                 "%s/:/timeline?ratingKey=%s&key=%%2Flibrary%%2Fmetadata%%2F%s&state=%s&time=%lld&duration=%lld"
-                 "&playbackTime=%lld&hasMDE=1&identifier=com.plexapp.plugins.library&type=video"
-                 "&mediaIndex=0&partIndex=0&partCount=1",
-                 c->base, esc, esc, state, (long long)time_ms, (long long)duration_ms, (long long)time_ms);
-    if (it->guid && u < sizeof(url)) {
-        net_escape(it->guid, guid, sizeof(guid));
-        u += snprintf(url + u, sizeof(url) - u, "&guid=%s", guid);
-    }
-    if (pl && pl->pq_id && u < sizeof(url))     /* as the Plex apps: from a play queue */
-        u += snprintf(url + u, sizeof(url) - u,
-                      "&containerKey=%%2FplayQueues%%2F%ld&playQueueID=%ld&playQueueVersion=%d&playQueueItemID=%ld",
-                      pl->pq_id, pl->pq_id, pl->pq_version, pl->pq_item_id);
-    plex_headers(c, c->token, headers, sizeof(headers));
-    n = strlen(headers);
-    if (pl && *pl->session)         /* the same id the stream was asked for with */
-        snprintf(headers + n, sizeof(headers) - n, "X-Plex-Session-Identifier: %s\r\n", pl->session);
     /* short: it's sent while playing, from the desktop's own time */
     if (net_fetch(url, headers, NULL, &b, 3000, c->err, sizeof(c->err)) != 0)
         return -1;
     net_buf_free(&b);
     return 0;
+}
+
+int plex_timeline_request(const plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms,
+                          int64_t duration_ms, const plex_playing *pl, char *url, size_t usize, char *headers,
+                          size_t hsize)
+{
+    char esc[64], guid[300];
+    size_t n, u;
+    if (c->kind != SRV_PLEX || !it->rating_key || usize < 2)
+        return -1;
+    net_escape(it->rating_key, esc, sizeof(esc));
+    if (time_ms < 0)
+        time_ms = 0;
+    u = snprintf(url, usize,
+                 "%s/:/timeline?ratingKey=%s&key=%%2Flibrary%%2Fmetadata%%2F%s&state=%s&time=%lld&duration=%lld"
+                 "&playbackTime=%lld&hasMDE=1&identifier=com.plexapp.plugins.library&type=video"
+                 "&mediaIndex=0&partIndex=0&partCount=1",
+                 c->base, esc, esc, state, (long long)time_ms, (long long)duration_ms, (long long)time_ms);
+    if (it->guid && u < usize) {
+        net_escape(it->guid, guid, sizeof(guid));
+        u += snprintf(url + u, usize - u, "&guid=%s", guid);
+    }
+    if (pl && pl->pq_id && u < usize)     /* as the Plex apps: from a play queue */
+        u += snprintf(url + u, usize - u,
+                      "&containerKey=%%2FplayQueues%%2F%ld&playQueueID=%ld&playQueueVersion=%d&playQueueItemID=%ld",
+                      pl->pq_id, pl->pq_id, pl->pq_version, pl->pq_item_id);
+    plex_headers(c, c->token, headers, hsize);
+    n = strlen(headers);
+    if (pl && *pl->session && n < hsize)        /* the same id the stream was asked for with */
+        snprintf(headers + n, hsize - n, "X-Plex-Session-Identifier: %s\r\n", pl->session);
+    return u < usize ? 0 : -1;
 }
 
 int plex_search(plex_ctx *c, const char *query, plex_list *out)

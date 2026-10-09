@@ -54,6 +54,7 @@ int matinee_main(int argc, char **argv);
 /* The host test's view of the state */
 int ui_test_tile_xy(int i, int *x, int *y);     /* a tile's middle, screen OS units; 0 = ok */
 int ui_test_items(void);                        /* items in the list shown */
+extern int ui_test_free_reports;                /* reports sent without waiting (bgreq.c) */
 const char *ui_test_item(int i, int line);      /* a tile's text (line 0 or 1), as shown */
 const char *ui_test_status(void);
 const char *ui_test_path(void);

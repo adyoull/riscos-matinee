@@ -273,6 +273,12 @@ int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl);
    Playing come from this. 0 = ok. */
 int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
                   const plex_playing *pl);
+/* The same report as plex_timeline's for a Plex server, as an address and
+   headers, for sending another way (ui.c's report without waiting).
+   0 = made; -1 = not a Plex server, or it doesn't fit. */
+int plex_timeline_request(const plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms,
+                          int64_t duration_ms, const plex_playing *pl, char *url, size_t usize, char *headers,
+                          size_t hsize);
 
 /* Searches every library: films, then shows, then episodes (as tiles:
    "Film", "Show" or the episode's show and number under the title).

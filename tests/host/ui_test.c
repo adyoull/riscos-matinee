@@ -2177,7 +2177,8 @@ static int script(int *b, int mask)
                 usleep(20000);      /* the thread's own time */
                 return NULL_EVENT;
             }
-            CHECK(log_count("/:/timeline", "state", "playing") == playing0 + 1, "the report every 10 s, from its thread (%d %d)",
+            CHECK(ui_test_free_reports == 1, "sent without waiting, not from a thread (%d)", ui_test_free_reports);
+            CHECK(log_count("/:/timeline", "state", "playing") == playing0 + 1, "the report every 10 s, without waiting (%d %d)",
                   log_count("/:/timeline", "state", "playing"), playing0);
             n_null = 0;
             pc = 908;

@@ -67,6 +67,7 @@
 #include "draw.h"
 #include "player.h"
 #include "imgcache.h"
+#include "bgreq.h"
 
 #define OS_File                    0x08
 #define OS_ReadMonotonicTime       0x42
@@ -5044,6 +5045,51 @@ static int timeline_start(const plex_item *it, int64_t t, int64_t d)
     return 0;
 }
 
+/* Better still, for a Plex server at a plain http address (on the local
+   network, the usual case): the report sent and its answer read a piece at
+   a time on each null event, with no thread and never waiting (bgreq.c).
+   From the thread (test1 and test2) each report still cost a few pictures
+   on a Pi. The thread is kept for https servers and Jellyfin. */
+#ifdef MATINEE_TEST
+int ui_test_free_reports;
+#endif
+static struct {
+    bgreq r;
+    int cs0;
+    int64_t t;
+} TR = { .r = { .fd = -1 } };
+
+/* Moves the report on, if one is going; called on every null event while playing */
+static void timeline_step(void)
+{
+    int e;
+    if (!bgreq_active(&TR.r))
+        return;
+    e = bgreq_step(&TR.r);
+    if (e != 0)
+        player_log("timeline: playing at %.1f s, told the server in %d cs, without waiting%s", TR.t / 1000.0,
+                   now_cs() - TR.cs0, e > 0 && TR.r.status == 200 ? "" : e > 0 ? " (not 200)" : " (failed)");
+    else if (now_cs() - TR.cs0 > 1000) {
+        bgreq_close(&TR.r);         /* no answer in 10 s: the next one will be sent anyway */
+        player_log("timeline: playing at %.1f s: no answer in 10 s", TR.t / 1000.0);
+    }
+}
+
+/* 0 = the report is on its way */
+static int timeline_send_free(const plex_item *it, int64_t t, int64_t d)
+{
+    char url[1400], headers[1200];
+    if (plex_timeline_request(&S.px, it, "playing", t, d, &S.pl.pq, url, sizeof(url), headers, sizeof(headers)) ||
+        bgreq_start(&TR.r, url, headers))
+        return -1;
+    TR.cs0 = now_cs();
+    TR.t = t;
+#ifdef MATINEE_TEST
+    ui_test_free_reports++;
+#endif
+    return 0;
+}
+
 static void builtin_timeline(const char *state)
 {
     const plex_item *it;
@@ -5055,12 +5101,13 @@ static void builtin_timeline(const char *state)
     d = (int64_t)(player_duration() * 1000);
     S.pl.tl_cs = now_cs() + TIMELINE_CS;
     if (!strcmp(state, "playing") && S.pl.tl_async && S.px.kind != SRV_DLNA) {
-        if (TL.running && !TL.done)
+        if (bgreq_active(&TR.r) || (TL.running && !TL.done))
             return;                 /* the last one is still going: this one is left out */
         timeline_wait();
-        if (timeline_start(it, t, d) == 0)
+        if (timeline_send_free(it, t, d) == 0 || timeline_start(it, t, d) == 0)
             return;
     }
+    bgreq_close(&TR.r);             /* (sent: the server has it, or will) */
     timeline_wait();
     plex_timeline(&S.px, it, state, t, d, &S.pl.pq);
 }
@@ -5418,6 +5465,7 @@ static void builtin_nulls(void)
     }
     if (player_ready() && !player_ended())
         builtin_skip_update();
+    timeline_step();
     if (player_ready() && !player_paused() && !player_ended() && now_cs() - S.pl.tl_cs >= 0) {
         S.pl.tl_async = 1;          /* the reports every 10 s: from a thread */
         builtin_timeline("playing");
