@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: 0.1.1.** It fixes a stutter while playing and takes less address space (after test builds 0.1.1-test1 to test3). 0.1.0 was the first release (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
+**Status: 0.1.2-test1** (built with riscos-ffmpeg 5.1.10-riscos22 and riscos-crossdev's toolchain, as GitHub builds it). 0.1.1 fixed a stutter while playing and takes less address space (after test builds 0.1.1-test1 to test3). 0.1.0 was the first release (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -103,7 +103,8 @@ version 2.
 | `src/draw.[ch]` | Drawing: true-colour shapes and outline-font text for the dark windows |
 | `src/version.h`, `src/proginfo.h` | The version; the Info window (from riscos-ffmpeg) |
 | `app/!Matinee` | `!Boot`, `!Run`, `!Help` |
-| `build/` | `build.sh` (compile, link, AIF, checks), `package.sh` (the RISC OS zip), `env.sh` |
+| `build/` | `build.sh` (compile, link, AIF, checks), `package.sh` (the RISC OS zip), `env.sh` (the toolchain and the devkits' versions), `fetch-devkits.sh` |
+| `.riscos-deps`, `.github/workflows/`, `ci/` | The releases it's built with; GitHub's build and daily dependency check; `riscos-deps-hook.sh` moves `env.sh`'s devkits with them |
 | `tools/` | `mksprites.py` (the icon), `mkrozip.py`, `check-stack-probes.py`, `check-unixlib.sh` |
 | `third_party/cjson` | cJSON 1.7.18 (MIT) |
 | `third_party/pthreadticker` | UnixLib's PThreadTicker module 0.03, which `!Run` loads |
@@ -113,19 +114,32 @@ version 2.
 | `tests/host/fake_reelcore.[ch]` | A stand-in for reelcore, for ui_test: a video that plays by the fake clock |
 | `tests/host/net_sock.c` | `net.h` over plain sockets, for ui_test |
 | `tests/host/run.sh`, `mutate.sh` | Build and run the tests; break the code on purpose and check they notice |
-| `docs/` | Feasibility, design, and the toolchain and build |
+| `docs/` | `TOOLCHAIN.md`: the toolchain, the devkits and the build |
 
 ## Building and testing
 
-See `docs/TOOLCHAIN.md`. In short:
+See `docs/TOOLCHAIN.md`. In short, in [riscos-crossdev](https://github.com/adyoull/riscos-crossdev)'s
+container image (the version `.riscos-deps` names), as GitHub builds it:
 
 ```
-GCCSDK_ENV=~/gccsdk/env ELF2AIF=path/to/elf2aif build/build.sh && build/package.sh
+docker run --rm -v "$PWD":/src ghcr.io/adyoull/riscos-crossdev:1.8.1 sh -c 'sh build/build.sh && sh build/package.sh'
+```
+
+or with a GCCSDK toolchain of your own (`GCCSDK_ENV=~/gccsdk/env ELF2AIF=path/to/elf2aif`).
+The build downloads the riscos-ffmpeg and riscos-mesa devkits `build/env.sh` names, checked
+by sha256. GitHub builds every push (`.github/workflows/riscos-build.yml`). Every day,
+`riscos-deps-update.yml` looks for newer releases of what `.riscos-deps` names and opens a
+pull request to move to them, built.
+
+The host tests need riscos-ffmpeg's source at the same release, and FFmpeg's libraries for
+the host (`libavformat-dev`), `gcc-arm-linux-gnueabihf` and `qemu-user`:
+
+```
 REEL_SRC=../riscos-ffmpeg tests/host/run.sh
 REEL_SRC=../riscos-ffmpeg tests/host/mutate.sh
 ```
 
-Expected: `core_test: 109 checks, 0 failed`, `ui_test: 302 checks, 0 failed`, and
-`48 mutations, 0 survived`. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
+Expected: `core_test: 254 checks, 0 failed`, `ui_test: 586 checks, 0 failed`, and no
+mutation surviving. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
 `player.ppm` and `upnext.ppm` in its output directory: the window's pages as its fake
 Wimp drew them (with a stand-in font, made-up posters and a made-up picture).

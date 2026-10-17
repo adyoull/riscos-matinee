@@ -4,13 +4,14 @@
 #                   crash addresses with addr2line; don't ship it)
 #   $OUT/matinee     stripped, then !RunImage,ff8 (AIF)
 # Checks: every big stack frame is probed, the program was linked with
-# UnixLib 5.0.3.1 (the 640-byte pthread block, 64-bit fstat, the
-# new _exit), and no build
+# UnixLib 5.0.3.3 (the 640-byte pthread block, 64-bit fstat, the
+# new _exit), riscos-crossdev's checks where it's installed, and no build
 # path or unwanted name is left in the shipped image.
-# Needs the GCCSDK GCC 10.2 toolchain with UnixLib 5.0.3.1 (docs/TOOLCHAIN.md)
-# and the two devkits (build/env.sh).
+# Needs the GCCSDK GCC 10.2 toolchain with UnixLib 5.0.3.3 (riscos-crossdev's,
+# or docs/TOOLCHAIN.md). The two devkits are downloaded (build/fetch-devkits.sh).
 set -e
 . "$(dirname "$0")/env.sh"
+sh "$TOP/build/fetch-devkits.sh"
 mkdir -p "$OUT"
 CFLAGS="-O2 -Wall -march=armv7-a -mfpu=neon-vfpv3 -mfloat-abi=hard -fstack-clash-protection -D_FILE_OFFSET_BITS=64"
 # reelcore (the built-in player) and FFmpeg's libraries; libavformat brings
@@ -32,6 +33,13 @@ echo "checks:"
 python3 "$TOP/tools/check-stack-probes.py" "$OUT/matinee_g" "${CROSS}objdump" | tail -1 | tee "$OUT/probes.txt"
 grep -q '; 0 without stack probes' "$OUT/probes.txt" || { echo "unprobed stack frames" >&2; exit 1; }
 CROSS=$CROSS sh "$TOP/tools/check-unixlib.sh" "$OUT/matinee_g"
+# riscos-crossdev's own checks (static, stack probes, FPU level, UnixLib),
+# where it's installed (its container image sets RCD_DIR)
+if [ -n "$RCD_DIR" ] && [ -x "$RCD_DIR/checks/check-all.sh" ]; then
+  "$RCD_DIR/checks/check-all.sh" "$OUT/matinee_g" > "$OUT/check-all.txt" ||
+    { cat "$OUT/check-all.txt"; echo "riscos-crossdev's checks failed" >&2; exit 1; }
+  tail -1 "$OUT/check-all.txt"
+fi
 # the shipped image: no build paths or names that don't belong
 if strings -a "$OUT/!RunImage,ff8" | grep -i -E 'claude|anthropic|(^|[ :="])/(home|root|build)/'; then
   echo "unwanted strings in !RunImage" >&2

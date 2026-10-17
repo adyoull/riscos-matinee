@@ -2,8 +2,10 @@
 
 ## The toolchain: GCCSDK GCC 10.2 with UnixLib 5.0.3.3
 
-Matinee is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`) in
-`~/gccsdk/env`, with its UnixLib replaced by **UnixLib 5.0.3.3** (riscos-unixlib
+Matinee is built with the GCCSDK GCC 10.2 cross-compiler (`arm-riscos-gnueabihf-`):
+riscos-crossdev's, in its container image `ghcr.io/adyoull/riscos-crossdev` (the version
+`.riscos-deps` names; `RISCOS_TOOLCHAIN`), as GitHub builds it, or one in
+`~/gccsdk/env`. Either has **UnixLib 5.0.3.3** (riscos-unixlib
 release v5.0.3.3 from test34; 5.0.3.2 for test28 to test33, 5.0.3.1 for test18 to test27, pre-release rc8 for test17, 5.0.2 before), so programs built with
 `-D_FILE_OFFSET_BITS=64` handle files over 2GB (up to 4GB−1), and fork, `_exit`, heaps past 128 MB and
 threads in programs that poll often are in. riscos-ffmpeg's devkit (5.1.10-riscos14) was built against 5.0.2:
@@ -81,7 +83,20 @@ It takes well over an hour on one core.
 
 ## Devkits (release assets)
 
-Unpack them beside the repository, in `../devkit/`, or set `FFDEV` and `MESADEV`:
+`build/build.sh` downloads the two devkits `build/env.sh` names (`FFDEV_VER`,
+`MESADEV_VER`) from their GitHub releases into `build/dl/`, checks each against its
+sha256 there, and unpacks it; riscos-crossdev's riscos-mesa devkit is used instead when
+it's the same release. Set `FFDEV` and `MESADEV` to use others. When riscos-ffmpeg or
+riscos-mesa makes a release, GitHub's daily `riscos-deps-update.yml` opens a pull request
+moving `.riscos-deps` and these lines (`ci/riscos-deps-hook.sh`).
+
+- From 0.1.2-test1: riscos-ffmpeg devkit `5.1.10-riscos22` (sha256
+  `bc6f16afadced0f1aec7398a8a1792afa3332a4b33e30cd9993b0df25e285c65`; Reel 0.1.28's
+  reelcore, ReelHWAccel devkit 0.2.15) and riscos-mesa devkit `20.3.5-16` (sha256
+  `069de4126d43b055d9712325d5727e336c03ce084ad87a495ccff79ed26956a4`). Tests use
+  riscos-ffmpeg's sources at `v5.1.10-riscos22` (`REEL_SRC`).
+
+Earlier:
 
 - `riscos-ffmpeg/releases/download/v5.1.10-riscos20/riscos-ffmpeg-devkit-5.1.10-riscos20.tgz`
   (sha256 `1ad89f8670f72ebcb3e7484ea695e3ec35612255c30cc44f5329aa298e761167`), used from
