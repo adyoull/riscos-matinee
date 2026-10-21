@@ -229,6 +229,18 @@ int plex_list_parse(const char *json, const char *path, plex_list *out);
 
 /* A poster: the server's JPEG, w x h pixels at most. 0 = ok (caller frees). */
 int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len);
+/* A request to the server, made here and sent another way (ui.c's
+   requests without waiting, bgreq.c): its method, address, headers (lines
+   ending \r\n) and body ("" for none) */
+typedef struct {
+    char method[8];
+    char url[1400];
+    char headers[1200];
+    char body[1024];
+} plex_request;
+
+/* The picture's request (as plex_poster fetches it): 0 = made, -1 = no picture */
+int plex_poster_request(const plex_ctx *c, const char *thumb, int w, int h, plex_request *rq);
 
 /* One video's full details (summary, art, its subtitle tracks, its intro
    and credits markers and its chapters), as a list of one item. 0 = ok. */
@@ -273,12 +285,12 @@ int plex_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl);
    Playing come from this. 0 = ok. */
 int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
                   const plex_playing *pl);
-/* The same report as plex_timeline's for a Plex server, as an address and
-   headers, for sending another way (ui.c's report without waiting).
-   0 = made; -1 = not a Plex server, or it doesn't fit. */
+/* The same report as plex_timeline's, as a request: for Plex any report;
+   for Jellyfin a progress report once the start has been sent (its
+   /Sessions/Playing/Progress). 0 = made; -1 = none (DLNA, Jellyfin's start
+   or stop, or it doesn't fit): send it with plex_timeline. */
 int plex_timeline_request(const plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms,
-                          int64_t duration_ms, const plex_playing *pl, char *url, size_t usize, char *headers,
-                          size_t hsize);
+                          int64_t duration_ms, const plex_playing *pl, plex_request *rq);
 
 /* Searches every library: films, then shows, then episodes (as tiles:
    "Film", "Show" or the episode's show and number under the title).

@@ -981,8 +981,11 @@ static void read_screen(void)
 
 /* ---- posters ------------------------------------------------------------------ */
 
+static void pf_cancel(void);
+
 static void cache_free_all(void)
 {
+    pf_cancel();                    /* (a picture on its way is the old server's, or the old size) */
     while (S.cache) {
         poster_t *p = S.cache;
         S.cache = p->next;
@@ -1261,10 +1264,16 @@ void ui_test_sprite_round(unsigned *pixels, unsigned *mask, int w, int h, int ro
    cache under key */
 /* A picture from the server at w x h pixels: from the disc if it's been
    fetched before, else fetched and kept there (imgcache) */
+/* The disc cache's key for a picture at w x h pixels */
+static void picture_key(const char *thumb, int w, int h, char *key, size_t size)
+{
+    snprintf(key, size, "%s|%s|%dx%d", S.px.server_id, thumb, w, h);
+}
+
 static int picture_get(const char *thumb, int w, int h, char **jpeg, size_t *len)
 {
     char key[600];
-    snprintf(key, sizeof(key), "%s|%s|%dx%d", S.px.server_id, thumb, w, h);
+    picture_key(thumb, w, h, key, sizeof(key));
     if (imgcache_get(key, jpeg, len) == 0) {
         if (imgcache_jpeg_whole(*jpeg, *len))
             return 0;
@@ -1289,17 +1298,17 @@ static int picture_get(const char *thumb, int w, int h, char **jpeg, size_t *len
 /* art: 0 a poster (rounded corners), 1 a backdrop (faded), 2 a person's
    photo (round, filling the circle), 3 an episode's picture (filling its
    box, rounded corners) */
-static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, int art)
+/* The picture made from its JPEG (NULL: none: a picture that failed) and
+   put in the cache under key */
+static poster_t *poster_make(const char *key, int w, int h, int art, const char *jpeg, size_t len)
 {
     int round = art == 2 ? w / 2 : art == 1 ? 0 : 12 >> S.xeig;
     poster_t *p = calloc(1, sizeof(*p));
-    char *jpeg = NULL;
-    size_t len = 0;
     if (!p)
         return NULL;
     snprintf(p->thumb, sizeof(p->thumb), "%s", key);
     p->hash = str_hash(p->thumb);
-    if (picture_get(thumb, w, h, &jpeg, &len) != 0 ||
+    if (!jpeg ||
         !(p->area = sprite_make(w, h, round, &p->bytes)) ||
         jpeg_into(p->area, w, h, jpeg, len, art != 0) != 0) {
         free(p->area);
@@ -1311,11 +1320,155 @@ static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, 
     } else {
         sprite_round(p->area, w, h, round);
     }
-    free(jpeg);
     p->next = S.cache;
     S.cache = p;
     S.cache_bytes += p->bytes;
     return p;
+}
+
+/* A picture fetched now, the desktop waiting (from the disc if it's
+   there): for the few a page shows at the top (a backdrop, the details'
+   poster) */
+static poster_t *poster_fetch(const char *thumb, const char *key, int w, int h, int art)
+{
+    char *jpeg = NULL;
+    size_t len = 0;
+    poster_t *p;
+    if (picture_get(thumb, w, h, &jpeg, &len) != 0) {
+        free(jpeg);
+        jpeg = NULL;
+    }
+    p = poster_make(key, w, h, art, jpeg, len);
+    free(jpeg);
+    return p;
+}
+
+/* ---- pictures fetched without waiting -----------------------------------------------
+
+   Posters on the grid and the home page, episodes' pictures, cast photos
+   and More like this: each picture is a request to the server (which makes
+   it at the size asked for), tens to hundreds of ms. Fetched with
+   poster_fetch, the whole desktop waited for each. poster_soon instead
+   starts the request (bgreq.c: plain http to an address) and returns at
+   once; the null events after it move it on (the Wimp polls in between,
+   every 1 cs), and the finished picture goes into the cache, where the
+   caller finds it next time. One at a time. A picture on the disc
+   (imgcache) is used at once; an https server, or a name, is fetched the
+   old way. */
+
+#define PF_TIMEOUT_CS 1500
+
+static struct {
+    bgreq r;
+    int on;                         /* a picture on its way */
+    char key[320];                  /* the cache's key for it */
+    char disc_key[600];             /* imgcache's */
+    int w, h, art, cs0;
+} PF = { .r = { .fd = -1 } };
+
+#ifdef MATINEE_TEST
+int ui_test_pictures_waited;        /* pictures fetched the old way, the desktop waiting */
+int ui_test_pictures_free;          /* ... and without waiting */
+#endif
+
+/* The picture on its way moved on; 1 when it's arrived (or failed: then
+   it's in the cache as failed, so it isn't asked for again) */
+static int pf_step(void)
+{
+    int e;
+    char *jpeg;
+    size_t len;
+    if (!PF.on)
+        return 0;
+    e = bgreq_step(&PF.r);
+    if (e == 0 && now_cs() - PF.cs0 < PF_TIMEOUT_CS)
+        return 0;
+    jpeg = e > 0 && PF.r.status == 200 ? bgreq_take(&PF.r, &len) : NULL;
+    bgreq_close(&PF.r);
+    PF.on = 0;
+    if (jpeg && imgcache_jpeg_whole(jpeg, len))
+        imgcache_put(PF.disc_key, jpeg, len);
+    poster_make(PF.key, PF.w, PF.h, PF.art, jpeg, jpeg ? len : 0);
+    free(jpeg);
+    cache_trim();
+    return 1;
+}
+
+#ifdef MATINEE_TEST
+/* The tests' Wimp: while the program sleeps for a picture's answer, the
+   time passes for real until it's come, so a script's null events see it
+   arrive as they would on a Pi (a little later, never at once) */
+static void timeline_step(void);
+static int timeline_going(void);
+void ui_test_pf_settle(void)
+{
+    for (int i = 0; PF.on && i < 3000; i++) {
+        struct timespec ts = { 0, 1000000 };
+        if (pf_step())
+            break;
+        nanosleep(&ts, NULL);
+    }
+    for (int i = 0; timeline_going() && i < 3000; i++) {      /* and a report on its way */
+        struct timespec ts = { 0, 1000000 };
+        timeline_step();
+        nanosleep(&ts, NULL);
+    }
+}
+#endif
+
+/* The picture on its way forgotten */
+static void pf_cancel(void)
+{
+    bgreq_close(&PF.r);
+    PF.on = 0;
+}
+
+/* Waiting for a picture's answer (the Wimp can sleep a little meanwhile) */
+static int pf_waiting(void)
+{
+    return PF.on;
+}
+
+/* The picture for key (as poster_fetch): from the cache or the disc now;
+   else NULL, its request started (or still on its way): ask again on a
+   later null event */
+static poster_t *poster_soon(const char *thumb, const char *key, int w, int h, int art)
+{
+    poster_t *p = cache_find(key);
+    plex_request rq;
+    char *jpeg = NULL;
+    size_t len = 0;
+    if (p)
+        return p;
+    if (PF.on) {
+        pf_step();
+        return cache_find(key);
+    }
+    picture_key(thumb, w, h, PF.disc_key, sizeof(PF.disc_key));
+    if (imgcache_get(PF.disc_key, &jpeg, &len) == 0) {
+        if (imgcache_jpeg_whole(jpeg, len)) {
+            p = poster_make(key, w, h, art, jpeg, len);
+            free(jpeg);
+            return p;
+        }
+        free(jpeg);                 /* cut short: fetched again */
+    }
+    if (plex_poster_request(&S.px, thumb, w, h, &rq) == 0 && bgreq_start(&PF.r, rq.url, rq.headers, 1) == 0) {
+        PF.on = 1;
+        PF.cs0 = now_cs();
+        snprintf(PF.key, sizeof(PF.key), "%s", key);
+        PF.w = w;
+        PF.h = h;
+        PF.art = art;
+#ifdef MATINEE_TEST
+        ui_test_pictures_free++;
+#endif
+        return NULL;
+    }
+#ifdef MATINEE_TEST
+    ui_test_pictures_waited++;
+#endif
+    return poster_fetch(thumb, key, w, h, art);
 }
 
 /* ---- the browser's layout ------------------------------------------------------ */
@@ -1845,7 +1998,8 @@ static int poster_step(void)
                 continue;
             if (!(S.disp[i].poster = cache_find(key))) {
                 int c, r = home_row_of(i, &c);
-                S.disp[i].poster = poster_fetch(pic, key, S.home.lay[r].cw >> S.xeig, S.home.lay[r].ch >> S.yeig, art);
+                if (!(S.disp[i].poster = poster_soon(pic, key, S.home.lay[r].cw >> S.xeig, S.home.lay[r].ch >> S.yeig, art)))
+                    return 1;       /* on its way */
                 cache_trim();
             }
             redraw_tile(i);
@@ -1866,7 +2020,8 @@ static int poster_step(void)
                 continue;
             ep_key(it, key, sizeof(key));
             if (!(S.disp[i].poster = cache_find(key))) {
-                S.disp[i].poster = poster_fetch(it->thumb, key, EP_TW >> S.xeig, EP_TH >> S.yeig, 3);
+                if (!(S.disp[i].poster = poster_soon(it->thumb, key, EP_TW >> S.xeig, EP_TH >> S.yeig, 3)))
+                    return 1;       /* on its way */
                 cache_trim();
             }
             redraw_tile(i);
@@ -1884,7 +2039,8 @@ static int poster_step(void)
         if (!it->thumb || S.disp[i].poster)
             continue;
         if (!(S.disp[i].poster = cache_find(it->thumb))) {
-            S.disp[i].poster = poster_fetch(it->thumb, it->thumb, TILE_W >> S.xeig, POSTER_H >> S.yeig, 0);
+            if (!(S.disp[i].poster = poster_soon(it->thumb, it->thumb, TILE_W >> S.xeig, POSTER_H >> S.yeig, 0)))
+                return 1;           /* on its way */
             cache_trim();
         }
         /* the same poster may stand for others (a show's episodes on deck) */
@@ -3465,7 +3621,8 @@ static int det_cast_step(void)
             continue;
         snprintf(key, sizeof(key), "cast:%s@%d", th, px);
         if (!(S.cast[i].photo = cache_find(key))) {
-            S.cast[i].photo = poster_fetch(th, key, px, CAST_PH >> S.yeig, 2);
+            if (!(S.cast[i].photo = poster_soon(th, key, px, CAST_PH >> S.yeig, 2)))
+                return 1;           /* on its way */
             cache_trim();
         }
         force_redraw(S.browser_w, S.cast[i].x0, S.cast[i].y0, S.cast[i].x0 + CAST_W, S.cast[i].y0 + CAST_H);
@@ -3483,7 +3640,8 @@ static int det_cast_step(void)
             else
                 snprintf(key, sizeof(key), "%s", r->thumb);     /* as on the grid */
             if (!(S.relc[k][i].pic = cache_find(key))) {
-                S.relc[k][i].pic = poster_fetch(r->thumb, key, cw >> S.xeig, ch >> S.yeig, k == REL_EXTRAS ? 3 : 0);
+                if (!(S.relc[k][i].pic = poster_soon(r->thumb, key, cw >> S.xeig, ch >> S.yeig, k == REL_EXTRAS ? 3 : 0)))
+                    return 1;       /* on its way */
                 cache_trim();
             }
             force_redraw(S.browser_w, S.relc[k][i].x0 - 8, S.relc[k][i].y0 - 8, S.relc[k][i].x1 + 8, S.relc[k][i].y1 + 8);
@@ -5103,11 +5261,12 @@ static int timeline_start(const plex_item *it, int64_t t, int64_t d)
     return 0;
 }
 
-/* Better still, for a Plex server at a plain http address (on the local
+/* Better still, for a server at a plain http address (on the local
    network, the usual case): the report sent and its answer read a piece at
-   a time on each null event, with no thread and never waiting (bgreq.c).
-   From the thread (test1 and test2) each report still cost a few pictures
-   on a Pi. The thread is kept for https servers and Jellyfin. */
+   a time on each null event, with no thread and never waiting (bgreq.c, as
+   the posters are fetched). From the thread (test1 and test2) each report
+   still cost a few pictures on a Pi. Plex's reports and Jellyfin's progress
+   go this way; the thread is kept for https servers. */
 #ifdef MATINEE_TEST
 int ui_test_free_reports;
 #endif
@@ -5116,6 +5275,14 @@ static struct {
     int cs0;
     int64_t t;
 } TR = { .r = { .fd = -1 } };
+
+#ifdef MATINEE_TEST
+/* A report on its way (without waiting)? */
+static int timeline_going(void)
+{
+    return bgreq_active(&TR.r);
+}
+#endif
 
 /* Moves the report on, if one is going; called on every null event while playing */
 static void timeline_step(void)
@@ -5136,9 +5303,9 @@ static void timeline_step(void)
 /* 0 = the report is on its way */
 static int timeline_send_free(const plex_item *it, int64_t t, int64_t d)
 {
-    char url[1400], headers[1200];
-    if (plex_timeline_request(&S.px, it, "playing", t, d, &S.pl.pq, url, sizeof(url), headers, sizeof(headers)) ||
-        bgreq_start(&TR.r, url, headers))
+    plex_request rq;
+    if (plex_timeline_request(&S.px, it, "playing", t, d, &S.pl.pq, &rq) ||
+        bgreq_send(&TR.r, rq.method, rq.url, rq.headers, rq.body, 0))
         return -1;
     TR.cs0 = now_cs();
     TR.t = t;
@@ -7606,8 +7773,6 @@ static void nulls(void)
         qc_check();
         return;
     }
-    if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
-        return;
     if (S.home.due && S.home.on && S.page == PG_GRID && S.browser_open && now_cs() - S.home.due >= 0) {
         home_fetch_art();           /* the featured backdrop at the window's new size */
         force_redraw(S.browser_w, 0, -HEADER_H - S.home.hero_h, S.scr_w, -HEADER_H);
@@ -7623,6 +7788,10 @@ static void nulls(void)
         det_repaint();
         return;
     }
+    /* (after those: with pictures fetched without waiting, these go on for
+       a while, and a resize's backdrop shouldn't wait for them) */
+    if (S.cast_wanted && S.page == PG_DETAILS && det_cast_step())
+        return;
     if (S.posters_wanted && poster_step())
         return;
     if (S.more_wanted && list_more_step())
@@ -7739,7 +7908,10 @@ int matinee_main(int argc, char **argv)
             r.r[2] = art_due;
         } else if (S.posters_wanted || (S.cast_wanted && S.page == PG_DETAILS && S.browser_open) ||
                    (S.more_wanted && S.page == PG_GRID && S.browser_open)) {
-            /* null events at once */
+            if (pf_waiting()) {     /* a picture's answer: the rest of the desktop runs meanwhile */
+                reason = Wimp_PollIdle;
+                r.r[2] = now_cs() + 1;
+            }                       /* (else null events at once) */
         } else if (S.pin_id && S.browser_open && S.page == PG_SIGNIN) {
             reason = Wimp_PollIdle;
             r.r[2] = S.pin_next;

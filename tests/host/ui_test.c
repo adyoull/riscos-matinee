@@ -299,6 +299,8 @@ static int file_exists(const char *p) { struct stat st; return stat(p, &st) == 0
 /* ---- the SWIs ---------------------------------------------------------------- */
 
 static int script(int *b, int mask);
+static struct timespec event_given;     /* when the last event was given to the program */
+static long longest_event_ms;           /* the longest it took over one, since set to 0 */
 
 /* A profile of the SWIs called (PROFILE=1): which, and how often, between
    profile_begin and profile_end */
@@ -772,11 +774,32 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         last_mask = (int)in->r[0];
         if (swi == 0x400E1)
             idle_time = (int)in->r[2];
+        {   /* how long the program took since the last event (real time): the desktop's wait */
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (event_given.tv_sec) {
+                long ms = (now.tv_sec - event_given.tv_sec) * 1000 + (now.tv_nsec - event_given.tv_nsec) / 1000000;
+                if (ms > longest_event_ms)
+                    longest_event_ms = ms;
+            }
+        }
+        ui_test_pf_settle();                        /* a picture on its way arrives while the program sleeps */
         out->r[0] = script((int *)(intptr_t)in->r[1], (int)in->r[0]);
+        clock_gettime(CLOCK_MONOTONIC, &event_given);
         return NULL;
     }
     printf("  unhandled SWI %x\n", swi);
     return &err;
+}
+
+/* The fake server's pictures: delay_ms each, and chunked or not */
+static void server_photos(int delay_ms, int chunked)
+{
+    char url[160];
+    net_buf nb;
+    snprintf(url, sizeof(url), "%s/_photos?delay_ms=%d&chunked=%d", base, delay_ms, chunked);
+    if (net_fetch(url, NULL, "", &nb, 5000, NULL, 0) == 0)
+        net_buf_free(&nb);
 }
 
 /* ---- the fake server's record ------------------------------------------------ */
@@ -949,7 +972,7 @@ static int player_button(int *b, int w, int id)
 static int prev103;
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
-static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0;
+static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0, free0;
 static char sid0[40];
 static double p0;
 
@@ -1122,12 +1145,23 @@ static int script(int *b, int mask)
                       ncol);
             }
             CHECK(!(mask & 1), "null events for the posters");
+            /* the server slow to make each picture (and sending it chunked): the
+               desktop mustn't wait for it */
+            server_photos(300, 1);
+            longest_event_ms = 0;
+            free0 = ui_test_pictures_free;
             pc++;
             continue;
         case 5:
-            DRAIN(20);
+            DRAIN(60);
             continue;
         case 6:
+            server_photos(0, 0);
+            CHECK(ui_test_pictures_free - free0 >= 3 && ui_test_pictures_waited == 0,
+                  "posters fetched without waiting (%d), none the old way (%d)", ui_test_pictures_free - free0,
+                  ui_test_pictures_waited);
+            CHECK(longest_event_ms < 150, "a slow server (300 ms a picture) didn't hold up the desktop (%ld ms at most)",
+                  longest_event_ms);
             CHECK(mask & 1, "no more null events once the posters are there");
             CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/art/1700000000") == 3 &&   /* (and its card's) */
                   log_count("/photo/:/transcode", "width", "554") == 1, "the featured backdrop again, at the window's new width (%d, %d)",
@@ -1279,7 +1313,7 @@ static int script(int *b, int mask)
             return NULL_EVENT;
         case 15011:
             CHECK(log_count("/photo/:/transcode", "height", "311") == 1 && log_count("/photo/:/transcode", "width", "554") >= 2,
-                  "then at the new size: 554 x 311, 16:9");
+                  "then at the new size: 554 x 311, 16:9 (%d, %d)", log_count("/photo/:/transcode", "height", "311"), log_count("/photo/:/transcode", "width", "554"));
             memset(b, 0, 32);                                   /* back as it was */
             memcpy(b + 1, win(w_browser)->vis, 16);
             b[0] = w_browser; b[2] += 500; b[7] = -1;
@@ -2157,21 +2191,16 @@ static int script(int *b, int mask)
                that starts it comes straight back (it doesn't wait for the
                server) */
             static int playing0, started;
-            static struct timespec t0;
             if (!started) {
                 started = 1;
                 playing0 = log_count("/:/timeline", "state", "playing");
                 fake_cs += 1100;
-                clock_gettime(CLOCK_MONOTONIC, &t0);
+                longest_event_ms = 0;
                 return NULL_EVENT;
             }
             if (started == 1) {     /* the server takes 0.5 s to answer; the null event didn't wait */
-                struct timespec t1;
-                clock_gettime(CLOCK_MONOTONIC, &t1);
                 started = 2;
-                CHECK((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 < 300,
-                      "the 10 s report didn't hold up the desktop (%ld ms)",
-                      (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000));
+                CHECK(longest_event_ms < 300, "the 10 s report didn't hold up the desktop (%ld ms)", longest_event_ms);
             }
             if (log_count("/:/timeline", "state", "playing") == playing0 && n_null++ < 200) {
                 usleep(20000);      /* the thread's own time */
@@ -3247,6 +3276,9 @@ static int script(int *b, int mask)
         case 8014:
             CHECK(log_count("/Sessions/Playing", NULL, NULL) == 1, "Jellyfin told it's playing (%d)",
                   log_count("/Sessions/Playing", NULL, NULL));
+            CHECK(log_count("/Sessions/Playing/Progress", NULL, NULL) >= 1 && ui_test_free_reports >= 2,
+                  "and every 10 s where it's got to, without waiting (%d, %d)",
+                  log_count("/Sessions/Playing/Progress", NULL, NULL), ui_test_free_reports);
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);

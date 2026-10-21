@@ -55,6 +55,8 @@ int matinee_main(int argc, char **argv);
 int ui_test_tile_xy(int i, int *x, int *y);     /* a tile's middle, screen OS units; 0 = ok */
 int ui_test_items(void);                        /* items in the list shown */
 extern int ui_test_free_reports;                /* reports sent without waiting (bgreq.c) */
+extern int ui_test_pictures_free, ui_test_pictures_waited;    /* pictures fetched without waiting, and the old way */
+void ui_test_pf_settle(void);                   /* a picture on its way: let it arrive (real time) */
 const char *ui_test_item(int i, int line);      /* a tile's text (line 0 or 1), as shown */
 const char *ui_test_status(void);
 const char *ui_test_path(void);
