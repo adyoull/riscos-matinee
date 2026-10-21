@@ -5,6 +5,8 @@
  */
 #include "ui_int.h"
 
+#include <limits.h>
+
 /* ---- Choices ------------------------------------------------------------ */
 
 const char *player_names[PLAYER_COUNT] = { "Built-in", "ReelEGL", "Reel" };
@@ -141,11 +143,75 @@ static void jf_saved_parse(const char *v)
     snprintf(j->uname, sizeof(j->uname), "%s", f[5]);
 }
 
-void choices_load(void)
+/* Choices lines "key n": the number kept if lo <= n < hi, else def; lo ==
+   hi: a flag (n != 0) */
+typedef struct { const char *key; int *to; int lo, hi, def; } int_key;
+
+/* The settings */
+static const int_key setting_keys[] = {
+    { "hardware_overlay", &S.overlay, 0, 0, 0 },
+    { "direct_play", &S.direct, 0, 0, 0 },
+    { "picture", &S.pic_mode, 0, PIC_COUNT, PIC_FIT },
+    { "image_cache_mb", &S.cache_mb, 0, INT_MAX, 64 },
+    { "quality", &S.quality, 0, Q_COUNT, Q_720 },
+    { "poster_size", &S.psize, 0, 3, 1 },           /* Small, Medium, Large */
+};
+/* The server's (read after plex_ctx_init, which clears them) */
+static const int_key server_int_keys[] = {
+    { "server_local", &S.px.local, 0, 0, 0 },
+    { "server_kind", &S.px.kind, SRV_PLEX, SRV_DLNA + 1, SRV_PLEX },
+};
+/* Choices lines "key text": the server, and who's signed in */
+static const struct { const char *key; char *to; size_t size; } string_keys[] = {
+    { "account_token", S.px.account_token, sizeof(S.px.account_token) },
+    { "user_uuid", S.user_uuid, sizeof(S.user_uuid) },
+    { "user_title", S.user_title, sizeof(S.user_title) },
+    { "server_base", S.px.base, sizeof(S.px.base) },
+    { "server_token", S.px.token, sizeof(S.px.token) },
+    { "server_name", S.px.server_name, sizeof(S.px.server_name) },
+    { "server_id", S.px.server_id, sizeof(S.px.server_id) },
+    { "server_user_id", S.px.user_id, sizeof(S.px.user_id) },
+    { "server_user_name", S.px.user_name, sizeof(S.px.user_name) },
+};
+#define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+/* 1 if line is one of keys (n of them), and its number taken */
+static int int_line(const char *line, const int_key *keys, int n)
 {
-    char line[800], v[700], id[48] = "";
-    FILE *f = choices_open(0);
-    plex_ctx *c = &S.px;
+    char v[32];
+    for (int i = 0; i < n; i++)
+        if (value(line, keys[i].key, v, sizeof(v))) {
+            int x = atoi(v);
+            *keys[i].to = keys[i].lo == keys[i].hi ? x != 0 : x >= keys[i].lo && x < keys[i].hi ? x : keys[i].def;
+            return 1;
+        }
+    return 0;
+}
+
+/* The mini player's place and Keep on top: Reel's defaults (bottom right,
+   above the icon bar) unless Choices has them */
+static void load_mini(FILE *f)
+{
+    char line[800], v[700];
+    int mw = 0, mr = -2, mb = -2, top = 0;
+    player_set_mini_place(0, -1, -1);
+    if (f) {
+        while (fgets(line, sizeof(line), f)) {
+            if (value(line, "mini_width", v, sizeof(v))) mw = atoi(v);
+            else if (value(line, "mini_right", v, sizeof(v))) mr = atoi(v);
+            else if (value(line, "mini_bottom", v, sizeof(v))) mb = atoi(v);
+            else if (value(line, "keep_on_top", v, sizeof(v))) top = atoi(v) != 0;
+        }
+        rewind(f);
+        player_set_mini_place(mw, mr, mb);
+    }
+    player_set_ontop(top);
+}
+
+/* The settings, the player, the client id (made once if there's none) */
+static void load_settings(FILE *f, char *id, size_t idsize)
+{
+    char line[800], v[700];
     int version = 1, player = PLAYER_BUILTIN;
     S.player = PLAYER_BUILTIN;      /* the built-in player by default; ReelEGL and Reel the others */
     S.quality = Q_720;
@@ -156,44 +222,17 @@ void choices_load(void)
     S.pic_mode = PIC_FIT;
     S.volume = 1;
     S.cache_mb = 64;
-    {
-        int mw = 0, mr = -2, mb = -2, top = 0;
-        player_set_mini_place(0, -1, -1);           /* Reel's defaults: bottom right, above the icon bar */
-        if (f) {
-            while (fgets(line, sizeof(line), f)) {
-                if (value(line, "mini_width", v, sizeof(v))) mw = atoi(v);
-                else if (value(line, "mini_right", v, sizeof(v))) mr = atoi(v);
-                else if (value(line, "mini_bottom", v, sizeof(v))) mb = atoi(v);
-                else if (value(line, "keep_on_top", v, sizeof(v))) top = atoi(v) != 0;
-            }
-            rewind(f);
-            player_set_mini_place(mw, mr, mb);
-        }
-        player_set_ontop(top);
-    }
-    if (f) {
-        while (fgets(line, sizeof(line), f)) {
-            if (value(line, "client_id", v, sizeof(v)))
-                snprintf(id, sizeof(id), "%s", v);
-            else if (value(line, "choices_version", v, sizeof(v)))
-                version = atoi(v);
-            else if (value(line, "player", v, sizeof(v)))
-                player = !strcmp(v, "Reel") ? PLAYER_REEL : !strcmp(v, "ReelEGL") ? PLAYER_REELEGL : PLAYER_BUILTIN;
-            else if (value(line, "hardware_overlay", v, sizeof(v)))
-                S.overlay = atoi(v) != 0;
-            else if (value(line, "picture", v, sizeof(v)))
-                S.pic_mode = atoi(v) >= 0 && atoi(v) < PIC_COUNT ? atoi(v) : PIC_FIT;
-            else if (value(line, "image_cache_mb", v, sizeof(v)))
-                S.cache_mb = atoi(v) >= 0 ? atoi(v) : 64;
-            else if (value(line, "volume", v, sizeof(v)))
-                S.volume = atoi(v) >= 0 && atoi(v) <= 100 ? atoi(v) / 100.0 : 1;
-            else if (value(line, "quality", v, sizeof(v)))
-                S.quality = atoi(v) >= 0 && atoi(v) < Q_COUNT ? atoi(v) : Q_720;
-            else if (value(line, "direct_play", v, sizeof(v)))
-                S.direct = atoi(v) != 0;
-            else if (value(line, "poster_size", v, sizeof(v)))
-                S.psize = atoi(v) >= 0 && atoi(v) <= 2 ? atoi(v) : 1;
-        }
+    while (f && fgets(line, sizeof(line), f)) {
+        if (int_line(line, setting_keys, COUNT(setting_keys)))
+            ;
+        else if (value(line, "client_id", v, sizeof(v)))
+            snprintf(id, idsize, "%s", v);
+        else if (value(line, "choices_version", v, sizeof(v)))
+            version = atoi(v);
+        else if (value(line, "player", v, sizeof(v)))
+            player = !strcmp(v, "Reel") ? PLAYER_REEL : !strcmp(v, "ReelEGL") ? PLAYER_REELEGL : PLAYER_BUILTIN;
+        else if (value(line, "volume", v, sizeof(v)))
+            S.volume = atoi(v) >= 0 && atoi(v) <= 100 ? atoi(v) / 100.0 : 1;
     }
     /* test builds before the built-in player saved ReelEGL as the default,
        not as a choice: they start with the built-in player once */
@@ -201,73 +240,76 @@ void choices_load(void)
         S.player = player;
     if (!*id) {                     /* made once: the server knows us by it */
         unsigned a = (unsigned)time(NULL), b = (unsigned)now_cs() * 2654435761u ^ (unsigned)clock();
-        snprintf(id, sizeof(id), "matinee-%08x%08x", a, b);
+        snprintf(id, idsize, "matinee-%08x%08x", a, b);
     }
-    plex_ctx_init(c, id, MATINEE_VERSION);
-    {
-        /* the name the server shows for this computer (the dashboard, the
-           other apps' "play on"): the network's host name, if it has one */
-        const char *h = getenv("Inet$HostName");
-        if (h && *h)
-            snprintf(c->device_name, sizeof(c->device_name), "%s", h);
+}
+
+/* The server in use, who's signed in, the Jellyfin and DLNA servers kept */
+static void load_servers(FILE *f)
+{
+    char line[800], v[700];
+    while (f && fgets(line, sizeof(line), f)) {
+        int i;
+        if (int_line(line, server_int_keys, COUNT(server_int_keys)))
+            continue;
+        for (i = 0; i < COUNT(string_keys); i++)
+            if (value(line, string_keys[i].key, v, sizeof(v))) {
+                snprintf(string_keys[i].to, string_keys[i].size, "%s", v);
+                break;
+            }
+        if (i < COUNT(string_keys))
+            continue;
+        if (value(line, "jellyfin", v, sizeof(v)))
+            jf_saved_parse(v);
+        else if (value(line, "dlna", v, sizeof(v)))
+            dl_saved_parse(v);
     }
+}
+
+/* What the environment says: the host name, and the tests' fakes */
+static void load_env(plex_ctx *c)
+{
+    /* the name the server shows for this computer (the dashboard, the other
+       apps' "play on"): the network's host name, if it has one */
+    const char *h = getenv("Inet$HostName");
+    const char *tv = getenv(APP "$PlexTV");         /* another plex.tv (the tests' fake) */
+    /* DLNA: where you got to in its videos, kept beside Choices; and where
+       to look for servers (Matinee$SSDP addr:port: the tests' fake) */
+    const char *dir = getenv(APP "$ChoicesDir"), *ssdp = getenv(APP "$SSDP");
+    char r[300], w[300];
+    if (h && *h)
+        snprintf(c->device_name, sizeof(c->device_name), "%s", h);
+    if (tv && *tv)
+        snprintf(c->plextv, sizeof(c->plextv), "%s", tv);
+    if (dir && *dir) {
+        snprintf(r, sizeof(r), "%s/Places", dir);
+        snprintf(w, sizeof(w), "%s/Places", dir);
+    } else {
+        snprintf(r, sizeof(r), "Choices:" APP ".Places");
+        snprintf(w, sizeof(w), "<Choices$Write>." APP ".Places");
+    }
+    dlna_places_files(r, w);
+    if (ssdp && *ssdp) {
+        char a[64], *colon;
+        snprintf(a, sizeof(a), "%s", ssdp);
+        colon = strchr(a, ':');
+        if (colon)
+            *colon++ = 0;
+        dlna_set_ssdp(a, colon ? atoi(colon) : 0);
+    }
+}
+
+void choices_load(void)
+{
+    char id[48] = "";
+    FILE *f = choices_open(0);
+    load_mini(f);
+    load_settings(f, id, sizeof(id));
+    plex_ctx_init(&S.px, id, MATINEE_VERSION);
     if (f) {
         rewind(f);
-        while (fgets(line, sizeof(line), f)) {
-            if (value(line, "account_token", v, sizeof(v)))
-                snprintf(c->account_token, sizeof(c->account_token), "%s", v);
-            else if (value(line, "user_uuid", v, sizeof(v)))
-                snprintf(S.user_uuid, sizeof(S.user_uuid), "%s", v);
-            else if (value(line, "user_title", v, sizeof(v)))
-                snprintf(S.user_title, sizeof(S.user_title), "%s", v);
-            else if (value(line, "server_base", v, sizeof(v)))
-                snprintf(c->base, sizeof(c->base), "%s", v);
-            else if (value(line, "server_token", v, sizeof(v)))
-                snprintf(c->token, sizeof(c->token), "%s", v);
-            else if (value(line, "server_name", v, sizeof(v)))
-                snprintf(c->server_name, sizeof(c->server_name), "%s", v);
-            else if (value(line, "server_id", v, sizeof(v)))
-                snprintf(c->server_id, sizeof(c->server_id), "%s", v);
-            else if (value(line, "server_local", v, sizeof(v)))
-                c->local = atoi(v) != 0;
-            else if (value(line, "server_kind", v, sizeof(v)))
-                c->kind = atoi(v) == SRV_JELLYFIN ? SRV_JELLYFIN : atoi(v) == SRV_DLNA ? SRV_DLNA : SRV_PLEX;
-            else if (value(line, "server_user_id", v, sizeof(v)))
-                snprintf(c->user_id, sizeof(c->user_id), "%s", v);
-            else if (value(line, "server_user_name", v, sizeof(v)))
-                snprintf(c->user_name, sizeof(c->user_name), "%s", v);
-            else if (value(line, "jellyfin", v, sizeof(v)))
-                jf_saved_parse(v);
-            else if (value(line, "dlna", v, sizeof(v)))
-                dl_saved_parse(v);
-        }
+        load_servers(f);
         fclose(f);
     }
-    {
-        const char *tv = getenv(APP "$PlexTV");     /* another plex.tv (the tests' fake) */
-        if (tv && *tv)
-            snprintf(c->plextv, sizeof(c->plextv), "%s", tv);
-    }
-    {
-        /* DLNA: where you got to in its videos, kept beside Choices; and
-           where to look for servers (Matinee$SSDP addr:port: the tests' fake) */
-        const char *dir = getenv(APP "$ChoicesDir"), *ssdp = getenv(APP "$SSDP");
-        char r[300], w[300];
-        if (dir && *dir) {
-            snprintf(r, sizeof(r), "%s/Places", dir);
-            snprintf(w, sizeof(w), "%s/Places", dir);
-        } else {
-            snprintf(r, sizeof(r), "Choices:" APP ".Places");
-            snprintf(w, sizeof(w), "<Choices$Write>." APP ".Places");
-        }
-        dlna_places_files(r, w);
-        if (ssdp && *ssdp) {
-            char a[64], *colon;
-            snprintf(a, sizeof(a), "%s", ssdp);
-            colon = strchr(a, ':');
-            if (colon)
-                *colon++ = 0;
-            dlna_set_ssdp(a, colon ? atoi(colon) : 0);
-        }
-    }
+    load_env(&S.px);
 }

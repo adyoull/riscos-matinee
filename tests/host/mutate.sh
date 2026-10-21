@@ -140,7 +140,7 @@ mutate "the pointer never hidden" src/player.c \
 mutate "the panel not scaled for the overlay" src/player.c \
   'reelcore_set_yuv_scale(P.v, (double)ov.fw / rw);' '(void)rw;'
 mutate "Sign out without asking" src/menus.c \
-  '            if (ask(q))' '            if (1 || ask(q))'
+  '        if (ask(q))' '        if (1 || ask(q))'
 
 mutate "the stats say Direct Play for a transcoded stream" src/player.c \
   'P.convert ? "Transcoded" : "Direct Play"' '"Direct Play"'
@@ -357,7 +357,7 @@ mutate "SOAPACTION without its quotes" src/dlna.c \
 mutate "XML &amp; not decoded" src/xml.c \
   'else if (len == 4 && !strncmp(s, "&amp", 4)) c = '"'"'&'"'"';' 'else if (len == 4 && !strncmp(s, "&amp", 4)) c = 0;'
 mutate "a DLNA server in Choices taken for Plex" src/choices.c \
-  'atoi(v) == SRV_DLNA ? SRV_DLNA : SRV_PLEX;' 'SRV_PLEX;'
+  'SRV_PLEX, SRV_DLNA + 1, SRV_PLEX }' 'SRV_PLEX, SRV_DLNA, SRV_PLEX }'
 mutate "Return on the DLNA page not Use" src/signin.c \
   'return S.si_mode == SI_JF ? 3 : S.si_mode == SI_DLNA ? 5 : 2;' 'return S.si_mode == SI_JF ? 3 : 2;'
 mutate "a DLNA server's home page without its libraries" src/plex.c \
@@ -390,6 +390,13 @@ mutate "the corners mirrored wrongly" src/pictures.c \
   '(x < round ? x : w - 1 - x)];' '(x < round ? x : x - (w - round))];'
 mutate "the bar drawn again under every picture in full screen" src/player.c \
   '        bx.y0 = P.bar.y1;' '        ;'
+
+mutate "a Choices number out of range kept" src/choices.c \
+  'x >= keys[i].lo && x < keys[i].hi ? x : keys[i].def' 'x'
+mutate "a Choices flag kept as its number" src/choices.c \
+  'keys[i].lo == keys[i].hi ? x != 0 :' 'keys[i].lo == keys[i].hi ? x :'
+mutate "Adjust doesn't keep a menu open" src/menus.c \
+  '    if (!swi(Wimp_GetPointerInfo, &r) && (b[2] & 1))\n        menu_reopen(kind);' '    (void)b;'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

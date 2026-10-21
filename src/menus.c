@@ -177,7 +177,7 @@ void bar_menu_open(int x)
     if (*S.px.account_token && S.nusers < 0)
         users_get();                /* and Switch user */
     bar_menu_build();
-    S.menu_kind = 1;
+    S.menu_kind = MK_BAR;
     S.menu_x = x;
     open_menu(&m_bar, x - 64, 96 + MB_COUNT * 44);
 }
@@ -232,7 +232,7 @@ void lib_action(int id, int x, int y)
         for (int k = 0; k < SORTS; k++)
             menu_add(&m_sort, sort_names[k], k == S.lib.sort, 0, -1, 0);
         menu_end(&m_sort);
-        S.menu_kind = 6;
+        S.menu_kind = MK_SORT;
         S.menu_x = x;
         S.menu_y = y;
         open_menu(&m_sort, x - 64, y);
@@ -337,7 +337,7 @@ void psubs_menu_open(void)
     if (swi(Wimp_GetPointerInfo, &r))
         p[0] = S.scr_w / 2, p[1] = S.scr_h / 2;
     psubs_menu_build();
-    S.menu_kind = 5;
+    S.menu_kind = MK_PSUBS;
     S.menu_x = p[0];
     S.menu_y = p[1];
     open_menu(&m_psubs, p[0] - 64, p[1] + 44 * (m_psubs.n + 1));
@@ -425,7 +425,7 @@ void player_menu_open(void)
     if (swi(Wimp_GetPointerInfo, &r))
         p[0] = S.scr_w / 2, p[1] = S.scr_h / 2;
     player_menu_build();
-    S.menu_kind = 4;
+    S.menu_kind = MK_PLAYER;
     S.menu_x = p[0];
     S.menu_y = p[1];
     open_menu(&m_play, p[0] - 64, p[1]);
@@ -578,7 +578,7 @@ static void choose_psub(int k)
 void item_menu_open(int x, int y)
 {
     item_menu_build();
-    S.menu_kind = 2;
+    S.menu_kind = MK_ITEM;
     S.menu_x = x;
     S.menu_y = y;
     open_menu(&m_item, x - 64, y);
@@ -775,228 +775,261 @@ static void switch_user(int i, const char *pin)
     set_status("Now watching as %s.", S.user_title);
 }
 
-/* 1 if it's time to stop */
+/* The icon bar's menu: 1 if it's time to stop */
+static int bar_menu_select(const int *sel)
+{
+    switch (sel[0]) {
+    case MB_SIGNIN:
+        signin_open();
+        break;
+    case MB_SERVERS:
+        if (sel[1] >= 0 && sel[1] < m_servers.n) {
+            int w = S.srv_map[sel[1]];
+            if (w == SRV_ADD)
+                signin_open();
+            else if (w == SRV_FORGET) {
+                if (sel[2] >= 0 && sel[2] < m_forget.n)
+                    forget_server(S.fg_map[sel[2]]);
+            } else if (w <= -1 && w > -1 - S.njf)
+                use_jf(-1 - w);
+            else if (w <= SRV_DL(0) && w > SRV_DL(S.ndl))
+                use_dl(SRV_DL(0) - w);
+            else if (w >= 0 && w < S.nservers && use_server(w) == 0)
+                browser_top();
+        }
+        break;
+    case MB_USERS:
+        if (S.px.kind == SRV_PLEX && sel[1] >= 0 && sel[1] < S.nusers && strcmp(S.users[sel[1]].uuid, S.user_uuid)) {
+            char pin[16];
+            snprintf(pin, sizeof(pin), "%s", sel[2] == 0 ? m_pin.text[0] : "");
+            pin[strcspn(pin, "\r\n")] = 0;
+            m_pin.text[0][0] = 0;
+            switch_user(sel[1], pin);
+        }
+        break;
+    case MB_PLAYER:
+        if (sel[1] >= 0 && sel[1] < PLAYER_COUNT) {
+            S.player = sel[1];
+            choices_save();
+        }
+        break;
+    case MB_QUALITY:
+        if (sel[1] >= 0 && sel[1] < Q_COUNT) {
+            S.quality = sel[1];
+            choices_save();
+            det_repaint();
+        }
+        break;
+    case MB_SIZE:
+        set_psize(sel[1]);
+        break;
+    case MB_DIRECT:
+        S.direct = !S.direct;
+        choices_save();
+        det_repaint();          /* how it will play */
+        break;
+    case MB_CACHE: {
+        long long b = imgcache_size(NULL);
+        int n = imgcache_clear();
+        set_status("Image cache cleared: %d picture%s (%.1f MB).", n, n == 1 ? "" : "s", b / 1048576.0);
+        break;
+    }
+    case MB_SIGNOUT: {          /* easily chosen by mistake: asked first */
+        char q[300];
+        if (S.px.kind == SRV_DLNA)
+            snprintf(q, sizeof(q), "Forget %s? Matinee forgets this DLNA server; add it again with Servers, Add "
+                     "a server. (Where you got to in its videos is kept.)", S.px.server_name);
+        else if (S.px.kind == SRV_JELLYFIN)
+            snprintf(q, sizeof(q), "Sign out of %s? Matinee forgets this Jellyfin server, and you'll need to "
+                     "sign in to it again (Servers, Add a server).", S.px.server_name);
+        else
+            snprintf(q, sizeof(q), "Sign out? Matinee forgets the Plex server and your sign-in, and you'll need "
+                     "a new code from plex.tv/link (or the server's token) to sign in again.");
+        if (ask(q))
+            sign_out();
+        break;
+    }
+    case MB_QUIT:
+        if (S.save.active && !ask("A file is being saved. Stop saving it and quit?"))
+            break;
+        quit();
+        return 1;
+    }
+    return 0;
+}
+
+/* A poster's menu (or the details page's video's) */
+static void item_menu_select(const int *sel)
+{
+    const plex_item *it = menu_item();
+    int rel = menu_rel();
+    switch (sel[0]) {
+    case MI_PLAY:
+    case MI_RESUME:
+    case MI_START: {
+        int how = sel[0] == MI_RESUME ? PLAY_RESUME : sel[0] == MI_START ? PLAY_START : PLAY_DEFAULT;
+        if (it && rel)
+            play_item(it, how);
+        else if (it)
+            open_item(S.sel, how);
+        break;
+    }
+    case MI_DETAILS:
+        if (it && !rel)
+            det_show(S.sel);
+        break;
+    case MI_SUBS:
+        choose_sub(sel[1]);
+        break;
+    case MI_SAVE:
+        if (S.save.active)
+            save_stop("Stopped saving.");
+        else if (it && S.sv_ok && !too_big(S.sv_size, S.sv_title))
+            report("To save it, move to the right of Save original file, then drag the icon "
+                   "to a directory display.");
+        break;
+    case MI_SPEED:
+        speed_start(it);
+        break;
+    case MI_REMOVE:
+        if (it) {
+            hourglass(1);
+            if (plex_remove_continue(&S.px, it) != 0) {
+                hourglass(0);
+                report("Can't take it off Continue watching: %s", S.px.err);
+                break;
+            }
+            hourglass(0);
+            if (S.home.on || !strncmp(S.path, "/library/onDeck", 15))
+                refresh_list(); /* it's gone from the row */
+            set_status("Taken off Continue watching.");
+        }
+        break;
+    case MI_WATCHED:
+    case MI_UNWATCHED:
+        if (it)
+            mark(it, sel[0] == MI_WATCHED);
+        break;
+    case MI_RATE:
+        if (it && sel[1] >= 0 && sel[1] <= 5)
+            rate(det_is(it) ? det_item() : it, sel[1] ? 2 * sel[1] : -1);
+        break;
+    case MI_BACK:
+        go_back();
+        break;
+    case MI_REFRESH:
+        refresh_list();
+        break;
+    }
+}
+
+/* The player's menu: -1 if it's closed (Stop) */
+static int player_menu_select(const int *sel)
+{
+    switch (sel[0]) {
+    case MP_AUDIO:
+        choose_audio(sel[1]);
+        break;
+    case MP_SUBS:
+        choose_psub(sel[1]);
+        break;
+    case MP_CHAPTERS:
+        if (sel[1] >= 0 && S.pl.det.n && S.pl.chap_first + sel[1] < S.pl.det.v[0].nchapters)
+            player_seek(S.pl.det.v[0].chapters[S.pl.chap_first + sel[1]].start_ms / 1000.0);
+        break;
+    case MP_VOLUME:
+        if (sel[1] >= 0 && sel[1] < 5) {
+            player_set_volume((100 - sel[1] * 25) / 100.0);
+            S.volume = player_volume();
+            choices_save();
+        }
+        break;
+    case MP_PICTURE:
+        if (sel[1] >= 0 && sel[1] < PIC_COUNT) {
+            player_set_pic_mode(sel[1]);
+            S.pic_mode = sel[1];
+            choices_save();
+        }
+        break;
+    case MP_STATS:
+        player_set_stats(!player_stats());
+        break;
+    case MP_FULL:
+        player_set_fullscreen(!player_fullscreen());
+        break;
+    case MP_MINI:
+        player_set_mini(!player_mini());
+        choices_save();
+        break;
+    case MP_ONTOP:
+        player_set_ontop(!player_ontop());
+        choices_save();
+        break;
+    case MP_OVERLAY:
+        player_set_overlay(!player_overlay());
+        S.overlay = player_overlay();
+        choices_save();
+        break;
+    case MP_STOP:
+        builtin_stop(1);
+        return -1;
+    }
+    return 0;
+}
+
+/* The menu just closed open again, where it was (Adjust keeps a menu open) */
+static void menu_reopen(int kind)
+{
+    if (kind == MK_BAR)
+        bar_menu_open(S.menu_x);
+    else if (kind == MK_ITEM && S.browser_open)
+        item_menu_open(S.menu_x, S.menu_y);
+    else if (kind == MK_PLAYER && S.pl.on) {
+        player_menu_build();
+        S.menu_kind = MK_PLAYER;
+        open_menu(&m_play, S.menu_x - 64, S.menu_y);
+    } else if (kind == MK_PSUBS && S.pl.on) {
+        psubs_menu_build();
+        S.menu_kind = MK_PSUBS;
+        open_menu(&m_psubs, S.menu_x - 64, S.menu_y + 44 * (m_psubs.n + 1));
+    }
+}
+
+/* A menu's item chosen: 1 if it's time to stop */
 int menu_select(const int *sel)
 {
     int b[5], kind = S.menu_kind;
     _kernel_swi_regs r;
-    if (kind == 1) {
-        switch (sel[0]) {
-        case MB_SIGNIN:
-            signin_open();
-            break;
-        case MB_SERVERS:
-            if (sel[1] >= 0 && sel[1] < m_servers.n) {
-                int w = S.srv_map[sel[1]];
-                if (w == SRV_ADD)
-                    signin_open();
-                else if (w == SRV_FORGET) {
-                    if (sel[2] >= 0 && sel[2] < m_forget.n)
-                        forget_server(S.fg_map[sel[2]]);
-                } else if (w <= -1 && w > -1 - S.njf)
-                    use_jf(-1 - w);
-                else if (w <= SRV_DL(0) && w > SRV_DL(S.ndl))
-                    use_dl(SRV_DL(0) - w);
-                else if (w >= 0 && w < S.nservers && use_server(w) == 0)
-                    browser_top();
-            }
-            break;
-        case MB_USERS:
-            if (S.px.kind == SRV_PLEX && sel[1] >= 0 && sel[1] < S.nusers && strcmp(S.users[sel[1]].uuid, S.user_uuid)) {
-                char pin[16];
-                snprintf(pin, sizeof(pin), "%s", sel[2] == 0 ? m_pin.text[0] : "");
-                pin[strcspn(pin, "\r\n")] = 0;
-                m_pin.text[0][0] = 0;
-                switch_user(sel[1], pin);
-            }
-            break;
-        case MB_PLAYER:
-            if (sel[1] >= 0 && sel[1] < PLAYER_COUNT) {
-                S.player = sel[1];
-                choices_save();
-            }
-            break;
-        case MB_QUALITY:
-            if (sel[1] >= 0 && sel[1] < Q_COUNT) {
-                S.quality = sel[1];
-                choices_save();
-                det_repaint();
-            }
-            break;
-        case MB_SIZE:
-            set_psize(sel[1]);
-            break;
-        case MB_DIRECT:
-            S.direct = !S.direct;
-            choices_save();
-            det_repaint();          /* how it will play */
-            break;
-        case MB_CACHE: {
-            long long b = imgcache_size(NULL);
-            int n = imgcache_clear();
-            set_status("Image cache cleared: %d picture%s (%.1f MB).", n, n == 1 ? "" : "s", b / 1048576.0);
-            break;
-        }
-        case MB_SIGNOUT: {          /* easily chosen by mistake: asked first */
-            char q[300];
-            if (S.px.kind == SRV_DLNA)
-                snprintf(q, sizeof(q), "Forget %s? Matinee forgets this DLNA server; add it again with Servers, Add "
-                         "a server. (Where you got to in its videos is kept.)", S.px.server_name);
-            else if (S.px.kind == SRV_JELLYFIN)
-                snprintf(q, sizeof(q), "Sign out of %s? Matinee forgets this Jellyfin server, and you'll need to "
-                         "sign in to it again (Servers, Add a server).", S.px.server_name);
-            else
-                snprintf(q, sizeof(q), "Sign out? Matinee forgets the Plex server and your sign-in, and you'll need "
-                         "a new code from plex.tv/link (or the server's token) to sign in again.");
-            if (ask(q))
-                sign_out();
-            break;
-        }
-        case MB_QUIT:
-            if (S.save.active && !ask("A file is being saved. Stop saving it and quit?"))
-                break;
-            quit();
+    switch (kind) {
+    case MK_BAR:
+        if (bar_menu_select(sel))
             return 1;
-        }
-    } else if (kind == 2) {
-        const plex_item *it = menu_item();
-        int rel = menu_rel();
-        switch (sel[0]) {
-        case MI_PLAY:
-        case MI_RESUME:
-        case MI_START: {
-            int how = sel[0] == MI_RESUME ? PLAY_RESUME : sel[0] == MI_START ? PLAY_START : PLAY_DEFAULT;
-            if (it && rel)
-                play_item(it, how);
-            else if (it)
-                open_item(S.sel, how);
-            break;
-        }
-        case MI_DETAILS:
-            if (it && !rel)
-                det_show(S.sel);
-            break;
-        case MI_SUBS:
-            choose_sub(sel[1]);
-            break;
-        case MI_SAVE:
-            if (S.save.active)
-                save_stop("Stopped saving.");
-            else if (it && S.sv_ok && !too_big(S.sv_size, S.sv_title))
-                report("To save it, move to the right of Save original file, then drag the icon "
-                       "to a directory display.");
-            break;
-        case MI_SPEED:
-            speed_start(it);
-            break;
-        case MI_REMOVE:
-            if (it) {
-                hourglass(1);
-                if (plex_remove_continue(&S.px, it) != 0) {
-                    hourglass(0);
-                    report("Can't take it off Continue watching: %s", S.px.err);
-                    break;
-                }
-                hourglass(0);
-                if (S.home.on || !strncmp(S.path, "/library/onDeck", 15))
-                    refresh_list(); /* it's gone from the row */
-                set_status("Taken off Continue watching.");
-            }
-            break;
-        case MI_WATCHED:
-        case MI_UNWATCHED:
-            if (it)
-                mark(it, sel[0] == MI_WATCHED);
-            break;
-        case MI_RATE:
-            if (it && sel[1] >= 0 && sel[1] <= 5)
-                rate(det_is(it) ? det_item() : it, sel[1] ? 2 * sel[1] : -1);
-            break;
-        case MI_BACK:
-            go_back();
-            break;
-        case MI_REFRESH:
-            refresh_list();
-            break;
-        }
-    } else if (kind == 3) {
+        break;
+    case MK_ITEM:
+        item_menu_select(sel);
+        break;
+    case MK_SUBS:
         choose_sub(sel[0]);
-    } else if (kind == 6 && S.lib.on) {
-        if (sel[0] >= 0 && sel[0] < SORTS && sel[0] != S.lib.sort) {
+        break;
+    case MK_SORT:                   /* a library's Sort: the list is shown again, sorted */
+        if (S.lib.on && sel[0] >= 0 && sel[0] < SORTS && sel[0] != S.lib.sort) {
             char path[256];
             lib_path(0, sel[0], S.lib.unwatched, path, sizeof(path));
             show_list(path, "", 0, 0);
         }
         return 0;
-    } else if (kind == 5 && S.pl.on) {
-        choose_psub(sel[0]);
-    } else if (kind == 4 && S.pl.on) {
-        switch (sel[0]) {
-        case MP_AUDIO:
-            choose_audio(sel[1]);
-            break;
-        case MP_SUBS:
-            choose_psub(sel[1]);
-            break;
-        case MP_CHAPTERS:
-            if (sel[1] >= 0 && S.pl.det.n && S.pl.chap_first + sel[1] < S.pl.det.v[0].nchapters)
-                player_seek(S.pl.det.v[0].chapters[S.pl.chap_first + sel[1]].start_ms / 1000.0);
-            break;
-        case MP_VOLUME:
-            if (sel[1] >= 0 && sel[1] < 5) {
-                player_set_volume((100 - sel[1] * 25) / 100.0);
-                S.volume = player_volume();
-                choices_save();
-            }
-            break;
-        case MP_PICTURE:
-            if (sel[1] >= 0 && sel[1] < PIC_COUNT) {
-                player_set_pic_mode(sel[1]);
-                S.pic_mode = sel[1];
-                choices_save();
-            }
-            break;
-        case MP_STATS:
-            player_set_stats(!player_stats());
-            break;
-        case MP_FULL:
-            player_set_fullscreen(!player_fullscreen());
-            break;
-        case MP_MINI:
-            player_set_mini(!player_mini());
-            choices_save();
-            break;
-        case MP_ONTOP:
-            player_set_ontop(!player_ontop());
-            choices_save();
-            break;
-        case MP_OVERLAY:
-            player_set_overlay(!player_overlay());
-            S.overlay = player_overlay();
-            choices_save();
-            break;
-        case MP_STOP:
-            builtin_stop(1);
+    case MK_PSUBS:
+        if (S.pl.on)
+            choose_psub(sel[0]);
+        break;
+    case MK_PLAYER:
+        if (S.pl.on && player_menu_select(sel) < 0)
             return 0;
-        }
+        break;
     }
-    /* Adjust keeps the menu open */
     r.r[1] = (intptr_t)b;
-    if (!swi(Wimp_GetPointerInfo, &r) && (b[2] & 1)) {
-        if (kind == 1)
-            bar_menu_open(S.menu_x);
-        else if (kind == 2 && S.browser_open)
-            item_menu_open(S.menu_x, S.menu_y);
-        else if (kind == 4 && S.pl.on) {
-            player_menu_build();
-            S.menu_kind = 4;
-            open_menu(&m_play, S.menu_x - 64, S.menu_y);
-        } else if (kind == 5 && S.pl.on) {
-            psubs_menu_build();
-            S.menu_kind = 5;
-            open_menu(&m_psubs, S.menu_x - 64, S.menu_y + 44 * (m_psubs.n + 1));
-        }
-    }
+    if (!swi(Wimp_GetPointerInfo, &r) && (b[2] & 1))
+        menu_reopen(kind);
     return 0;
 }
 

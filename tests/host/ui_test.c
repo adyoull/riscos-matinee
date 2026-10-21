@@ -33,6 +33,7 @@
 #include "panel_font.h"         /* Reel's bitmap font (riscos-ffmpeg reelcore/), for the pictures */
 #include "player.h"
 #include "plex.h"
+#include "caps.h"
 #include "reelcore.h"
 #include "fake_reelcore.h"
 #include "imgcache.h"
@@ -102,6 +103,7 @@ static int jpeg_plots, jpeg_scale[4], jpeg_into_sprite = 1;
 static int jpeg_topcut = -1;          /* of pictures cut top and bottom: the most cut off the top, in % of what's cut */
 static int drag_started;
 static int pointer_w = -1, pointer_i = -1, pointer_x = 640, pointer_y = 480;
+static int pointer_buttons = 4;    /* Wimp_GetPointerInfo's: 4 Select, 1 Adjust */
 static int poll_null_mask_bad;
 
 /* the fake VideoOverlay module */
@@ -680,7 +682,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     case 0x400CF: {                                 /* Wimp_GetPointerInfo */
         int *b = (int *)(intptr_t)in->r[1];
-        b[0] = pointer_x; b[1] = pointer_y; b[2] = 4; b[3] = pointer_w; b[4] = pointer_i;
+        b[0] = pointer_x; b[1] = pointer_y; b[2] = pointer_buttons; b[3] = pointer_w; b[4] = pointer_i;
         return NULL;
     }
     case 0x42400: drag_started++; return NULL;      /* DragASprite_Start */
@@ -2132,9 +2134,17 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         }
-        case 7702:
-            pc = 899;
+        case 7702:                      /* Medium, chosen with Adjust */
+            pointer_buttons = 1;
+            menu_open = NULL;
+            pc = 7703;
             return ev_menu(b, MB_SIZE, 1);
+        case 7703:
+            pointer_buttons = 4;
+            CHECK(menu_open && !strncmp(menu_text(menu_open, 0), "Info", 4) && ui_test_psize() == 1,
+                  "Adjust: Medium chosen, and the menu kept open");
+            pc = 899;
+            continue;
         case 899:
             pc = 900;                                           /* the built-in player next, from the top */
             return ev_key(b, w_browser, -1, 8);
@@ -3861,6 +3871,20 @@ int main(int argc, char **argv)
     setenv("Matinee$PlexTV", base, 1);
     snprintf(cmd, sizeof(cmd), "127.0.0.1:%s", argv[1]);
     setenv("Matinee$SSDP", cmd, 1);             /* M-SEARCH to the fake, which answers there */
+    {
+        /* Choices' numbers: out of range, the default; a flag, 0 or 1 */
+        FILE *f = fopen(choices, "w");
+        int v[8];
+        if (f) {
+            fputs("picture 7\nquality -1\nposter_size 2\nhardware_overlay 5\ndirect_play 0\nimage_cache_mb -3\n"
+                  "server_kind 2\nserver_local 9\n", f);
+            fclose(f);
+        }
+        ui_test_choices_read(v);
+        CHECK(v[0] == 1 && v[1] == PIC_FIT && v[2] == Q_720 && v[3] == 2 && v[4] == 0 && v[5] == 64 && v[6] == SRV_DLNA &&
+              v[7] == 1, "Choices: numbers out of range give the defaults, flags 0 or 1 (%d %d %d %d %d %d %d %d)",
+              v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+    }
     {
         FILE *f = fopen(choices, "w");      /* the hand-off first: ReelEGL chosen */
         if (f) {

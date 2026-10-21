@@ -412,7 +412,7 @@ static void det_action(int id, int x, int y)
             r.r[2] = x - 64;
             r.r[3] = y + 64;
             swi(Wimp_CreateMenu, &r);
-            S.menu_kind = 0;
+            S.menu_kind = MK_NONE;
         }
         break;
     case D_WATCHED:
@@ -425,7 +425,7 @@ static void det_action(int id, int x, int y)
     }
     case D_SUBS:
         subs_menu_build();
-        S.menu_kind = 3;
+        S.menu_kind = MK_SUBS;
         S.menu_x = x;
         S.menu_y = y;
         open_menu(&m_subs, x - 64, y);
@@ -1312,6 +1312,12 @@ const char *ui_test_det(int what)
            S.det_nlines ? S.det_lines[0] : "";
 }
 int ui_test_psize(void) { return S.psize; }
+void ui_test_choices_read(int v[8])
+{
+    choices_load();
+    v[0] = S.overlay; v[1] = S.pic_mode; v[2] = S.quality; v[3] = S.psize;
+    v[4] = S.direct; v[5] = S.cache_mb; v[6] = S.px.kind; v[7] = S.px.local;
+}
 #endif
 
 #ifndef MATINEE_NO_MAIN

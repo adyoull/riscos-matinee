@@ -150,6 +150,11 @@ typedef struct {
    the collection first, then More like this, then the extras (rel_order) */
 enum { REL_SIMILAR, REL_EXTRAS, REL_COLLECTION, REL_ROWS };
 
+/* The menu open (S.menu_kind): none, the icon bar's, a poster's, the
+   details page's subtitles, the player's, the player's subtitles, a
+   library's Sort */
+enum { MK_NONE, MK_BAR, MK_ITEM, MK_SUBS, MK_PLAYER, MK_PSUBS, MK_SORT };
+
 /* A Jellyfin server signed in to: kept in Choices, one of the Servers menu */
 #define JF_SAVED 6
 #define SRV_ADD (-100)
@@ -312,7 +317,7 @@ typedef struct {
     } home;
 
     /* menus */
-    int menu_kind;                  /* 1 icon bar, 2 item, 3 subtitles, 4 player, 5 player's subtitles */
+    int menu_kind;                  /* the menu open: MK_* */
     int menu_x, menu_y;
 
     /* the built-in player: what it's playing, and for Plex */

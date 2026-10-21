@@ -91,6 +91,9 @@ int ui_test_upnext(void);
 const char *ui_test_query(void);               /* the search field's text ("": not searching) */                      /* the Up next card is counting down */
 const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how it plays, 3 summary */
 int ui_test_psize(void);
+/* Choices read as at the start; v: overlay, picture, quality, poster size,
+   direct play, image cache MB, server kind, server local */
+void ui_test_choices_read(int v[8]);
 int ui_test_badge(int i);                       /* item i's badge: 1 a tick, 2 a count, 0 none */
 int ui_test_show(int *season);
 int ui_test_tab(int *current);

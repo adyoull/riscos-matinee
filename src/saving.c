@@ -291,7 +291,7 @@ void close_menus(void)
     _kernel_swi_regs r;
     r.r[1] = -1;
     swi(Wimp_CreateMenu, &r);
-    S.menu_kind = 0;
+    S.menu_kind = MK_NONE;
 }
 
 /* OK in the save box (or Return): a full path typed in saves there */
