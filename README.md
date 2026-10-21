@@ -147,7 +147,7 @@ tests/host/run.sh
 tests/host/mutate.sh
 ```
 
-Expected: `core_test: 254 checks, 0 failed`, `ui_test: 613 checks, 0 failed`, and no
+Expected: `core_test: 254 checks, 0 failed`, `ui_test: 615 checks, 0 failed`, and no
 mutation surviving. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
 `player.ppm` and `upnext.ppm` in its output directory: the window's pages as its fake
 Wimp drew them (with a stand-in font, made-up posters and a made-up picture).

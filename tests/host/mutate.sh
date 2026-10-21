@@ -183,7 +183,7 @@ mutate "the show page opens on the first series, not the one to watch" src/menus
 mutate "another series pushes history" src/menus.c \
   'show_list(path, "", 0, 0);\n}\n\n/* Play and Mark watched' 'show_list(path, "", 1, 0);\n}\n\n/* Play and Mark watched'
 mutate "the details poster not fetched" src/details.c \
-  'S.det_poster = poster_fetch(det_poster_thumb(it), key, det_pw >> S.xeig, det_ph >> S.yeig, 0);' '(void)0;'
+  'if (!(S.det_poster = poster_soon(det_poster_thumb(it), pkey, det_pw >> S.xeig, det_ph >> S.yeig, 0)))' 'if (1)'
 
 # test12: a real show's children start with "All episodes"
 mutate "All episodes taken for a series" src/menus.c \
@@ -213,7 +213,7 @@ mutate "A to Z ignores The" src/browse.c \
 mutate "Unwatched not asked for" src/browse.c \
   'unwatched ? (sort ? "&unwatched=1" : "unwatched=1") : ""' '""'
 mutate "More like this not fetched" src/details.c \
-  'snprintf(path, sizeof(path), "/library/metadata/%s/%s", v->rating_key, k == REL_EXTRAS ? "extras" : "similar");' 'snprintf(path, sizeof(path), "/nowhere");'
+  'k == REL_EXTRAS ? "extras" : "similar");' 'k == REL_EXTRAS ? "extras" : "nowhere");'
 
 # test16: skip intro and credits, chapters
 mutate "a marker's end counts as in it" src/plex.c \
@@ -307,7 +307,7 @@ mutate "a poster cut short taken for a whole one" src/imgcache.c \
 mutate "the collection's row left out" src/plex.c \
   '            it->collection = dup_s(jstr(col, "tag"));' '            it->collection = NULL;'
 mutate "the film itself in its collection's row" src/details.c \
-  '                if (c->v[i].rating_key && !strcmp(c->v[i].rating_key, v->rating_key)) {' '                if (0) {'
+  '            if (l->v[i].rating_key && !strcmp(l->v[i].rating_key, v->rating_key)) {' '            if (0) {'
 
 # test31: the details page's rows drawn in strips
 mutate "a details row left out of a redraw below its heading" src/details.c \
@@ -319,7 +319,7 @@ mutate "the grid's posters looked for under the pointer on the details" src/ui.c
 mutate "a library's later pages never fetched" src/ui.c \
   '    if (S.more_wanted && list_more_step())\n        return;\n' ''
 mutate "Plex's later pages asked from the start" src/plex.c \
-  'c->base, path, strchr(path, '"'"'?'"'"') ? "&" : "?", start, size);' 'c->base, path, strchr(path, '"'"'?'"'"') ? "&" : "?", 0, size);'
+  'strchr(path, '"'"'?'"'"') ? "&" : "?", start, size);' 'strchr(path, '"'"'?'"'"') ? "&" : "?", 0, size);'
 mutate "Jellyfin's later pages asked from the start" src/jellyfin.c \
   '"&Filters=IsUnplayed" : "", fields, IMAGES, start, size);' '"&Filters=IsUnplayed" : "", fields, IMAGES, 0, size);'
 mutate "Refresh's selection in a later page forgotten" src/browse.c \
@@ -379,7 +379,7 @@ mutate "a chunked picture not put back together" src/bgreq.c \
 mutate "pictures fetched with the desktop waiting" src/pictures.c \
   'bgreq_start(&PF.r, rq.url, rq.headers, 1) == 0) {' '0) {'
 mutate "the desktop kept busy while a picture is on its way" src/ui.c \
-  '            if (pf_waiting()) {     /* a picture'"'"'s answer: the rest of the desktop runs meanwhile */' '            if (0) {'
+  '            if (pf_waiting() || det_waiting()) {' '            if (0) {'
 mutate "a picture fetched without waiting not kept on the disc" src/pictures.c \
   '        imgcache_put(PF.disc_key, jpeg, len);' '        ;'
 mutate "Jellyfin's progress sent waiting" src/plex.c \
@@ -397,6 +397,15 @@ mutate "a Choices flag kept as its number" src/choices.c \
   'keys[i].lo == keys[i].hi ? x != 0 :' 'keys[i].lo == keys[i].hi ? x :'
 mutate "Adjust doesn't keep a menu open" src/menus.c \
   '    if (!swi(Wimp_GetPointerInfo, &r) && (b[2] & 1))\n        menu_reopen(kind);' '    (void)b;'
+
+mutate "the details page waits for its poster and backdrop" src/details.c \
+  '    if (with_art)\n        det_fetch_art(0);' '    if (with_art)\n        det_fetch_art(1);'
+mutate "the details page's rows fetched waiting" src/details.c \
+  'if (plex_list_request(&S.px, RQ.path[k], &rq) == 0 && bgreq_start' 'if (0 && bgreq_start'
+mutate "a row's list asked for compressed" src/plex.c \
+  '    plex_headers(c, c->token, rq->headers, sizeof(rq->headers));  /* not compressed' '    (void)0;  /* not compressed'
+mutate "a details row's list not shown when it comes" src/details.c \
+  '    S.rel[k] = *l;' '    plex_list_free(l);'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

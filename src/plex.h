@@ -239,6 +239,11 @@ typedef struct {
     char body[1024];
 } plex_request;
 
+/* A list's first page's request (as plex_list_get fetches it), for a Plex
+   server's list (parsed with plex_list_parse): 0 = made, -1 = not one
+   (another kind of server, a search, the top): plex_list_get it. Asked
+   for uncompressed (bgreq.c doesn't unzip): for short lists. */
+int plex_list_request(plex_ctx *c, const char *path, plex_request *rq);
 /* The picture's request (as plex_poster fetches it): 0 = made, -1 = no picture */
 int plex_poster_request(const plex_ctx *c, const char *thumb, int w, int h, plex_request *rq);
 

@@ -83,84 +83,225 @@ static const char *det_poster_thumb(const plex_item *it)
     return it->type && !strcmp(it->type, "episode") && it->show_thumb ? it->show_thumb : it->thumb;
 }
 
-/* The backdrop and the poster, for the boxes laid out for */
-void det_fetch_art(void)
+/* What's still to come for the page shown, after it's shown (from null
+   events, det_cast_step): the poster and the backdrop (as pictures do,
+   pictures.c), and the rows' lists, each a request to the server that the
+   desktop used to wait for before the page appeared. One list at a time,
+   without waiting (bgreq.c) from a Plex server at an address; fetched the
+   old way (still after the page is shown) otherwise. */
+static int art_wanted;                          /* the poster or the backdrop still to come */
+static struct {
+    char path[REL_ROWS][260];
+    int due[REL_ROWS];                          /* still to fetch */
+    bgreq r;
+    int on, k, cs0;                             /* a list on its way: which; when it was asked for */
+} RQ = { .r = { .fd = -1 } };
+#define RQ_TIMEOUT_CS 1500
+
+static void rows_cancel(void)
+{
+    bgreq_close(&RQ.r);
+    RQ.on = 0;
+    for (int k = 0; k < REL_ROWS; k++)
+        RQ.due[k] = 0;
+}
+
+/* A row's list on its way (the Wimp can sleep a little meanwhile) */
+int det_waiting(void)
+{
+    return RQ.on;
+}
+
+/* The poster's and the backdrop's keys in the cache, at the sizes fetched */
+static void art_keys(const plex_item *it, char *pkey, char *akey, size_t size)
+{
+    snprintf(pkey, size, "dposter:%s@%dx%d", det_poster_thumb(it) ? det_poster_thumb(it) : "", det_pw, det_ph);
+    snprintf(akey, size, "art:%s@%dx%d", it->art ? it->art : "", art_fw, art_fh);
+}
+
+/* The backdrop and the poster, for the boxes laid out for. wait 1: fetched
+   now (the desktop waiting); 0: those not in the cache come later
+   (det_art_step) */
+void det_fetch_art(int wait)
 {
     const plex_item *it = det_item();
-    char key[320];
+    char pkey[320], akey[320];
     S.det_art = S.det_poster = NULL;
     det_art_box();
     art_fw = art_w;
     art_fh = art_h;
     det_pfw = det_pw;
     art_due = 0;
-    if (it && det_poster_thumb(it)) {
-        snprintf(key, sizeof(key), "dposter:%s@%dx%d", det_poster_thumb(it), det_pw, det_ph);
-        if (!(S.det_poster = cache_find(key)))
-            S.det_poster = poster_fetch(det_poster_thumb(it), key, det_pw >> S.xeig, det_ph >> S.yeig, 0);
+    art_wanted = 0;
+    if (!it)
+        return;
+    art_keys(it, pkey, akey, sizeof(pkey));
+    if (det_poster_thumb(it) && !(S.det_poster = cache_find(pkey))) {
+        if (wait)
+            S.det_poster = poster_fetch(det_poster_thumb(it), pkey, det_pw >> S.xeig, det_ph >> S.yeig, 0);
+        else
+            art_wanted = 1;
     }
-    if (it && it->art) {
-        snprintf(key, sizeof(key), "art:%s@%dx%d", it->art, art_w, art_h);
-        if (!(S.det_art = cache_find(key)))
-            S.det_art = poster_fetch(it->art, key, art_w >> S.xeig, art_h >> S.yeig, 1);
+    if (it->art && !(S.det_art = cache_find(akey))) {
+        if (wait)
+            S.det_art = poster_fetch(it->art, akey, art_w >> S.xeig, art_h >> S.yeig, 1);
+        else
+            art_wanted = 1;
     }
+    if (art_wanted)
+        S.cast_wanted = 1;
     cache_trim();
 }
 
-/* One video's details, from the server, into S.det (and its backdrop,
-   when it's to be shown). 0 = ok. */
+/* The poster or the backdrop moved on: 1 if one is on its way (or came) */
+static int det_art_step(const plex_item *it)
+{
+    char pkey[320], akey[320];
+    if (!art_wanted)
+        return 0;
+    art_keys(it, pkey, akey, sizeof(pkey));
+    if (det_poster_thumb(it) && !S.det_poster) {
+        if (!(S.det_poster = poster_soon(det_poster_thumb(it), pkey, det_pw >> S.xeig, det_ph >> S.yeig, 0)))
+            return 1;
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+        return 1;
+    }
+    if (it->art && !S.det_art) {
+        if (!(S.det_art = poster_soon(it->art, akey, art_fw >> S.xeig, art_fh >> S.yeig, 1)))
+            return 1;
+        force_redraw(S.browser_w, 0, -0x7FFFFFF, S.scr_w, 0);
+        return 1;
+    }
+    art_wanted = 0;
+    cache_trim();
+    return 0;
+}
+
+/* Row k's list has come (or failed: an empty row): laid out and shown */
+static void rows_got(int k, plex_list *l, int cs, int waited)
+{
+    const plex_item *v = det_item();
+    if (k == REL_COLLECTION && v && v->rating_key) {    /* the others in it: not this one */
+        for (int i = 0; i < l->n; i++)
+            if (l->v[i].rating_key && !strcmp(l->v[i].rating_key, v->rating_key)) {
+                plex_item_free(&l->v[i]);
+                memmove(&l->v[i], &l->v[i + 1], (l->n - i - 1) * sizeof(plex_item));
+                l->n--;
+                i--;
+            }
+    }
+    S.rel[k] = *l;
+    player_log("details: %s: %d items, %d cs%s", S.rel_head[k], l->n, cs, waited ? ", the desktop waiting" : ", without waiting");
+    det_repaint();
+}
+
+/* The rows' lists moved on: 1 if one is on its way (or came) */
+static int det_rows_step(void)
+{
+    plex_request rq;
+    plex_list l;
+    if (RQ.on) {
+        int e = bgreq_step(&RQ.r), k = RQ.k;
+        char *body;
+        size_t len;
+        if (e == 0 && now_cs() - RQ.cs0 < RQ_TIMEOUT_CS)
+            return 1;
+        body = e > 0 && RQ.r.status == 200 ? bgreq_take(&RQ.r, &len) : NULL;
+        bgreq_close(&RQ.r);
+        RQ.on = 0;
+        if (!body || plex_list_parse(body, RQ.path[k], &l) != 0)
+            memset(&l, 0, sizeof(l));
+        free(body);
+        rows_got(k, &l, now_cs() - RQ.cs0, 0);
+        return 1;
+    }
+    for (int o = 0; o < REL_ROWS; o++) {            /* in the order they're shown */
+        int k = rel_order[o], t0;
+        if (!RQ.due[k])
+            continue;
+        RQ.due[k] = 0;
+        if (plex_list_request(&S.px, RQ.path[k], &rq) == 0 && bgreq_start(&RQ.r, rq.url, rq.headers, 1) == 0) {
+            RQ.on = 1;
+            RQ.k = k;
+            RQ.cs0 = now_cs();
+            return 1;
+        }
+        t0 = now_cs();
+        if (plex_list_get(&S.px, RQ.path[k], &l) != 0)
+            memset(&l, 0, sizeof(l));
+        rows_got(k, &l, now_cs() - t0, 1);
+        return 1;
+    }
+    return 0;
+}
+
+#ifdef MATINEE_TEST
+/* The tests' Wimp: a row's list on its way arrives while the program sleeps */
+void ui_test_rows_settle(void)
+{
+    for (int i = 0; RQ.on && i < 3000; i++) {
+        struct timespec ts = { 0, 1000000 };
+        if (det_rows_step() && !RQ.on)
+            break;
+        nanosleep(&ts, NULL);
+    }
+}
+#endif
+
+/* One video's details, from the server, into S.det; its rows' lists and
+   (with_art) its poster and backdrop come after (det_cast_step). The same
+   video again (a choice changed) keeps its rows. 0 = ok. */
 int det_fetch(const plex_item *it, int with_art)
 {
     plex_list d;
+    int same, t0 = now_cs();
     hourglass(1);
     if (plex_details(&S.px, it, &d) != 0) {
         hourglass(0);
         report("Can't get the details: %s", S.px.err);
         return -1;
     }
+    hourglass(0);
+    player_log("details: %d cs, the desktop waiting", now_cs() - t0);
+    same = S.have_det && S.det.n && d.n && S.det.v[0].rating_key && d.v[0].rating_key &&
+           !strcmp(S.det.v[0].rating_key, d.v[0].rating_key);
     if (S.have_det)
         plex_list_free(&S.det);
     S.det = d;
     S.have_det = 1;
     S.det_art = S.det_poster = NULL;
+    art_wanted = 0;
     for (int i = 0; i < (int)(sizeof(S.cast) / sizeof(S.cast[0])); i++)
         S.cast[i].photo = NULL;
     S.ncast = 0;
     S.cast_wanted = 1;              /* laid out by det_layout, fetched from null events */
-    for (int k = 0; k < REL_ROWS; k++) {    /* More like this (not for an episode), its extras, its collection */
-        const plex_item *v = &S.det.v[0];
-        char path[260];
-        if (S.rel[k].n || S.rel[k].v)
-            plex_list_free(&S.rel[k]);
-        S.nrel[k] = 0;
-        S.rel_head[k][0] = 0;
-        if (!v->rating_key || (k == REL_SIMILAR && v->type && !strcmp(v->type, "episode")))
-            continue;
-        if (k == REL_COLLECTION) {
-            if (!v->collection || !v->collection_key)
-                continue;
-            snprintf(path, sizeof(path), "%s", v->collection_key);
-            latin1(v->collection, S.rel_head[k], sizeof(S.rel_head[k]));
-        } else {
-            snprintf(path, sizeof(path), "/library/metadata/%s/%s", v->rating_key, k == REL_EXTRAS ? "extras" : "similar");
-            snprintf(S.rel_head[k], sizeof(S.rel_head[k]), "%s", k == REL_EXTRAS ? "Trailers and extras" : "More like this");
-        }
-        if (plex_list_get(&S.px, path, &S.rel[k]) != 0)
+    if (!same) {
+        rows_cancel();
+        for (int k = 0; k < REL_ROWS; k++) {    /* More like this (not for an episode), its extras, its collection */
+            const plex_item *v = &S.det.v[0];
+            if (S.rel[k].n || S.rel[k].v)
+                plex_list_free(&S.rel[k]);
             memset(&S.rel[k], 0, sizeof(S.rel[k]));
-        if (k == REL_COLLECTION) {  /* the others in it: not this one */
-            plex_list *c = &S.rel[k];
-            for (int i = 0; i < c->n; i++)
-                if (c->v[i].rating_key && !strcmp(c->v[i].rating_key, v->rating_key)) {
-                    plex_item_free(&c->v[i]);
-                    memmove(&c->v[i], &c->v[i + 1], (c->n - i - 1) * sizeof(plex_item));
-                    c->n--;
-                    i--;
-                }
+            S.nrel[k] = 0;
+            S.rel_head[k][0] = 0;
+            if (!v->rating_key || (k == REL_SIMILAR && v->type && !strcmp(v->type, "episode")))
+                continue;
+            if (k == REL_COLLECTION) {
+                if (!v->collection || !v->collection_key)
+                    continue;
+                snprintf(RQ.path[k], sizeof(RQ.path[k]), "%s", v->collection_key);
+                latin1(v->collection, S.rel_head[k], sizeof(S.rel_head[k]));
+            } else {
+                snprintf(RQ.path[k], sizeof(RQ.path[k]), "/library/metadata/%s/%s", v->rating_key,
+                         k == REL_EXTRAS ? "extras" : "similar");
+                snprintf(S.rel_head[k], sizeof(S.rel_head[k]), "%s",
+                         k == REL_EXTRAS ? "Trailers and extras" : "More like this");
+            }
+            RQ.due[k] = 1;
         }
     }
     if (with_art)
-        det_fetch_art();
-    hourglass(0);
+        det_fetch_art(0);
     return 0;
 }
 
@@ -323,7 +464,9 @@ static void det_layout_more(const plex_item *it, int y)
     S.det_h = -y + 40;
 }
 
-/* A cast photo not fetched yet, fetched (one each null event): 1 if one was */
+/* What's still to come for the page shown (one thing each null event): the
+   poster and backdrop, the rows' lists, the cast's photos, the rows'
+   pictures. 1 if one is on its way (or came). */
 int det_cast_step(void)
 {
     const plex_item *it = det_item();
@@ -331,6 +474,8 @@ int det_cast_step(void)
         S.cast_wanted = 0;
         return 0;
     }
+    if (det_art_step(it) || det_rows_step())
+        return 1;
     for (int i = 0; i < S.ncast && i < it->ncast; i++) {
         const char *th = it->cast[i].thumb;
         char key[320];
@@ -405,7 +550,8 @@ static void det_layout(void)
         return;
     det_wd = vis_width();
     det_art_box();                  /* plotted scaled to it until it's fetched at that size */
-    if ((S.det_art && (art_w != art_fw || art_h != art_fh)) || (S.det_poster && det_pw != det_pfw))
+    if (((S.det_art || art_wanted) && (art_w != art_fw || art_h != art_fh)) ||
+        ((S.det_poster || art_wanted) && det_pw != det_pfw))
         art_due = now_cs() + 50;    /* once the window's been left alone for a moment */
     det_tx = 40 + det_pw + 56;
     tw = det_wd - det_tx - 40;
@@ -650,11 +796,9 @@ void det_show(int i)
     if (!det_is(it)) {
         if (det_fetch(it, 1) != 0)
             return;
-    } else if (det_art_box(), !S.det_art || art_w != art_fw || art_h != art_fh) {
-        hourglass(1);
-        det_fetch_art();
-        hourglass(0);
-    }
+    } else if (det_art_box(), !S.det_art || art_w != art_fw || art_h != art_fh)
+        det_fetch_art(0);
+    S.cast_wanted = 1;              /* what's still to come (det_cast_step) */
     window_state(S.browser_w, st);
     if (S.page == PG_GRID)
         S.grid_sy = st[6];          /* to come back to */

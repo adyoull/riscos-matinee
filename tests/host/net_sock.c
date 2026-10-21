@@ -160,6 +160,14 @@ int net_fetch(const char *url, const char *headers, const char *post, net_buf *o
     return net_send(url, headers, post ? "POST" : "GET", post, out, timeout_ms, err, errlen);
 }
 
+static void (*net_log)(const char *line);
+int net_test_waited;                /* requests made with the program waiting (net_send) */
+
+void net_set_log(void (*fn)(const char *line))
+{
+    net_log = fn;
+}
+
 int net_send(const char *url, const char *headers, const char *method, const char *post,
              net_buf *out, int timeout_ms, char *err, size_t errlen)
 {
@@ -170,6 +178,9 @@ int net_send(const char *url, const char *headers, const char *method, const cha
     memset(out, 0, sizeof(*out));
     if (err && errlen)
         *err = 0;
+    net_test_waited++;
+    if (net_log)
+        net_log(url);
     fd = request(url, headers, method, post, timeout_ms, &out->status, &len, pre, &npre, err, errlen);
     if (fd < 0)
         return -1;

@@ -57,7 +57,8 @@ int ui_test_items(void);                        /* items in the list shown */
 extern int ui_test_free_reports;                /* reports sent without waiting (bgreq.c) */
 extern int ui_test_pictures_free, ui_test_pictures_waited;    /* pictures fetched without waiting, and the old way */
 void ui_test_pf_settle(void);                   /* a picture on its way: let it arrive (real time) */
-int ui_test_pf_waiting(void);                   /* a picture on its way? */
+int ui_test_pf_waiting(void);
+void ui_test_rows_settle(void);                  /* a row's list on its way: let it arrive */                   /* a picture on its way? */
 const char *ui_test_item(int i, int line);      /* a tile's text (line 0 or 1), as shown */
 const char *ui_test_status(void);
 const char *ui_test_path(void);

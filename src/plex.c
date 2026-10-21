@@ -816,6 +816,26 @@ int plex_list_more(plex_ctx *c, const char *path, plex_list *l)
     return 1;
 }
 
+/* A Plex list's URL and headers: at most size items, from start */
+static void list_url(plex_ctx *c, const char *path, int start, int size, char *url, size_t usize, char *headers,
+                     size_t hsize)
+{
+    snprintf(url, usize, "%s%s%sX-Plex-Container-Start=%d&X-Plex-Container-Size=%d", c->base, path,
+             strchr(path, '?') ? "&" : "?", start, size);
+    api_headers(c, c->token, headers, hsize);
+}
+
+int plex_list_request(plex_ctx *c, const char *path, plex_request *rq)
+{
+    if (c->kind != SRV_PLEX || !*c->base || !*path || !strncmp(path, "search:", 7))
+        return -1;
+    snprintf(rq->method, sizeof(rq->method), "GET");
+    rq->body[0] = 0;
+    list_url(c, path, 0, page_size, rq->url, sizeof(rq->url), rq->headers, sizeof(rq->headers));
+    plex_headers(c, c->token, rq->headers, sizeof(rq->headers));  /* not compressed: bgreq doesn't unzip */
+    return 0;
+}
+
 /* One list from the server: at most size items, from start */
 static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_list *out)
 {
@@ -827,9 +847,7 @@ static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_l
         return jf_fetch(c, path, start, size, out);
     if (c->kind == SRV_DLNA)        /* or from a DLNA server's ContentDirectory */
         return dlna_fetch(c, path, start, size, out);
-    snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=%d&X-Plex-Container-Size=%d",
-             c->base, path, strchr(path, '?') ? "&" : "?", start, size);
-    api_headers(c, c->token, headers, sizeof(headers));
+    list_url(c, path, start, size, url, sizeof(url), headers, sizeof(headers));
     if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
     if (plex_list_parse(b.data, path, out) != 0) {

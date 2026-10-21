@@ -419,6 +419,8 @@ static int pf_step(void)
     if (e == 0 && now_cs() - PF.cs0 < PF_TIMEOUT_CS)
         return 0;
     jpeg = e > 0 && PF.r.status == 200 ? bgreq_take(&PF.r, &len) : NULL;
+    player_log("picture: %s, %u bytes, %d cs, without waiting", jpeg ? "ok" : e == 0 ? "no answer" : "failed",
+               jpeg ? (unsigned)len : 0u, now_cs() - PF.cs0);
     bgreq_close(&PF.r);
     PF.on = 0;
     if (jpeg && imgcache_jpeg_whole(jpeg, len))

@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
@@ -101,8 +102,43 @@ int net_fetch(const char *url, const char *headers, const char *post, net_buf *o
     return net_send(url, headers, post ? "POST" : "GET", post, out, timeout_ms, err, errlen);
 }
 
+static void (*net_log)(const char *line);
+
+void net_set_log(void (*fn)(const char *line))
+{
+    net_log = fn;
+}
+
+static long long ms_now(void)
+{
+    struct timeval t;
+    gettimeofday(&t, NULL);
+    return (long long)t.tv_sec * 1000 + t.tv_usec / 1000;
+}
+
+static int send_once(const char *url, const char *headers, const char *method, const char *post,
+                     net_buf *out, int timeout_ms, char *err, size_t errlen);
+
 int net_send(const char *url, const char *headers, const char *method, const char *post,
              net_buf *out, int timeout_ms, char *err, size_t errlen)
+{
+    long long t0 = net_log ? ms_now() : 0;
+    int e = send_once(url, headers, method, post, out, timeout_ms, err, errlen);
+    if (net_log) {
+        /* the path only: no address, and nothing after '?' (a token can be there) */
+        char line[300];
+        const char *p = strstr(url, "://");
+        p = p ? strchr(p + 3, '/') : NULL;
+        snprintf(line, sizeof(line), "net: %s %.*s: %s, %lu bytes, %lld ms, the desktop waiting",
+                 method ? method : post ? "POST" : "GET", p ? (int)strcspn(p, "?") : 1, p ? p : "/",
+                 e < 0 ? "failed" : "ok", e < 0 ? 0UL : (unsigned long)out->len, ms_now() - t0);
+        net_log(line);
+    }
+    return e;
+}
+
+static int send_once(const char *url, const char *headers, const char *method, const char *post,
+                     net_buf *out, int timeout_ms, char *err, size_t errlen)
 {
     AVIOContext *io = NULL;
     AVDictionary *o = options(headers, timeout_ms);

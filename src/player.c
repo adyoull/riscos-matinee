@@ -134,8 +134,9 @@ static int now_cs(void)
     return swi(OS_ReadMonotonicTime, &r) ? (int)(clock() * 100 / CLOCKS_PER_SEC) : r.r[0];
 }
 
-/* <Wimp$ScrapDir>.MatineeLog while playing (Matinee$Log: "on", another file, or
-   "off", as !Run sets it unless it's set already) */
+/* <Wimp$ScrapDir>.MatineeLog (Matinee$Log: "on", another file, or "off", as
+   !Run sets it unless it's set already): what the player does, and the
+   requests made while browsing. Kept open while playing; one file a run. */
 static void lg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lg(const char *fmt, ...)
 {
@@ -168,8 +169,13 @@ static void log_open(void)
 #endif
     else
         return;
-    P.log = fopen(path, "w");
-    P.log_cs = now_cs();
+    {
+        static int before;          /* one log for the whole run: started afresh once */
+        P.log = fopen(path, before ? "a" : "w");
+        if (!before)
+            P.log_cs = now_cs();
+        before = P.log != NULL;
+    }
 }
 
 /* A line in the log from ui.c */
@@ -177,6 +183,8 @@ void player_log(const char *fmt, ...)
 {
     char t[400];
     va_list a;
+    if (!P.log)
+        log_open();                 /* (browsing too, if Matinee$Log asks for it) */
     if (!P.log)
         return;
     va_start(a, fmt);

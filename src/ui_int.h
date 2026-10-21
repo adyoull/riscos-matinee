@@ -497,7 +497,8 @@ extern int art_due;                       /* when to fetch the backdrop at the n
 const plex_item *det_item(void);
 int det_is(const plex_item *it);
 void det_art_box(void);
-void det_fetch_art(void);
+void det_fetch_art(int wait);
+int det_waiting(void);
 int det_fetch(const plex_item *it, int with_art);
 int det_cast_step(void);
 void det_repaint(void);

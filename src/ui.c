@@ -931,7 +931,7 @@ static void nulls(void)
         return;
     }
     if (art_due && S.page == PG_DETAILS && S.browser_open && now_cs() - art_due >= 0) {
-        det_fetch_art();            /* the backdrop at the window's new size */
+        det_fetch_art(1);           /* the backdrop at the window's new size */
         det_repaint();
         return;
     }
@@ -972,6 +972,12 @@ static int already_running(void)
     return find_task(APP) != 0;
 }
 
+/* Each request made with the desktop waiting, in MatineeLog (if it's on) */
+static void net_line(const char *line)
+{
+    player_log("%s", line);
+}
+
 int matinee_main(int argc, char **argv)
 {
     static const int messages[] = { MSG_DATASAVE, MSG_DATASAVEACK, MSG_DATALOAD, MSG_DATALOADACK,
@@ -1000,6 +1006,7 @@ int matinee_main(int argc, char **argv)
     }
     snprintf(S.agent, sizeof(S.agent), APP "/" MATINEE_VERSION " (RISC OS)");
     net_init(S.agent);
+    net_set_log(net_line);
     choices_load();
     choices_save();                 /* the client id is kept from the start */
     read_screen();
@@ -1055,7 +1062,7 @@ int matinee_main(int argc, char **argv)
             r.r[2] = art_due;
         } else if (S.posters_wanted || (S.cast_wanted && S.page == PG_DETAILS && S.browser_open) ||
                    (S.more_wanted && S.page == PG_GRID && S.browser_open)) {
-            if (pf_waiting()) {     /* a picture's answer: the rest of the desktop runs meanwhile */
+            if (pf_waiting() || det_waiting()) {    /* an answer: the rest of the desktop runs meanwhile */
                 reason = Wimp_PollIdle;
                 r.r[2] = now_cs() + 1;
             }                       /* (else null events at once) */

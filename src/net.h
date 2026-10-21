@@ -34,6 +34,9 @@ int net_fetch(const char *url, const char *headers, const char *post, net_buf *o
 int net_send(const char *url, const char *headers, const char *method, const char *body,
              net_buf *out, int timeout_ms, char *err, size_t errlen);
 void net_buf_free(net_buf *b);
+/* A line for each request net_send makes (its path, how it went, how long
+   it took), to fn (NULL: none) */
+void net_set_log(void (*fn)(const char *line));
 
 /* A download read a piece at a time */
 typedef struct net_stream net_stream;

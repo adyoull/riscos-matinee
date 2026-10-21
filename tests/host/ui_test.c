@@ -103,7 +103,9 @@ static int jpeg_plots, jpeg_scale[4], jpeg_into_sprite = 1;
 static int jpeg_topcut = -1;          /* of pictures cut top and bottom: the most cut off the top, in % of what's cut */
 static int drag_started;
 static int pointer_w = -1, pointer_i = -1, pointer_x = 640, pointer_y = 480;
-static int pointer_buttons = 4;    /* Wimp_GetPointerInfo's: 4 Select, 1 Adjust */
+static int pointer_buttons = 4;
+extern int net_test_waited;         /* net_sock.c: requests made with the program waiting */
+static int waited0;    /* Wimp_GetPointerInfo's: 4 Select, 1 Adjust */
 static int poll_null_mask_bad;
 
 /* the fake VideoOverlay module */
@@ -792,6 +794,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
                 waiting_busy++;
         }
         ui_test_pf_settle();                        /* a picture on its way arrives while the program sleeps */
+        ui_test_rows_settle();                      /* and a details row's list */
         out->r[0] = script((int *)(intptr_t)in->r[1], (int)in->r[0]);
         clock_gettime(CLOCK_MONOTONIC, &event_given);
         return NULL;
@@ -1279,6 +1282,7 @@ static int script(int *b, int mask)
         case 130:
             CHECK(win(w_browser)->sy == -40, "scrolled");
             pc = 14;
+            waited0 = net_test_waited;
             return ev_tile(b, find_tile("Big Buck Bunny"), 4);  /* double-click: the details */
         /* ---- the details window */
         case 14: {
@@ -1294,13 +1298,30 @@ static int script(int *b, int mask)
                   ui_test_button(D_SUBS) && !strcmp(ui_test_button(D_SUBS), "Subtitles: None"), "the buttons");
             CHECK(strstr(ui_test_det(2), "Transcoded (") && strstr(ui_test_det(2), "bigger"),
                   "how it will play: %s", ui_test_det(2));
+            CHECK(net_test_waited - waited0 == 1, "shown having waited for the details alone (%d requests)",
+                  net_test_waited - waited0);
+            pc = 1400;
+            continue;
+        }
+        case 1400: {                    /* the poster, the backdrop and the rows come after, then the cast */
+            int n = 0;
+            ui_test_rel(1, &n);
+            if (!n && drain_n++ < 60)
+                return NULL_EVENT;
+            drain_n = 0;
+            pc++;
+            continue;
+        }
+        case 1401: {
+            CHECK(net_test_waited - waited0 == 1, "the rows' lists, the poster and the backdrop came without waiting (%d)",
+                  net_test_waited - waited0);
             CHECK(log_count("/library/metadata/101", NULL, NULL) >= 1 &&
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000") == 1 &&
                   log_count("/photo/:/transcode", "width", "554") >= 1, "the details and the backdrop fetched (%d, %d, %d)",
                   log_count("/library/metadata/101", NULL, NULL),
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000"),
                   log_count("/photo/:/transcode", "width", "554"));
-            pc++;
+            pc = 15;
             return ev_redraw(b, w_browser);
         }
         case 15: {
