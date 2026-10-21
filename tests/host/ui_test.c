@@ -301,6 +301,7 @@ static int file_exists(const char *p) { struct stat st; return stat(p, &st) == 0
 static int script(int *b, int mask);
 static struct timespec event_given;     /* when the last event was given to the program */
 static long longest_event_ms;           /* the longest it took over one, since set to 0 */
+static int waiting_polls, waiting_busy; /* polls with a picture on its way; those asking for null events at once */
 
 /* A profile of the SWIs called (PROFILE=1): which, and how often, between
    profile_begin and profile_end */
@@ -783,6 +784,11 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
                     longest_event_ms = ms;
             }
         }
+        if (ui_test_pf_waiting()) {                 /* while a picture's on its way, the desktop isn't kept busy */
+            waiting_polls++;
+            if (swi == 0x400C7 && !(in->r[0] & 1))
+                waiting_busy++;
+        }
         ui_test_pf_settle();                        /* a picture on its way arrives while the program sleeps */
         out->r[0] = script((int *)(intptr_t)in->r[1], (int)in->r[0]);
         clock_gettime(CLOCK_MONOTONIC, &event_given);
@@ -790,6 +796,29 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
     }
     printf("  unhandled SWI %x\n", swi);
     return &err;
+}
+
+/* The image cache's directory (the Choices', as Matinee makes it) */
+static const char *choices_dir_cache(void)
+{
+    static char d[400];
+    snprintf(d, sizeof(d), "%s/choices/Cache", outdir);
+    return d;
+}
+
+/* How many files are under dir */
+static int files_in(const char *dir)
+{
+    char cmd[500];
+    int n = 0;
+    FILE *p;
+    snprintf(cmd, sizeof(cmd), "find '%s' -type f 2>/dev/null | wc -l", dir);
+    if ((p = popen(cmd, "r")) != NULL) {
+        if (fscanf(p, "%d", &n) != 1)
+            n = 0;
+        pclose(p);
+    }
+    return n;
 }
 
 /* The fake server's pictures: delay_ms each, and chunked or not */
@@ -972,7 +1001,7 @@ static int player_button(int *b, int w, int id)
 static int prev103;
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
-static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0, free0;
+static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0, free0, reports0, disc0;
 static char sid0[40];
 static double p0;
 
@@ -1150,6 +1179,7 @@ static int script(int *b, int mask)
             server_photos(300, 1);
             longest_event_ms = 0;
             free0 = ui_test_pictures_free;
+            disc0 = files_in(choices_dir_cache());
             pc++;
             continue;
         case 5:
@@ -1160,8 +1190,13 @@ static int script(int *b, int mask)
             CHECK(ui_test_pictures_free - free0 >= 3 && ui_test_pictures_waited == 0,
                   "posters fetched without waiting (%d), none the old way (%d)", ui_test_pictures_free - free0,
                   ui_test_pictures_waited);
+            CHECK(files_in(choices_dir_cache()) - disc0 >= ui_test_pictures_free - free0,
+                  "and kept on the disc (%d more files there)", files_in(choices_dir_cache()) - disc0);
             CHECK(longest_event_ms < 150, "a slow server (300 ms a picture) didn't hold up the desktop (%ld ms at most)",
                   longest_event_ms);
+            CHECK(waiting_polls > 0 && waiting_busy == 0,
+                  "and while waiting for one, it let the desktop sleep (PollIdle; %d polls, %d asking for nulls at once)",
+                  waiting_polls, waiting_busy);
             CHECK(mask & 1, "no more null events once the posters are there");
             CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/art/1700000000") == 3 &&   /* (and its card's) */
                   log_count("/photo/:/transcode", "width", "554") == 1, "the featured backdrop again, at the window's new width (%d, %d)",
@@ -3270,15 +3305,16 @@ static int script(int *b, int mask)
             CHECK(player_ready() && fake_rc.seeks >= 1 && NEAR(fake_rc.seek_to, 2530, 0.01), "resumed where it was left (%d %d %.1f)",
                   player_ready(), fake_rc.seeks, fake_rc.seek_to);
             fake_cs += 1100;                                    /* the timeline's 10 s */
+            reports0 = ui_test_free_reports;
             n_null = 0;
             pc++;
             return NULL_EVENT;
         case 8014:
             CHECK(log_count("/Sessions/Playing", NULL, NULL) == 1, "Jellyfin told it's playing (%d)",
                   log_count("/Sessions/Playing", NULL, NULL));
-            CHECK(log_count("/Sessions/Playing/Progress", NULL, NULL) >= 1 && ui_test_free_reports >= 2,
+            CHECK(log_count("/Sessions/Playing/Progress", NULL, NULL) >= 1 && ui_test_free_reports - reports0 == 1,
                   "and every 10 s where it's got to, without waiting (%d, %d)",
-                  log_count("/Sessions/Playing/Progress", NULL, NULL), ui_test_free_reports);
+                  log_count("/Sessions/Playing/Progress", NULL, NULL), ui_test_free_reports - reports0);
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);

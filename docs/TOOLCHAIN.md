@@ -222,13 +222,19 @@ paths can end up in objects.
 
 ```
 sudo apt install gcc pkg-config libavformat-dev python3 gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user
-REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/run.sh
-REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/mutate.sh
+tests/host/run.sh
+tests/host/mutate.sh
 ```
 
+riscos-ffmpeg's source at `FFDEV_VER` is downloaded into `build/dl/` (only `player/` and
+`reelcore/`; `tests/host/fetch-reel-src.sh`) unless `REEL_SRC` names a checkout at that
+release. `qemu-arm-aligntrap` (riscos-crossdev's, on `PATH` in its image) is used if it's
+there, else `qemu-arm`; `QEMU=` chooses another. GitHub runs `run.sh` after every build,
+with `PACKAGES: "libavformat-dev"` in the workflows (the image hasn't FFmpeg's host
+libraries).
+
 ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h` (from
-`REEL_SRC`, a riscos-ffmpeg checkout at `reel-0.1.21` (riscos14), which also gives
-`reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
+that source, which also gives `reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
 `details.ppm`, `player.ppm` and `upnext.ppm` in `OUT`. It links
 `tests/host/fake_reelcore.c` in place of reelcore. fakeplex.py is a fake Jellyfin server
 as well as a fake Plex one (Jellyfin's paths start with a capital letter); ui_test's

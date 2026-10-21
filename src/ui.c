@@ -1395,6 +1395,7 @@ static int pf_step(void)
 }
 
 #ifdef MATINEE_TEST
+int ui_test_pf_waiting(void) { return PF.on; }
 /* The tests' Wimp: while the program sleeps for a picture's answer, the
    time passes for real until it's come, so a script's null events see it
    arrive as they would on a Pi (a little later, never at once) */

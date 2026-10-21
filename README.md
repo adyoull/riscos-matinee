@@ -127,19 +127,22 @@ docker run --rm -v "$PWD":/src ghcr.io/adyoull/riscos-crossdev:1.8.1 sh -c 'sh b
 
 or with a GCCSDK toolchain of your own (`GCCSDK_ENV=~/gccsdk/env ELF2AIF=path/to/elf2aif`).
 The build downloads the riscos-ffmpeg and riscos-mesa devkits `build/env.sh` names, checked
-by sha256. GitHub builds every push (`.github/workflows/riscos-build.yml`). Every day,
-`riscos-deps-update.yml` looks for newer releases of what `.riscos-deps` names and opens a
-pull request to move to them, built.
+by sha256. GitHub builds every push and runs the host tests (`.github/workflows/riscos-build.yml`,
+in riscos-crossdev's container image). Every day, `riscos-deps-update.yml` looks for newer
+releases of what `.riscos-deps` names and opens a pull request to move to them, built and
+tested.
 
-The host tests need riscos-ffmpeg's source at the same release, and FFmpeg's libraries for
-the host (`libavformat-dev`), `gcc-arm-linux-gnueabihf` and `qemu-user`:
+The host tests need FFmpeg's libraries for the host (`libavformat-dev`),
+`gcc-arm-linux-gnueabihf` and `qemu-user` (riscos-crossdev's image has all but the first),
+and riscos-ffmpeg's source at the release `build/env.sh` names, which they download from
+GitHub unless `REEL_SRC` names a checkout:
 
 ```
-REEL_SRC=../riscos-ffmpeg tests/host/run.sh
-REEL_SRC=../riscos-ffmpeg tests/host/mutate.sh
+tests/host/run.sh
+tests/host/mutate.sh
 ```
 
-Expected: `core_test: 254 checks, 0 failed`, `ui_test: 586 checks, 0 failed`, and no
+Expected: `core_test: 254 checks, 0 failed`, `ui_test: 611 checks, 0 failed`, and no
 mutation surviving. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
 `player.ppm` and `upnext.ppm` in its output directory: the window's pages as its fake
 Wimp drew them (with a stand-in font, made-up posters and a made-up picture).

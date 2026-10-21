@@ -2,11 +2,12 @@
 # mutate.sh - do the host tests notice when the code is wrong? Each
 # mutation below breaks one thing on purpose, in a copy of the tree; the
 # tests (run.sh) must then fail. A mutation the tests pass is a gap.
-#   REEL_SRC=<riscos-ffmpeg checkout> [QEMU=...] tests/host/mutate.sh
+#   [REEL_SRC=<riscos-ffmpeg checkout>] [QEMU=...] tests/host/mutate.sh
+# (without REEL_SRC, riscos-ffmpeg's source is fetched, as run.sh does)
 set -e
 TOP=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=${WORK:-/tmp/matinee-mutate}
-REEL_SRC=${REEL_SRC:-$TOP/../riscos-ffmpeg}     # at v5.1.10-riscos16
+[ -n "$REEL_SRC" ] || REEL_SRC=$(sh "$TOP/tests/host/fetch-reel-src.sh")
 export REEL_SRC
 survived=0
 n=0
@@ -371,6 +372,24 @@ mutate "a Jellyfin server forgotten but not signed out of" src/ui.c \
   '        hourglass(1);\n        jf_logout(&c);\n        hourglass(0);\n        snprintf(name, sizeof(name), "%s", S.jf[k].name);' '        snprintf(name, sizeof(name), "%s", S.jf[k].name);'
 mutate "the server in use forgotten but still shown" src/ui.c \
   '    if (in_use) {\n        sign_out();\n        return;\n    }' '    if (0) {\n        sign_out();\n        return;\n    }'
+
+# 0.1.2-test2: pictures without waiting, the fade and corners, the bar
+mutate "a chunked picture not put back together" src/bgreq.c \
+  '            memmove(r->buf + out, r->buf + at, n);\n            out += n;' '            out += n;'
+mutate "pictures fetched with the desktop waiting" src/ui.c \
+  'bgreq_start(&PF.r, rq.url, rq.headers, 1) == 0) {' '0) {'
+mutate "the desktop kept busy while a picture is on its way" src/ui.c \
+  '            if (pf_waiting()) {     /* a picture'"'"'s answer: the rest of the desktop runs meanwhile */' '            if (0) {'
+mutate "a picture fetched without waiting not kept on the disc" src/ui.c \
+  '        imgcache_put(PF.disc_key, jpeg, len);' '        ;'
+mutate "Jellyfin's progress sent waiting" src/plex.c \
+  '        return jf_timeline_request(c, it, state, time_ms, pl, rq);' '        return -1;'
+mutate "the backdrop's fade loses a bit of blue" src/ui.c \
+  '>> 8 & 0xFF00FFu) |' '>> 8 & 0xFE00FFu) |'
+mutate "the corners mirrored wrongly" src/ui.c \
+  '(x < round ? x : w - 1 - x)];' '(x < round ? x : x - (w - round))];'
+mutate "the bar drawn again under every picture in full screen" src/player.c \
+  '        bx.y0 = P.bar.y1;' '        ;'
 
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"

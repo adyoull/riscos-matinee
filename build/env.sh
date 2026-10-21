@@ -1,6 +1,6 @@
 # env.sh - where the build finds its tools and libraries (sourced by
 # build.sh and package.sh). Each can be set from outside.
-TOP=$(cd "$(dirname "$0")/.." && pwd)
+TOP=${TOP:-$(cd "$(dirname "$0")/.." && pwd)}
 # The toolchain: riscos-crossdev's (RISCOS_TOOLCHAIN, as its container
 # image and `make prebuilt` set it: GCCSDK GCC 10.2 with riscos-unixlib),
 # else a GCCSDK environment in ~/gccsdk/env.
