@@ -114,7 +114,7 @@ mutate "the cast's photos not fetched" src/details.c \
 mutate "cast photos square" src/pictures.c \
   'int round = art == 2 ? w / 2 :' 'int round = art == 2 ? 0 :'
 mutate "the timeline without the play queue" src/plex.c \
-  'if (pl && pl->pq_id && u < sizeof(url))' 'if (0)'
+  'if (pl && pl->pq_id && u < usize)' 'if (0)'
 mutate "the stream without the session id" src/playback.c \
   'if (S.px.kind == SRV_PLEX && strlen(headers) + strlen(S.pl.p.session) + 40 < sizeof(headers))' 'if (0)'
 mutate "a search on every key" src/browse.c \
@@ -125,7 +125,7 @@ mutate "Back to a search forgets its words" src/browse.c \
   'latin1(path + 7, S.query, sizeof(S.query));' '(void)0;'
 # the image cache
 mutate "the image cache not read" src/pictures.c \
-  'if (imgcache_get(key, jpeg, len) == 0) {\n        if (imgcache_jpeg_whole(*jpeg, *len))' 'if (0) {\n        if (imgcache_jpeg_whole(*jpeg, *len))'
+  '    if (imgcache_get(key, jpeg, len) == 0) {' '    if (0) {'
 mutate "the cache trimmed in any order" src/imgcache.c \
   'qsort(l.v, l.n, sizeof(*l.v), older);' '(void)older;'
 mutate "Clear image cache deletes nothing" src/imgcache.c \

@@ -1418,9 +1418,15 @@ static int script(int *b, int mask)
             ui_test_button_xy(w_browser, D_PLAY, &x, &y);
             pointer_x = x; pointer_y = y; pointer_w = w_browser; pointer_i = -1;
             fake_cs = idle_time;
-            pc = 15039;
+            pc = 15100;
             return NULL_EVENT;
         }
+        case 15100:                     /* (the cast's photos come first, a null event each) */
+            DRAIN(40);
+            continue;
+        case 15101:
+            pc = 15039;
+            continue;
         case 15039:
             CHECK(ui_test_hover() == -1, "the details: no grid poster under the pointer (%d)", ui_test_hover());
             pointer_x = 640; pointer_y = 480; pointer_w = pointer_i = -1;

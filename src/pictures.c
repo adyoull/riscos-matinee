@@ -296,16 +296,25 @@ static void picture_key(const char *thumb, int w, int h, char *key, size_t size)
     snprintf(key, size, "%s|%s|%dx%d", S.px.server_id, thumb, w, h);
 }
 
+/* The picture kept on the disc under key, if it's whole: 0 (*jpeg to free),
+   or -1 (none, or cut short, as test28 and before could keep one: fetch it again) */
+static int picture_from_disc(const char *key, char **jpeg, size_t *len)
+{
+    if (imgcache_get(key, jpeg, len) == 0) {
+        if (imgcache_jpeg_whole(*jpeg, *len))
+            return 0;
+        free(*jpeg);
+    }
+    *jpeg = NULL;
+    return -1;
+}
+
 static int picture_get(const char *thumb, int w, int h, char **jpeg, size_t *len)
 {
     char key[600];
     picture_key(thumb, w, h, key, sizeof(key));
-    if (imgcache_get(key, jpeg, len) == 0) {
-        if (imgcache_jpeg_whole(*jpeg, *len))
-            return 0;
-        free(*jpeg);                /* cut short (kept by test28 or before): fetched again */
-        *jpeg = NULL;
-    }
+    if (picture_from_disc(key, jpeg, len) == 0)
+        return 0;
     for (int tries = 0; tries < 2; tries++) {
         if (plex_poster(&S.px, thumb, w, h, jpeg, len) != 0)
             return -1;
@@ -470,13 +479,10 @@ poster_t *poster_soon(const char *thumb, const char *key, int w, int h, int art)
         return cache_find(key);
     }
     picture_key(thumb, w, h, PF.disc_key, sizeof(PF.disc_key));
-    if (imgcache_get(PF.disc_key, &jpeg, &len) == 0) {
-        if (imgcache_jpeg_whole(jpeg, len)) {
-            p = poster_make(key, w, h, art, jpeg, len);
-            free(jpeg);
-            return p;
-        }
-        free(jpeg);                 /* cut short: fetched again */
+    if (picture_from_disc(PF.disc_key, &jpeg, &len) == 0) {
+        p = poster_make(key, w, h, art, jpeg, len);
+        free(jpeg);
+        return p;
     }
     if (plex_poster_request(&S.px, thumb, w, h, &rq) == 0 && bgreq_start(&PF.r, rq.url, rq.headers, 1) == 0) {
         PF.on = 1;
