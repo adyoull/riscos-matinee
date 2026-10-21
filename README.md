@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: 0.1.2-test1** (built with riscos-ffmpeg 5.1.10-riscos22 and riscos-crossdev's toolchain, as GitHub builds it). 0.1.1 fixed a stutter while playing and takes less address space (after test builds 0.1.1-test1 to test3). 0.1.0 was the first release (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
+**Status: 0.1.2-test2** (built with riscos-ffmpeg 5.1.10-riscos22 and riscos-crossdev's toolchain, as GitHub builds it). test2 fetches posters and photos without holding up the desktop, sends the player's reports to Jellyfin the same way, fades the backdrop and rounds the corners for a fifth of the work, and doesn't draw the full-screen bar again under every picture; GitHub now runs the host tests too. test1 was 0.1.1 rebuilt with riscos22 and riscos-crossdev's toolchain. 0.1.1 fixed a stutter while playing and takes less address space (after test builds 0.1.1-test1 to test3). 0.1.0 was the first release (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
