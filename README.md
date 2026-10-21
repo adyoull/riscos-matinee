@@ -96,7 +96,12 @@ version 2.
 | `src/plex.[ch]` | The Plex API: PIN sign-in, servers, lists, posters, scrobble, file URL |
 | `src/caps.[ch]` | What Reel can play; the direct-play decision and the transcode request |
 | `src/handoff.[ch]` | yt-dlp-style JSON that Reel 0.1.17+ plays unmodified |
-| `src/ui.[ch]` | The Wimp front end: icon bar, sign-in, browser, details, menus, hand-off, saving, Choices, and the player page's Plex side |
+| `src/ui.[ch]`, `src/ui_int.h` | The Wimp front end: the windows, the main loop and its events; what its files share |
+| `src/browse.c`, `home.c`, `details.c` | The browser (tabs, the show page, a library's bar, the lists, search), the home page, the details page |
+| `src/signin.c`, `menus.c`, `choices.c` | Sign-in and the servers; the menus and Plex Home; Choices |
+| `src/pictures.c` | Posters, photos and backdrops: the sprites kept, and fetching them without the desktop waiting |
+| `src/playback.c`, `saving.c` | Handing a video to Reel, the built-in player's Plex side; saving the original file, the speed test |
+| `src/bgreq.[ch]` | One HTTP request sent and answered a piece at a time, without waiting (the reports, the pictures) |
 | `src/player.[ch]` | The built-in player: reelcore in the window, the overlay, the sprite, full screen, the bar, the stats |
 | `src/imgcache.[ch]` | The image cache on disc: pictures by a hash of their key, 256 directories, trimmed oldest first |
 | `src/sdlstub.c` | The SDL audio calls reelcore makes, answered without SDL (sound goes through SharedSoundBuffer) |
