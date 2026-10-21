@@ -74,6 +74,9 @@ int ui_test_signin_mode(void);                  /* SI_*, or -1 if it isn't the s
 int ui_test_jf_servers(void);                   /* Jellyfin servers saved */
 int ui_test_dl_servers(void);                   /* DLNA servers kept */
 void ui_test_window_state(int w, int *st);      /* window_state() itself */
+/* The posters' corners and the backdrop's fade, on a picture (0x00BBGGRR) and its mask */
+void ui_test_sprite_fade(unsigned *pixels, int w, int h);
+void ui_test_sprite_round(unsigned *pixels, unsigned *mask, int w, int h, int round);
 int ui_test_dlna_found(void);                   /* the DLNA page's servers found (-1: not on it) */
 int ui_test_server_kind(void);                  /* SRV_* of the server in use */
 int ui_test_field(void);

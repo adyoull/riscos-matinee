@@ -1059,10 +1059,24 @@ static void update_box(box_t bx)
     draw_all(w, b, r.r[0], 1);
 }
 
+/* What a new picture redraws (the sprite path): the picture's box, but
+   not under the bar while it shows over the picture (full screen), so the
+   bar isn't drawn again, text and all, for every picture. When the bar
+   hides, its box is redrawn, picture and all. */
+static box_t pic_update_box(void)
+{
+    box_t bx = P.pic;
+    if (bar_visible() && P.bar.y1 > bx.y0 && P.bar.y0 < bx.y1 && P.bar.x0 <= bx.x0 && P.bar.x1 >= bx.x1)
+        bx.y0 = P.bar.y1;
+    return bx;
+}
+
 static void show_frame_now(void)
 {
+    box_t bx = pic_update_box();
     pic_refresh();
-    update_box(P.pic);
+    if (bx.y1 > bx.y0)
+        update_box(bx);
 }
 
 static void show_pending(void)
@@ -2445,6 +2459,13 @@ int player_test_panel_rows(void) { return P.stats ? G.pp.rows : 0; }
 const char *player_test_panel(int row, int value)
 {
     return row >= 0 && row < G.pp.rows ? (value ? G.pp.value[row] : G.pp.label[row]) : "";
+}
+int player_test_update_box(int *y0, int *y1)
+{
+    box_t bx = pic_update_box();
+    *y0 = bx.y0;
+    *y1 = bx.y1;
+    return P.bar.y1;
 }
 int player_test_sprite_plots(void) { return (int)P.sprite_plots; }
 int player_test_idle(void) { return P.idle_cs; }

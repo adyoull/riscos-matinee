@@ -168,6 +168,8 @@ const char *player_test_time(void);
 int player_test_panel_rows(void);
 const char *player_test_panel(int row, int value);
 int player_test_sprite_plots(void);
+/* What a new picture redraws (work area y0, y1); returns the bar's top */
+int player_test_update_box(int *y0, int *y1);
 int player_test_idle(void);
 int player_test_page_moves(void);   /* times the page at &8000 moved (should be 0) */
 #endif

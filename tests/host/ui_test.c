@@ -2311,6 +2311,11 @@ static int script(int *b, int mask)
                 return NULL_EVENT;
             }
             CHECK(pointer_off, "full screen: the pointer hidden once it's been still 2 s");
+            {   /* the bar hidden: a new picture redraws the whole screen */
+                int y0, y1;
+                player_test_update_box(&y0, &y1);
+                CHECK(y0 == -2160 && y1 == 0, "the bar hidden: a new picture redraws the whole screen (%d..%d)", y0, y1);
+            }
             CHECK(NEAR(fake_rc.yuv_scale, 1280.0 / 1920, 0.01), "the stats drawn to be seen at their size (%.3f)",
                   fake_rc.yuv_scale);
             CHECK(ovl_win == wfull && ovl_scale[0] == 1920 && ovl_scale[1] == 1080 && ovl_pos[3] == -2160,
@@ -2325,6 +2330,11 @@ static int script(int *b, int mask)
                 return NULL_EVENT;
             }
             CHECK(ovl_pos[3] == -2160 + 168, "the bar shows: the overlay stops above it (%d)", ovl_pos[3]);
+            {   /* without the overlay, a new picture would be plotted only above the bar */
+                int y0, y1, bar_top = player_test_update_box(&y0, &y1);
+                CHECK(y0 == bar_top && y1 == 0, "a new picture redraws only above the bar (%d..%d, the bar's top %d)", y0, y1,
+                      bar_top);
+            }
             CHECK(!pointer_off, "and the pointer is back");
             pc++;
             return ev_key(b, wfull, -1, 0x1B);
@@ -3665,6 +3675,98 @@ static int script(int *b, int mask)
     }
 }
 
+/* ---- the pictures' corners and fade, against the code they replaced -------- */
+
+/* sprite_round as it was (to 0.1.2-test1): floating point, every corner pixel */
+static void old_round(unsigned *px, unsigned *m, int w, int h, int round)
+{
+    int words = (w + 31) / 32;
+    const int bg[3] = { 24, 26, 31 };
+    double rr = round;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int n = 0;
+            if ((x >= round && x < w - round) || (y >= round && y < h - round))
+                continue;
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) {
+                    double fx = x + (i + 0.5) / 4, fy = y + (j + 0.5) / 4;
+                    double cx = fx < rr ? rr : fx > w - rr ? w - rr : fx;
+                    double cy = fy < rr ? rr : fy > h - rr ? h - rr : fy;
+                    n += (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy) <= rr * rr;
+                }
+            if (n < 8) {
+                m[y * words + x / 32] &= ~(1u << (x & 31));
+            } else if (n < 16) {
+                unsigned p = px[y * w + x];
+                int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
+                for (int k = 0; k < 3; k++)
+                    c[k] = (c[k] * n + bg[k] * (16 - n)) / 16;
+                px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+            }
+        }
+}
+
+/* sprite_fade as it was: three multiplies a channel */
+static void old_fade(unsigned *px, int w, int h)
+{
+    const int bg[3] = { 24, 26, 31 };
+    int from = h * 40 / 100, solid = w * 48 / 100, clear = w * 86 / 100;
+    static unsigned char across[4096];
+    for (int x = 0; x < w && x < 4096; x++) {
+        int t = x <= solid ? 0 : x >= clear ? 256 : 256 * (x - solid) / (clear - solid);
+        int smooth = t * t / 256 * (768 - 2 * t) / 256;
+        across[x] = (unsigned char)(236 - 236 * smooth / 256);
+    }
+    for (int y = 0; y < h; y++) {
+        int kd = y < from ? 40 : 40 + (216 * (y - from) * (y - from)) / ((h - from) * (h - from));
+        for (int x = 0; x < w; x++) {
+            unsigned p = px[y * w + x];
+            int ka = x < 4096 ? across[x] : 0, k = kd > ka ? kd : ka;
+            int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
+            for (int i = 0; i < 3; i++)
+                c[i] = (c[i] * (256 - k) + bg[i] * k) >> 8;
+            px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+        }
+    }
+}
+
+static void test_pictures(void)
+{
+    static const int sizes[][3] = {     /* w, h, round */
+        { 168, 252, 12 }, { 300, 450, 16 }, { 160, 160, 80 }, { 161, 161, 80 }, { 120, 90, 70 },
+        { 7, 5, 3 }, { 64, 64, 1 }, { 33, 200, 16 },
+    };
+    unsigned seed = 12345;
+    for (size_t t = 0; t < sizeof(sizes) / sizeof(sizes[0]); t++) {
+        int w = sizes[t][0], h = sizes[t][1], r = sizes[t][2], words = (w + 31) / 32;
+        unsigned *a = malloc((size_t)w * h * 4), *b = malloc((size_t)w * h * 4);
+        unsigned *ma = malloc((size_t)words * 4 * h), *mb = malloc((size_t)words * 4 * h);
+        for (int i = 0; i < w * h; i++)
+            a[i] = b[i] = ((seed = seed * 1103515245u + 12345u) >> 8) & 0xFFFFFFu;
+        memset(ma, 0xFF, (size_t)words * 4 * h);
+        memset(mb, 0xFF, (size_t)words * 4 * h);
+        old_round(a, ma, w, h, r);
+        ui_test_sprite_round(b, mb, w, h, r);
+        CHECK(!memcmp(a, b, (size_t)w * h * 4) && !memcmp(ma, mb, (size_t)words * 4 * h),
+              "corners %dx%d radius %d: the same as before", w, h, r);
+        old_fade(a, w, h);
+        ui_test_sprite_fade(b, w, h);
+        CHECK(!memcmp(a, b, (size_t)w * h * 4), "the fade %dx%d: the same as before", w, h);
+        free(a); free(b); free(ma); free(mb);
+    }
+    {   /* a full-width backdrop, with pixels that use the top byte */
+        int w = 1920, h = 1080;
+        unsigned *a = malloc((size_t)w * h * 4), *b = malloc((size_t)w * h * 4);
+        for (int i = 0; i < w * h; i++)
+            a[i] = b[i] = (seed = seed * 1103515245u + 12345u);
+        old_fade(a, w, h);
+        ui_test_sprite_fade(b, w, h);
+        CHECK(!memcmp(a, b, (size_t)w * h * 4), "a 1920x1080 backdrop's fade: the same as before");
+        free(a); free(b);
+    }
+}
+
 int main(int argc, char **argv)
 {
     char cmd[400];
@@ -3692,6 +3794,7 @@ int main(int argc, char **argv)
             fclose(f);
         }
     }
+    test_pictures();
     net_init("ui_test");
     {
         net_buf nb;                 /* the fake server's record, from core_test's run, cleared */

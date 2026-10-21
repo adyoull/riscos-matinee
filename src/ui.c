@@ -1135,29 +1135,51 @@ static int jpeg_into(int *area, int w, int h, const char *jpeg, size_t len, int 
     return e ? -1 : 0;
 }
 
+/* How much of pixel (x, y) is inside a rounded rectangle w x h with corners
+   of radius round: 0 to 16, out of 4 x 4 samples. The samples are at
+   eighths of a pixel, so whole numbers in eighths give exactly the same
+   answers as the floating point this used to be. */
+static int corner_cover(int x, int y, int w, int h, int round)
+{
+    int r8 = round * 8, n = 0;
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++) {
+            int fx = 8 * x + 2 * i + 1, fy = 8 * y + 2 * j + 1;
+            int cx = fx < r8 ? r8 : fx > 8 * w - r8 ? 8 * w - r8 : fx;
+            int cy = fy < r8 ? r8 : fy > 8 * h - r8 ? 8 * h - r8 : fy;
+            n += (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy) <= r8 * r8;
+        }
+    return n;
+}
+
 /* Rounded corners, round pixels: outside the curve the mask hides the
    pixel; on it, the pixel is mixed with the window's grey by how much of
-   it is inside (4 x 4 samples), so the edge is smooth */
+   it is inside (corner_cover), so the edge is smooth. The four corners
+   are mirror images, so (when they don't overlap) the top left one's
+   coverage is worked out once and used for all four: a round photo is
+   all corner. */
 static void sprite_round(int *area, int w, int h, int round)
 {
-    int *s = area + 4, words = (w + 31) / 32;
+    int *s = area + 4, words = (w + 31) / 32, mirror;
     unsigned *px = (unsigned *)(s + 11), *m = (unsigned *)((char *)s + s[9]);
+    unsigned char *cover = NULL;
     const int bg[3] = { 24, 26, 31 };
-    double rr = round;
     if (s[9] == s[8] || round < 1)
         return;
+    mirror = 2 * round <= w && 2 * round <= h && (cover = malloc((size_t)round * round)) != NULL;
+    if (mirror)
+        for (int y = 0; y < round; y++)
+            for (int x = 0; x < round; x++)
+                cover[y * round + x] = (unsigned char)corner_cover(x, y, w, h, round);
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
-            int n = 0;
+            int n;
             if ((x >= round && x < w - round) || (y >= round && y < h - round))
                 continue;           /* not in a corner */
-            for (int j = 0; j < 4; j++)
-                for (int i = 0; i < 4; i++) {
-                    double fx = x + (i + 0.5) / 4, fy = y + (j + 0.5) / 4;
-                    double cx = fx < rr ? rr : fx > w - rr ? w - rr : fx;
-                    double cy = fy < rr ? rr : fy > h - rr ? h - rr : fy;
-                    n += (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy) <= rr * rr;
-                }
+            if (mirror)
+                n = cover[(y < round ? y : h - 1 - y) * round + (x < round ? x : w - 1 - x)];
+            else
+                n = corner_cover(x, y, w, h, round);
             if (n < 8) {
                 m[y * words + x / 32] &= ~(1u << (x & 31));
             } else if (n < 16) {
@@ -1168,18 +1190,28 @@ static void sprite_round(int *area, int w, int h, int round)
                 px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
             }
         }
+    free(cover);
 }
 
 /* The backdrop: darkened a little, faded into the window's grey over its
    lower part, and across from the left (where the title, the labels and
    the summary go, so they read as on the grey), as the picture fades into
-   the page. Done once, when it's fetched: plotting it costs no more. */
+   the page. Done once, when it's fetched: plotting it costs no more.
+   Each pixel is (p * (256 - k) + grey * k) / 256 for every channel, with
+   red and blue done together in one word (each product fits in 16 bits,
+   so they can't spill into each other) and the grey's part from a table:
+   two multiplies a pixel instead of six, the same result. */
 static void sprite_fade(int *area, int w, int h)
 {
     unsigned *px = (unsigned *)(area + 4 + 11);
-    const int bg[3] = { 24, 26, 31 };
+    const unsigned bg_rb = 24u | 31u << 16, bg_g = 26u << 8;
     int from = h * 40 / 100, solid = w * 48 / 100, clear = w * 86 / 100;
     static unsigned char across[4096];
+    static unsigned grey_rb[257], grey_g[257];
+    for (int k = 0; k <= 256; k++) {            /* the grey's part, for each k */
+        grey_rb[k] = bg_rb * (unsigned)k;
+        grey_g[k] = bg_g * (unsigned)k;
+    }
     for (int x = 0; x < w && x < 4096; x++) {       /* how much grey from the left, in 256ths */
         int t = x <= solid ? 0 : x >= clear ? 256 : 256 * (x - solid) / (clear - solid);
         int smooth = t * t / 256 * (768 - 2 * t) / 256;         /* 0..256, easing in and out */
@@ -1188,16 +1220,42 @@ static void sprite_fade(int *area, int w, int h)
     for (int y = 0; y < h; y++) {
         /* down: how much of the grey, in 256ths */
         int kd = y < from ? 40 : 40 + (216 * (y - from) * (y - from)) / ((h - from) * (h - from));
+        unsigned *row = px + (size_t)y * w;
         for (int x = 0; x < w; x++) {
-            unsigned p = px[y * w + x];
+            unsigned p = row[x], keep;
             int ka = x < 4096 ? across[x] : 0, k = kd > ka ? kd : ka;
-            int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
-            for (int i = 0; i < 3; i++)
-                c[i] = (c[i] * (256 - k) + bg[i] * k) >> 8;
-            px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+            keep = (unsigned)(256 - k);
+            row[x] = (((p & 0xFF00FFu) * keep + grey_rb[k]) >> 8 & 0xFF00FFu) |
+                     (((p & 0xFF00u) * keep + grey_g[k]) >> 8 & 0xFF00u);
         }
     }
 }
+
+#ifdef MATINEE_TEST
+/* The tests' way in: run them on a picture w x h (0x00BBGGRR) */
+void ui_test_sprite_fade(unsigned *pixels, int w, int h)
+{
+    int *a = calloc(1, 60 + (size_t)w * h * 4);
+    memcpy(a + 15, pixels, (size_t)w * h * 4);
+    sprite_fade(a, w, h);
+    memcpy(pixels, a + 15, (size_t)w * h * 4);
+    free(a);
+}
+/* ... and the mask too: mask (one bit a pixel, rows of (w+31)/32 words) */
+void ui_test_sprite_round(unsigned *pixels, unsigned *mask, int w, int h, int round)
+{
+    size_t image = (size_t)w * h * 4, mbytes = (size_t)(w + 31) / 32 * 4 * h;
+    int *a = calloc(1, 60 + image + mbytes);
+    a[4 + 8] = 44;
+    a[4 + 9] = (int)(44 + image);
+    memcpy(a + 15, pixels, image);
+    memcpy((char *)(a + 4) + 44 + image, mask, mbytes);
+    sprite_round(a, w, h, round);
+    memcpy(pixels, a + 15, image);
+    memcpy(mask, (char *)(a + 4) + 44 + image, mbytes);
+    free(a);
+}
+#endif
 
 /* A picture from the server (a poster, or a backdrop when art), into the
    cache under key */
