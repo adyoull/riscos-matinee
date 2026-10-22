@@ -39,6 +39,12 @@ jobs:
     container: ghcr.io/adyoull/riscos-crossdev:${{ needs.pin.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/cache@v4             # build/dl: the devkits and riscos-ffmpeg's source, by build/env.sh's pins
+        with:
+          path: |
+            build/dl/*.tgz
+            build/dl/riscos-ffmpeg-*-src
+          key: dl-${{ hashFiles('build/env.sh') }}
       - name: Packages this port needs
         if: env.PACKAGES != ''
         run: |
