@@ -296,3 +296,14 @@ int reelcore_add_subtitle_file(ReelCore *v, const char *path)
 }
 
 void reelcore_set_fast(ReelCore *v, int mode) { (void)v; fake_rc.fast = mode; }
+
+/* riscos23: closes the hardware decoders (none here) */
+int fake_hw_close_all;
+void reelcore_hw_close_all(void)
+{
+    const char *mark = getenv("FAKE_HW_MARK");     /* (ui_test's crash, in a child process) */
+    FILE *f = mark ? fopen(mark, "w") : NULL;
+    fake_hw_close_all++;
+    if (f)
+        fclose(f);
+}

@@ -25,6 +25,8 @@
 #include <dirent.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include "kernel.h"
 #include "ui.h"
 #include "net.h"
@@ -3923,6 +3925,24 @@ int main(int argc, char **argv)
     }
 
     CHECK(matinee_main(1, argv) == 0, "first run ends cleanly");
+    {
+        /* a crash: the hardware decoders closed first (riscos23), then it ends as before */
+        char mark[300];
+        pid_t pid;
+        int st = 0;
+        snprintf(mark, sizeof(mark), "%s/hw-closed", outdir);
+        remove(mark);
+        setenv("FAKE_HW_MARK", mark, 1);
+        fflush(stdout);
+        if ((pid = fork()) == 0) {
+            raise(SIGSEGV);
+            _exit(0);
+        }
+        waitpid(pid, &st, 0);
+        unsetenv("FAKE_HW_MARK");
+        CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV && file_exists(mark),
+              "a crash closes the hardware decoders, then ends as before (%d)", st);
+    }
     printf("  first run: %d checks so far\n", checks);
 
     /* second run: the Choices from the first, made to look like test4's

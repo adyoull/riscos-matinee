@@ -407,6 +407,9 @@ mutate "a row's list asked for compressed" src/plex.c \
 mutate "a details row's list not shown when it comes" src/details.c \
   '    S.rel[k] = *l;' '    plex_list_free(l);'
 
+mutate "a crash leaves the hardware decoders open" src/player.c \
+  '    reelcore_hw_close_all();\n    if (P.log)' '    if (P.log)'
+
 rm -rf "$WORK"
 echo "$n mutations, $survived survived"
 [ "$survived" = 0 ]

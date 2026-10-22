@@ -14,6 +14,7 @@
 #include <strings.h>
 #include <stdarg.h>
 #include <time.h>
+#include <signal.h>
 #include "kernel.h"
 #if defined(__riscos__) && !defined(MATINEE_TEST)
 #include <pthread.h>
@@ -1612,8 +1613,25 @@ static void mini_keep_on_top(int t)
 
 /* ---- opening, closing ------------------------------------------------------- */
 
+/* A crash (a damaged stream that trips a decoder up, say): the hardware
+   decoders closed first (RISC OS doesn't free them: one left open holds the
+   VideoCore's memory until a restart, and every later hardware decode
+   fails, in Reel too), and the log written out; then as before. As Reel
+   does (riscos-ffmpeg riscos23's reelcore_hw_close_all). */
+static void on_crash(int sig)
+{
+    reelcore_hw_close_all();
+    if (P.log)
+        fflush(P.log);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 void player_init(int task, int overlay, int pic_mode, double volume)
 {
+    static const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
+    for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++)
+        signal(sigs[i], on_crash);
     P.task = task;
     if (!P.mini_w)
         player_set_mini_place(MINI_W, MINI_EDGE, -1);
