@@ -14,8 +14,8 @@ ELF2AIF=${ELF2AIF:-elf2aif}
 # The devkits Matinee is built with: the releases .riscos-deps names, each
 # downloaded by build/fetch-devkits.sh into $DL and checked by sha256.
 # ci/riscos-deps-hook.sh moves these lines when a new release comes.
-FFDEV_VER=5.1.10-riscos22
-FFDEV_SHA256=bc6f16afadced0f1aec7398a8a1792afa3332a4b33e30cd9993b0df25e285c65
+FFDEV_VER=5.1.10-riscos23
+FFDEV_SHA256=1aefaa47169814b6b0301b30111b8f1542265e60feb80d0d23c547b1052dfe0d
 MESADEV_VER=20.3.5-16
 MESADEV_SHA256=069de4126d43b055d9712325d5727e336c03ce084ad87a495ccff79ed26956a4
 DL=${DL:-$TOP/build/dl}
