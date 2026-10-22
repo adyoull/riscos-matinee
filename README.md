@@ -8,7 +8,7 @@ are played directly. Everything else is converted by the server into a stream th
 be (H.264 + stereo AAC over HLS), because the client only advertises what RISC OS can
 play.
 
-**Status: 0.1.2-test3** (built with riscos-ffmpeg 5.1.10-riscos22 and riscos-crossdev's toolchain, as GitHub builds it). test3 shows a video's details after one request to the server, its rows, poster and backdrop coming after without the desktop waiting, and MatineeLog can time each request while browsing. test2 fetches posters and photos without holding up the desktop, sends the player's reports to Jellyfin the same way, fades the backdrop and rounds the corners for a fifth of the work, and doesn't draw the full-screen bar again under every picture; GitHub now runs the host tests too. test1 was 0.1.1 rebuilt with riscos22 and riscos-crossdev's toolchain. 0.1.1 fixed a stutter while playing and takes less address space (after test builds 0.1.1-test1 to test3). 0.1.0 was the first release (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
+**Status: 0.1.2-test4** (built with riscos-ffmpeg 5.1.10-riscos23 and riscos-crossdev's toolchain, as GitHub builds it). test4 is test3 on riscos23 (Reel 0.1.29's player core, ReelHWAccel 0.2.18), and closes the hardware decoders if Matinee crashes, so the VideoCore's memory isn't lost until a restart. test3 shows a video's details after one request to the server, its rows, poster and backdrop coming after without the desktop waiting, and MatineeLog can time each request while browsing. test2 fetches posters and photos without holding up the desktop, sends the player's reports to Jellyfin the same way, fades the backdrop and rounds the corners for a fifth of the work, and doesn't draw the full-screen bar again under every picture; GitHub now runs the host tests too. test1 was 0.1.1 rebuilt with riscos22 and riscos-crossdev's toolchain. 0.1.1 fixed a stutter while playing and takes less address space (after test builds 0.1.1-test1 to test3). 0.1.0 was the first release (after test builds 0.1.0-test1 to test37 and 0.1.0-rc1). test1 to test3 worked on a Raspberry Pi;
 test5 added the built-in player; test6 fixed its scrolling and sync figure; test7 added metadata, search, the dashboard and
 an image cache; test8 seeks in converted streams as the Plex apps do, and brings ReelEGL's
 stats panel, a hidden pointer in full screen and a question before signing out; test9 chooses
@@ -147,7 +147,7 @@ tests/host/run.sh
 tests/host/mutate.sh
 ```
 
-Expected: `core_test: 254 checks, 0 failed`, `ui_test: 615 checks, 0 failed`, and no
+Expected: `core_test: 254 checks, 0 failed`, `ui_test: 616 checks, 0 failed`, and no
 mutation surviving. ui_test also leaves `signin.ppm`, `browser.ppm`, `details.ppm`,
 `player.ppm` and `upnext.ppm` in its output directory: the window's pages as its fake
 Wimp drew them (with a stand-in font, made-up posters and a made-up picture).
