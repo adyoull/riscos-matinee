@@ -90,7 +90,12 @@ it's the same release. Set `FFDEV` and `MESADEV` to use others. When riscos-ffmp
 riscos-mesa makes a release, GitHub's daily `riscos-deps-update.yml` opens a pull request
 moving `.riscos-deps` and these lines (`ci/riscos-deps-hook.sh`).
 
-- From 0.1.2-test1: riscos-ffmpeg devkit `5.1.10-riscos22` (sha256
+- From 0.1.2-test4: riscos-ffmpeg devkit `5.1.10-riscos23` (sha256
+  `1aefaa47169814b6b0301b30111b8f1542265e60feb80d0d23c547b1052dfe0d`; Reel 0.1.29's
+  reelcore, ReelHWAccel devkit 0.2.18; adds `reelcore_hw_close_all()`, which Matinee calls on
+  a crash) and riscos-mesa devkit `20.3.5-16` (unchanged). Tests use riscos-ffmpeg's sources
+  at `v5.1.10-riscos23` (`REEL_SRC`).
+- 0.1.2-test1 to test3: riscos-ffmpeg devkit `5.1.10-riscos22` (sha256
   `bc6f16afadced0f1aec7398a8a1792afa3332a4b33e30cd9993b0df25e285c65`; Reel 0.1.28's
   reelcore, ReelHWAccel devkit 0.2.15) and riscos-mesa devkit `20.3.5-16` (sha256
   `069de4126d43b055d9712325d5727e336c03ce084ad87a495ccff79ed26956a4`). Tests use
@@ -222,13 +227,19 @@ paths can end up in objects.
 
 ```
 sudo apt install gcc pkg-config libavformat-dev python3 gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user
-REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/run.sh
-REEL_SRC=../riscos-ffmpeg QEMU=path/to/qemu-arm-aligntrap tests/host/mutate.sh
+tests/host/run.sh
+tests/host/mutate.sh
 ```
 
+riscos-ffmpeg's source at `FFDEV_VER` is downloaded into `build/dl/` (only `player/` and
+`reelcore/`; `tests/host/fetch-reel-src.sh`) unless `REEL_SRC` names a checkout at that
+release. `qemu-arm-aligntrap` (riscos-crossdev's, on `PATH` in its image) is used if it's
+there, else `qemu-arm`; `QEMU=` chooses another. GitHub runs `run.sh` after every build,
+with `PACKAGES: "libavformat-dev"` in the workflows (the image hasn't FFmpeg's host
+libraries).
+
 ui_test draws its fake windows' text with riscos-ffmpeg's `reelcore/panel_font.h` (from
-`REEL_SRC`, a riscos-ffmpeg checkout at `reel-0.1.21` (riscos14), which also gives
-`reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
+that source, which also gives `reelcore.h`), and leaves `signin.ppm`, `browser.ppm`,
 `details.ppm`, `player.ppm` and `upnext.ppm` in `OUT`. It links
 `tests/host/fake_reelcore.c` in place of reelcore. fakeplex.py is a fake Jellyfin server
 as well as a fake Plex one (Jellyfin's paths start with a capital letter); ui_test's

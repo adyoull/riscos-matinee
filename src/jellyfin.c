@@ -1017,39 +1017,16 @@ int jf_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl)
     return 0;
 }
 
-int jf_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len)
-{
-    char url[1024], headers[1024];
-    net_buf b;
-    if (!thumb || !*thumb)
-        return -1;
-    /* at least w x h (cut to fit by the caller, as Plex's minSize=1) */
-    snprintf(url, sizeof(url), "%s%s%sfillWidth=%d&fillHeight=%d&quality=90&format=Jpg", c->base, thumb,
-             strchr(thumb, '?') ? "&" : "?", w, h);
-    plex_headers(c, c->token, headers, sizeof(headers));
-    if (net_fetch(url, headers, NULL, &b, PROBE_TIMEOUT * 2, c->err, sizeof(c->err)) != 0)
-        return -1;
-    *jpeg = b.data;
-    *len = b.len;
-    return 0;
-}
-
 /* ---- playing --------------------------------------------------------------------- */
 
 static char playing_session[48];    /* the session Jellyfin has been told has started */
 
-int jf_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
-                const plex_playing *pl)
+/* A report's body (PlaybackProgressInfo): 0, or -1 if it doesn't fit */
+static int report_body(const plex_item *it, const char *state, int64_t time_ms, const plex_playing *pl, char *body,
+                       size_t size)
 {
     cJSON *b;
-    char body[1024];
-    const char *sess = pl && *pl->session ? pl->session : "-";
-    int stopped = !strcmp(state, "stopped"), sub = plex_sub_selected(it), aud = plex_audio_selected(it), e;
-    const char *path;
-    int start = 0;
-    (void)duration_ms;
-    if (!it->rating_key || !signed_in(c))
-        return -1;
+    int sub = plex_sub_selected(it), aud = plex_audio_selected(it), ok;
     if (time_ms < 0)
         time_ms = 0;
     b = cJSON_CreateObject();
@@ -1065,11 +1042,36 @@ int jf_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t tim
     if (aud >= 0)
         cJSON_AddNumberToObject(b, "AudioStreamIndex", (double)(it->auds[aud].id - 1));
     cJSON_AddNumberToObject(b, "SubtitleStreamIndex", sub >= 0 ? (double)(it->subs[sub].id - 1) : -1);
-    if (!cJSON_PrintPreallocated(b, body, sizeof(body), 0)) {
-        cJSON_Delete(b);
-        return -1;
-    }
+    ok = cJSON_PrintPreallocated(b, body, (int)size, 0);
     cJSON_Delete(b);
+    return ok ? 0 : -1;
+}
+
+int jf_timeline_request(const plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms,
+                        const plex_playing *pl, plex_request *rq)
+{
+    const char *sess = pl && *pl->session ? pl->session : "-";
+    /* progress only: the start and the stop keep playing_session, sent by jf_timeline */
+    if (!strcmp(state, "stopped") || strcmp(playing_session, sess) || !it->rating_key || !*c->base ||
+        !*c->user_id || !*c->token || report_body(it, state, time_ms, pl, rq->body, sizeof(rq->body)))
+        return -1;
+    snprintf(rq->method, sizeof(rq->method), "POST");
+    snprintf(rq->url, sizeof(rq->url), "%s/Sessions/Playing/Progress", c->base);
+    plex_headers(c, c->token, rq->headers, sizeof(rq->headers));
+    return 0;
+}
+
+int jf_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
+                const plex_playing *pl)
+{
+    char body[1024];
+    const char *sess = pl && *pl->session ? pl->session : "-";
+    int stopped = !strcmp(state, "stopped"), e;
+    const char *path;
+    int start = 0;
+    (void)duration_ms;
+    if (!it->rating_key || !signed_in(c) || report_body(it, state, time_ms, pl, body, sizeof(body)))
+        return -1;
     if (stopped) {
         path = "/Sessions/Playing/Stopped";
         playing_session[0] = 0;

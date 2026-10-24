@@ -816,6 +816,26 @@ int plex_list_more(plex_ctx *c, const char *path, plex_list *l)
     return 1;
 }
 
+/* A Plex list's URL and headers: at most size items, from start */
+static void list_url(plex_ctx *c, const char *path, int start, int size, char *url, size_t usize, char *headers,
+                     size_t hsize)
+{
+    snprintf(url, usize, "%s%s%sX-Plex-Container-Start=%d&X-Plex-Container-Size=%d", c->base, path,
+             strchr(path, '?') ? "&" : "?", start, size);
+    api_headers(c, c->token, headers, hsize);
+}
+
+int plex_list_request(plex_ctx *c, const char *path, plex_request *rq)
+{
+    if (c->kind != SRV_PLEX || !*c->base || !*path || !strncmp(path, "search:", 7))
+        return -1;
+    snprintf(rq->method, sizeof(rq->method), "GET");
+    rq->body[0] = 0;
+    list_url(c, path, 0, page_size, rq->url, sizeof(rq->url), rq->headers, sizeof(rq->headers));
+    plex_headers(c, c->token, rq->headers, sizeof(rq->headers));  /* not compressed: bgreq doesn't unzip */
+    return 0;
+}
+
 /* One list from the server: at most size items, from start */
 static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_list *out)
 {
@@ -827,9 +847,7 @@ static int list_fetch(plex_ctx *c, const char *path, int start, int size, plex_l
         return jf_fetch(c, path, start, size, out);
     if (c->kind == SRV_DLNA)        /* or from a DLNA server's ContentDirectory */
         return dlna_fetch(c, path, start, size, out);
-    snprintf(url, sizeof(url), "%s%s%sX-Plex-Container-Start=%d&X-Plex-Container-Size=%d",
-             c->base, path, strchr(path, '?') ? "&" : "?", start, size);
-    api_headers(c, c->token, headers, sizeof(headers));
+    list_url(c, path, start, size, url, sizeof(url), headers, sizeof(headers));
     if (net_fetch(url, headers, NULL, &b, API_TIMEOUT, c->err, sizeof(c->err)) != 0)
         return -1;
     if (plex_list_parse(b.data, path, out) != 0) {
@@ -1232,25 +1250,28 @@ int plex_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t t
         return jf_timeline(c, it, state, time_ms, duration_ms, pl);
     if (c->kind == SRV_DLNA)        /* kept here: the server keeps nothing */
         return dlna_timeline(c, it, state, time_ms, duration_ms);
-    char url[1400], headers[1200];
+    plex_request rq;
     net_buf b;
-    if (plex_timeline_request(c, it, state, time_ms, duration_ms, pl, url, sizeof(url), headers, sizeof(headers)))
+    if (plex_timeline_request(c, it, state, time_ms, duration_ms, pl, &rq))
         return -1;
     /* short: it's sent while playing, from the desktop's own time */
-    if (net_fetch(url, headers, NULL, &b, 3000, c->err, sizeof(c->err)) != 0)
+    if (net_fetch(rq.url, rq.headers, NULL, &b, 3000, c->err, sizeof(c->err)) != 0)
         return -1;
     net_buf_free(&b);
     return 0;
 }
 
 int plex_timeline_request(const plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms,
-                          int64_t duration_ms, const plex_playing *pl, char *url, size_t usize, char *headers,
-                          size_t hsize)
+                          int64_t duration_ms, const plex_playing *pl, plex_request *rq)
 {
-    char esc[64], guid[300];
-    size_t n, u;
-    if (c->kind != SRV_PLEX || !it->rating_key || usize < 2)
+    char esc[64], guid[300], *url = rq->url, *headers = rq->headers;
+    size_t n, u, usize = sizeof(rq->url), hsize = sizeof(rq->headers);
+    if (c->kind == SRV_JELLYFIN)
+        return jf_timeline_request(c, it, state, time_ms, pl, rq);
+    if (c->kind != SRV_PLEX || !it->rating_key)
         return -1;
+    snprintf(rq->method, sizeof(rq->method), "GET");
+    rq->body[0] = 0;
     net_escape(it->rating_key, esc, sizeof(esc));
     if (time_ms < 0)
         time_ms = 0;
@@ -1373,20 +1394,37 @@ int plex_next_episode(plex_ctx *c, const plex_item *it, plex_list *out)
 
 int plex_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len)
 {
-    if (c->kind == SRV_JELLYFIN)
-        return jf_poster(c, thumb, w, h, jpeg, len);
+    plex_request rq;
+    net_buf b;
     if (c->kind == SRV_DLNA)        /* the picture as it is (the caller fits it) */
         return dlna_poster(c, thumb, jpeg, len);
-    char esc[512], url[1024], headers[1024];
-    net_buf b;
-    net_escape(thumb, esc, sizeof(esc));
-    snprintf(url, sizeof(url), "%s/photo/:/transcode?width=%d&height=%d&minSize=1&upscale=1&format=jpeg&url=%s",
-             c->base, w, h, esc);
-    plex_headers(c, c->token, headers, sizeof(headers));
-    if (net_fetch(url, headers, NULL, &b, PROBE_TIMEOUT * 2, c->err, sizeof(c->err)) != 0)
+    if (plex_poster_request(c, thumb, w, h, &rq))
+        return -1;
+    if (net_fetch(rq.url, rq.headers, NULL, &b, PROBE_TIMEOUT * 2, c->err, sizeof(c->err)) != 0)
         return -1;
     *jpeg = b.data;
     *len = b.len;
+    return 0;
+}
+
+int plex_poster_request(const plex_ctx *c, const char *thumb, int w, int h, plex_request *rq)
+{
+    char esc[512];
+    if (!thumb || !*thumb)
+        return -1;
+    snprintf(rq->method, sizeof(rq->method), "GET");
+    rq->headers[0] = rq->body[0] = 0;
+    if (c->kind == SRV_DLNA)        /* the picture as it is (the caller fits it) */
+        return snprintf(rq->url, sizeof(rq->url), "%s", thumb) < (int)sizeof(rq->url) ? 0 : -1;
+    if (c->kind == SRV_JELLYFIN)    /* at least w x h (cut to fit by the caller, as Plex's minSize=1) */
+        snprintf(rq->url, sizeof(rq->url), "%s%s%sfillWidth=%d&fillHeight=%d&quality=90&format=Jpg", c->base, thumb,
+                 strchr(thumb, '?') ? "&" : "?", w, h);
+    else {
+        net_escape(thumb, esc, sizeof(esc));
+        snprintf(rq->url, sizeof(rq->url),
+                 "%s/photo/:/transcode?width=%d&height=%d&minSize=1&upscale=1&format=jpeg&url=%s", c->base, w, h, esc);
+    }
+    plex_headers(c, c->token, rq->headers, sizeof(rq->headers));
     return 0;
 }
 

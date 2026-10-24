@@ -25,6 +25,8 @@
 #include <dirent.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include "kernel.h"
 #include "ui.h"
 #include "net.h"
@@ -33,6 +35,7 @@
 #include "panel_font.h"         /* Reel's bitmap font (riscos-ffmpeg reelcore/), for the pictures */
 #include "player.h"
 #include "plex.h"
+#include "caps.h"
 #include "reelcore.h"
 #include "fake_reelcore.h"
 #include "imgcache.h"
@@ -102,6 +105,9 @@ static int jpeg_plots, jpeg_scale[4], jpeg_into_sprite = 1;
 static int jpeg_topcut = -1;          /* of pictures cut top and bottom: the most cut off the top, in % of what's cut */
 static int drag_started;
 static int pointer_w = -1, pointer_i = -1, pointer_x = 640, pointer_y = 480;
+static int pointer_buttons = 4;
+extern int net_test_waited;         /* net_sock.c: requests made with the program waiting */
+static int waited0;    /* Wimp_GetPointerInfo's: 4 Select, 1 Adjust */
 static int poll_null_mask_bad;
 
 /* the fake VideoOverlay module */
@@ -299,6 +305,9 @@ static int file_exists(const char *p) { struct stat st; return stat(p, &st) == 0
 /* ---- the SWIs ---------------------------------------------------------------- */
 
 static int script(int *b, int mask);
+static struct timespec event_given;     /* when the last event was given to the program */
+static long longest_event_ms;           /* the longest it took over one, since set to 0 */
+static int waiting_polls, waiting_busy; /* polls with a picture on its way; those asking for null events at once */
 
 /* A profile of the SWIs called (PROFILE=1): which, and how often, between
    profile_begin and profile_end */
@@ -677,7 +686,7 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         return NULL;
     case 0x400CF: {                                 /* Wimp_GetPointerInfo */
         int *b = (int *)(intptr_t)in->r[1];
-        b[0] = pointer_x; b[1] = pointer_y; b[2] = 4; b[3] = pointer_w; b[4] = pointer_i;
+        b[0] = pointer_x; b[1] = pointer_y; b[2] = pointer_buttons; b[3] = pointer_w; b[4] = pointer_i;
         return NULL;
     }
     case 0x42400: drag_started++; return NULL;      /* DragASprite_Start */
@@ -772,11 +781,61 @@ _kernel_oserror *_kernel_swi(int swi, _kernel_swi_regs *in, _kernel_swi_regs *ou
         last_mask = (int)in->r[0];
         if (swi == 0x400E1)
             idle_time = (int)in->r[2];
+        {   /* how long the program took since the last event (real time): the desktop's wait */
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (event_given.tv_sec) {
+                long ms = (now.tv_sec - event_given.tv_sec) * 1000 + (now.tv_nsec - event_given.tv_nsec) / 1000000;
+                if (ms > longest_event_ms)
+                    longest_event_ms = ms;
+            }
+        }
+        if (ui_test_pf_waiting()) {                 /* while a picture's on its way, the desktop isn't kept busy */
+            waiting_polls++;
+            if (swi == 0x400C7 && !(in->r[0] & 1))
+                waiting_busy++;
+        }
+        ui_test_pf_settle();                        /* a picture on its way arrives while the program sleeps */
+        ui_test_rows_settle();                      /* and a details row's list */
         out->r[0] = script((int *)(intptr_t)in->r[1], (int)in->r[0]);
+        clock_gettime(CLOCK_MONOTONIC, &event_given);
         return NULL;
     }
     printf("  unhandled SWI %x\n", swi);
     return &err;
+}
+
+/* The image cache's directory (the Choices', as Matinee makes it) */
+static const char *choices_dir_cache(void)
+{
+    static char d[400];
+    snprintf(d, sizeof(d), "%s/choices/Cache", outdir);
+    return d;
+}
+
+/* How many files are under dir */
+static int files_in(const char *dir)
+{
+    char cmd[500];
+    int n = 0;
+    FILE *p;
+    snprintf(cmd, sizeof(cmd), "find '%s' -type f 2>/dev/null | wc -l", dir);
+    if ((p = popen(cmd, "r")) != NULL) {
+        if (fscanf(p, "%d", &n) != 1)
+            n = 0;
+        pclose(p);
+    }
+    return n;
+}
+
+/* The fake server's pictures: delay_ms each, and chunked or not */
+static void server_photos(int delay_ms, int chunked)
+{
+    char url[160];
+    net_buf nb;
+    snprintf(url, sizeof(url), "%s/_photos?delay_ms=%d&chunked=%d", base, delay_ms, chunked);
+    if (net_fetch(url, NULL, "", &nb, 5000, NULL, 0) == 0)
+        net_buf_free(&nb);
 }
 
 /* ---- the fake server's record ------------------------------------------------ */
@@ -949,7 +1008,7 @@ static int player_button(int *b, int w, int id)
 static int prev103;
 static int pc, speed_nulls, save_nulls, drain_n, prev_nsent, prev_started, prev_reports, prev_count;
 static char save_path[300], save_path2[300];
-static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0;
+static int n_null, open0, count0, draws0, wfull, wmini, items0, seeks0, free0, reports0, disc0;
 static char sid0[40];
 static double p0;
 
@@ -1122,12 +1181,29 @@ static int script(int *b, int mask)
                       ncol);
             }
             CHECK(!(mask & 1), "null events for the posters");
+            /* the server slow to make each picture (and sending it chunked): the
+               desktop mustn't wait for it */
+            server_photos(300, 1);
+            longest_event_ms = 0;
+            free0 = ui_test_pictures_free;
+            disc0 = files_in(choices_dir_cache());
             pc++;
             continue;
         case 5:
-            DRAIN(20);
+            DRAIN(60);
             continue;
         case 6:
+            server_photos(0, 0);
+            CHECK(ui_test_pictures_free - free0 >= 3 && ui_test_pictures_waited == 0,
+                  "posters fetched without waiting (%d), none the old way (%d)", ui_test_pictures_free - free0,
+                  ui_test_pictures_waited);
+            CHECK(files_in(choices_dir_cache()) - disc0 >= ui_test_pictures_free - free0,
+                  "and kept on the disc (%d more files there)", files_in(choices_dir_cache()) - disc0);
+            CHECK(longest_event_ms < 150, "a slow server (300 ms a picture) didn't hold up the desktop (%ld ms at most)",
+                  longest_event_ms);
+            CHECK(waiting_polls > 0 && waiting_busy == 0,
+                  "and while waiting for one, it let the desktop sleep (PollIdle; %d polls, %d asking for nulls at once)",
+                  waiting_polls, waiting_busy);
             CHECK(mask & 1, "no more null events once the posters are there");
             CHECK(log_count("/photo/:/transcode", "url", "/library/metadata/213/art/1700000000") == 3 &&   /* (and its card's) */
                   log_count("/photo/:/transcode", "width", "554") == 1, "the featured backdrop again, at the window's new width (%d, %d)",
@@ -1208,6 +1284,7 @@ static int script(int *b, int mask)
         case 130:
             CHECK(win(w_browser)->sy == -40, "scrolled");
             pc = 14;
+            waited0 = net_test_waited;
             return ev_tile(b, find_tile("Big Buck Bunny"), 4);  /* double-click: the details */
         /* ---- the details window */
         case 14: {
@@ -1223,13 +1300,30 @@ static int script(int *b, int mask)
                   ui_test_button(D_SUBS) && !strcmp(ui_test_button(D_SUBS), "Subtitles: None"), "the buttons");
             CHECK(strstr(ui_test_det(2), "Transcoded (") && strstr(ui_test_det(2), "bigger"),
                   "how it will play: %s", ui_test_det(2));
+            CHECK(net_test_waited - waited0 == 1, "shown having waited for the details alone (%d requests)",
+                  net_test_waited - waited0);
+            pc = 1400;
+            continue;
+        }
+        case 1400: {                    /* the poster, the backdrop and the rows come after, then the cast */
+            int n = 0;
+            ui_test_rel(1, &n);
+            if (!n && drain_n++ < 60)
+                return NULL_EVENT;
+            drain_n = 0;
+            pc++;
+            continue;
+        }
+        case 1401: {
+            CHECK(net_test_waited - waited0 == 1, "the rows' lists, the poster and the backdrop came without waiting (%d)",
+                  net_test_waited - waited0);
             CHECK(log_count("/library/metadata/101", NULL, NULL) >= 1 &&
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000") == 1 &&
                   log_count("/photo/:/transcode", "width", "554") >= 1, "the details and the backdrop fetched (%d, %d, %d)",
                   log_count("/library/metadata/101", NULL, NULL),
                   log_count("/photo/:/transcode", "url", "/library/metadata/101/art/1700000000"),
                   log_count("/photo/:/transcode", "width", "554"));
-            pc++;
+            pc = 15;
             return ev_redraw(b, w_browser);
         }
         case 15: {
@@ -1279,7 +1373,7 @@ static int script(int *b, int mask)
             return NULL_EVENT;
         case 15011:
             CHECK(log_count("/photo/:/transcode", "height", "311") == 1 && log_count("/photo/:/transcode", "width", "554") >= 2,
-                  "then at the new size: 554 x 311, 16:9");
+                  "then at the new size: 554 x 311, 16:9 (%d, %d)", log_count("/photo/:/transcode", "height", "311"), log_count("/photo/:/transcode", "width", "554"));
             memset(b, 0, 32);                                   /* back as it was */
             memcpy(b + 1, win(w_browser)->vis, 16);
             b[0] = w_browser; b[2] += 500; b[7] = -1;
@@ -1349,9 +1443,15 @@ static int script(int *b, int mask)
             ui_test_button_xy(w_browser, D_PLAY, &x, &y);
             pointer_x = x; pointer_y = y; pointer_w = w_browser; pointer_i = -1;
             fake_cs = idle_time;
-            pc = 15039;
+            pc = 15100;
             return NULL_EVENT;
         }
+        case 15100:                     /* (the cast's photos come first, a null event each) */
+            DRAIN(40);
+            continue;
+        case 15101:
+            pc = 15039;
+            continue;
         case 15039:
             CHECK(ui_test_hover() == -1, "the details: no grid poster under the pointer (%d)", ui_test_hover());
             pointer_x = 640; pointer_y = 480; pointer_w = pointer_i = -1;
@@ -2057,9 +2157,17 @@ static int script(int *b, int mask)
             pc++;
             return ev_click(b, -2, 3, 1000, 20, 2);
         }
-        case 7702:
-            pc = 899;
+        case 7702:                      /* Medium, chosen with Adjust */
+            pointer_buttons = 1;
+            menu_open = NULL;
+            pc = 7703;
             return ev_menu(b, MB_SIZE, 1);
+        case 7703:
+            pointer_buttons = 4;
+            CHECK(menu_open && !strncmp(menu_text(menu_open, 0), "Info", 4) && ui_test_psize() == 1,
+                  "Adjust: Medium chosen, and the menu kept open");
+            pc = 899;
+            continue;
         case 899:
             pc = 900;                                           /* the built-in player next, from the top */
             return ev_key(b, w_browser, -1, 8);
@@ -2157,21 +2265,16 @@ static int script(int *b, int mask)
                that starts it comes straight back (it doesn't wait for the
                server) */
             static int playing0, started;
-            static struct timespec t0;
             if (!started) {
                 started = 1;
                 playing0 = log_count("/:/timeline", "state", "playing");
                 fake_cs += 1100;
-                clock_gettime(CLOCK_MONOTONIC, &t0);
+                longest_event_ms = 0;
                 return NULL_EVENT;
             }
             if (started == 1) {     /* the server takes 0.5 s to answer; the null event didn't wait */
-                struct timespec t1;
-                clock_gettime(CLOCK_MONOTONIC, &t1);
                 started = 2;
-                CHECK((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000 < 300,
-                      "the 10 s report didn't hold up the desktop (%ld ms)",
-                      (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000));
+                CHECK(longest_event_ms < 300, "the 10 s report didn't hold up the desktop (%ld ms)", longest_event_ms);
             }
             if (log_count("/:/timeline", "state", "playing") == playing0 && n_null++ < 200) {
                 usleep(20000);      /* the thread's own time */
@@ -2311,6 +2414,11 @@ static int script(int *b, int mask)
                 return NULL_EVENT;
             }
             CHECK(pointer_off, "full screen: the pointer hidden once it's been still 2 s");
+            {   /* the bar hidden: a new picture redraws the whole screen */
+                int y0, y1;
+                player_test_update_box(&y0, &y1);
+                CHECK(y0 == -2160 && y1 == 0, "the bar hidden: a new picture redraws the whole screen (%d..%d)", y0, y1);
+            }
             CHECK(NEAR(fake_rc.yuv_scale, 1280.0 / 1920, 0.01), "the stats drawn to be seen at their size (%.3f)",
                   fake_rc.yuv_scale);
             CHECK(ovl_win == wfull && ovl_scale[0] == 1920 && ovl_scale[1] == 1080 && ovl_pos[3] == -2160,
@@ -2325,6 +2433,11 @@ static int script(int *b, int mask)
                 return NULL_EVENT;
             }
             CHECK(ovl_pos[3] == -2160 + 168, "the bar shows: the overlay stops above it (%d)", ovl_pos[3]);
+            {   /* without the overlay, a new picture would be plotted only above the bar */
+                int y0, y1, bar_top = player_test_update_box(&y0, &y1);
+                CHECK(y0 == bar_top && y1 == 0, "a new picture redraws only above the bar (%d..%d, the bar's top %d)", y0, y1,
+                      bar_top);
+            }
             CHECK(!pointer_off, "and the pointer is back");
             pc++;
             return ev_key(b, wfull, -1, 0x1B);
@@ -3231,12 +3344,16 @@ static int script(int *b, int mask)
             CHECK(player_ready() && fake_rc.seeks >= 1 && NEAR(fake_rc.seek_to, 2530, 0.01), "resumed where it was left (%d %d %.1f)",
                   player_ready(), fake_rc.seeks, fake_rc.seek_to);
             fake_cs += 1100;                                    /* the timeline's 10 s */
+            reports0 = ui_test_free_reports;
             n_null = 0;
             pc++;
             return NULL_EVENT;
         case 8014:
             CHECK(log_count("/Sessions/Playing", NULL, NULL) == 1, "Jellyfin told it's playing (%d)",
                   log_count("/Sessions/Playing", NULL, NULL));
+            CHECK(log_count("/Sessions/Playing/Progress", NULL, NULL) >= 1 && ui_test_free_reports - reports0 == 1,
+                  "and every 10 s where it's got to, without waiting (%d, %d)",
+                  log_count("/Sessions/Playing/Progress", NULL, NULL), ui_test_free_reports - reports0);
             pc++;
             return ev_click(b, w_browser, -1, (win(w_browser)->vis[0] + win(w_browser)->vis[2]) / 2,
                             win(w_browser)->vis[3] - 100, 2);
@@ -3665,6 +3782,98 @@ static int script(int *b, int mask)
     }
 }
 
+/* ---- the pictures' corners and fade, against the code they replaced -------- */
+
+/* sprite_round as it was (to 0.1.2-test1): floating point, every corner pixel */
+static void old_round(unsigned *px, unsigned *m, int w, int h, int round)
+{
+    int words = (w + 31) / 32;
+    const int bg[3] = { 24, 26, 31 };
+    double rr = round;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int n = 0;
+            if ((x >= round && x < w - round) || (y >= round && y < h - round))
+                continue;
+            for (int j = 0; j < 4; j++)
+                for (int i = 0; i < 4; i++) {
+                    double fx = x + (i + 0.5) / 4, fy = y + (j + 0.5) / 4;
+                    double cx = fx < rr ? rr : fx > w - rr ? w - rr : fx;
+                    double cy = fy < rr ? rr : fy > h - rr ? h - rr : fy;
+                    n += (fx - cx) * (fx - cx) + (fy - cy) * (fy - cy) <= rr * rr;
+                }
+            if (n < 8) {
+                m[y * words + x / 32] &= ~(1u << (x & 31));
+            } else if (n < 16) {
+                unsigned p = px[y * w + x];
+                int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
+                for (int k = 0; k < 3; k++)
+                    c[k] = (c[k] * n + bg[k] * (16 - n)) / 16;
+                px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+            }
+        }
+}
+
+/* sprite_fade as it was: three multiplies a channel */
+static void old_fade(unsigned *px, int w, int h)
+{
+    const int bg[3] = { 24, 26, 31 };
+    int from = h * 40 / 100, solid = w * 48 / 100, clear = w * 86 / 100;
+    static unsigned char across[4096];
+    for (int x = 0; x < w && x < 4096; x++) {
+        int t = x <= solid ? 0 : x >= clear ? 256 : 256 * (x - solid) / (clear - solid);
+        int smooth = t * t / 256 * (768 - 2 * t) / 256;
+        across[x] = (unsigned char)(236 - 236 * smooth / 256);
+    }
+    for (int y = 0; y < h; y++) {
+        int kd = y < from ? 40 : 40 + (216 * (y - from) * (y - from)) / ((h - from) * (h - from));
+        for (int x = 0; x < w; x++) {
+            unsigned p = px[y * w + x];
+            int ka = x < 4096 ? across[x] : 0, k = kd > ka ? kd : ka;
+            int c[3] = { (int)(p & 255), (int)(p >> 8 & 255), (int)(p >> 16 & 255) };
+            for (int i = 0; i < 3; i++)
+                c[i] = (c[i] * (256 - k) + bg[i] * k) >> 8;
+            px[y * w + x] = (unsigned)c[0] | (unsigned)c[1] << 8 | (unsigned)c[2] << 16;
+        }
+    }
+}
+
+static void test_pictures(void)
+{
+    static const int sizes[][3] = {     /* w, h, round */
+        { 168, 252, 12 }, { 300, 450, 16 }, { 160, 160, 80 }, { 161, 161, 80 }, { 120, 90, 70 },
+        { 7, 5, 3 }, { 64, 64, 1 }, { 33, 200, 16 },
+    };
+    unsigned seed = 12345;
+    for (size_t t = 0; t < sizeof(sizes) / sizeof(sizes[0]); t++) {
+        int w = sizes[t][0], h = sizes[t][1], r = sizes[t][2], words = (w + 31) / 32;
+        unsigned *a = malloc((size_t)w * h * 4), *b = malloc((size_t)w * h * 4);
+        unsigned *ma = malloc((size_t)words * 4 * h), *mb = malloc((size_t)words * 4 * h);
+        for (int i = 0; i < w * h; i++)
+            a[i] = b[i] = ((seed = seed * 1103515245u + 12345u) >> 8) & 0xFFFFFFu;
+        memset(ma, 0xFF, (size_t)words * 4 * h);
+        memset(mb, 0xFF, (size_t)words * 4 * h);
+        old_round(a, ma, w, h, r);
+        ui_test_sprite_round(b, mb, w, h, r);
+        CHECK(!memcmp(a, b, (size_t)w * h * 4) && !memcmp(ma, mb, (size_t)words * 4 * h),
+              "corners %dx%d radius %d: the same as before", w, h, r);
+        old_fade(a, w, h);
+        ui_test_sprite_fade(b, w, h);
+        CHECK(!memcmp(a, b, (size_t)w * h * 4), "the fade %dx%d: the same as before", w, h);
+        free(a); free(b); free(ma); free(mb);
+    }
+    {   /* a full-width backdrop, with pixels that use the top byte */
+        int w = 1920, h = 1080;
+        unsigned *a = malloc((size_t)w * h * 4), *b = malloc((size_t)w * h * 4);
+        for (int i = 0; i < w * h; i++)
+            a[i] = b[i] = (seed = seed * 1103515245u + 12345u);
+        old_fade(a, w, h);
+        ui_test_sprite_fade(b, w, h);
+        CHECK(!memcmp(a, b, (size_t)w * h * 4), "a 1920x1080 backdrop's fade: the same as before");
+        free(a); free(b);
+    }
+}
+
 int main(int argc, char **argv)
 {
     char cmd[400];
@@ -3686,12 +3895,27 @@ int main(int argc, char **argv)
     snprintf(cmd, sizeof(cmd), "127.0.0.1:%s", argv[1]);
     setenv("Matinee$SSDP", cmd, 1);             /* M-SEARCH to the fake, which answers there */
     {
+        /* Choices' numbers: out of range, the default; a flag, 0 or 1 */
+        FILE *f = fopen(choices, "w");
+        int v[8];
+        if (f) {
+            fputs("picture 7\nquality -1\nposter_size 2\nhardware_overlay 5\ndirect_play 0\nimage_cache_mb -3\n"
+                  "server_kind 2\nserver_local 9\n", f);
+            fclose(f);
+        }
+        ui_test_choices_read(v);
+        CHECK(v[0] == 1 && v[1] == PIC_FIT && v[2] == Q_720 && v[3] == 2 && v[4] == 0 && v[5] == 64 && v[6] == SRV_DLNA &&
+              v[7] == 1, "Choices: numbers out of range give the defaults, flags 0 or 1 (%d %d %d %d %d %d %d %d)",
+              v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+    }
+    {
         FILE *f = fopen(choices, "w");      /* the hand-off first: ReelEGL chosen */
         if (f) {
             fputs("choices_version 2\nplayer ReelEGL\n", f);
             fclose(f);
         }
     }
+    test_pictures();
     net_init("ui_test");
     {
         net_buf nb;                 /* the fake server's record, from core_test's run, cleared */
@@ -3701,6 +3925,24 @@ int main(int argc, char **argv)
     }
 
     CHECK(matinee_main(1, argv) == 0, "first run ends cleanly");
+    {
+        /* a crash: the hardware decoders closed first (riscos23), then it ends as before */
+        char mark[300];
+        pid_t pid;
+        int st = 0;
+        snprintf(mark, sizeof(mark), "%s/hw-closed", outdir);
+        remove(mark);
+        setenv("FAKE_HW_MARK", mark, 1);
+        fflush(stdout);
+        if ((pid = fork()) == 0) {
+            raise(SIGSEGV);
+            _exit(0);
+        }
+        waitpid(pid, &st, 0);
+        unsetenv("FAKE_HW_MARK");
+        CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGSEGV && file_exists(mark),
+              "a crash closes the hardware decoders, then ends as before (%d)", st);
+    }
     printf("  first run: %d checks so far\n", checks);
 
     /* second run: the Choices from the first, made to look like test4's

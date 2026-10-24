@@ -1,4 +1,4 @@
-!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.2-test1
+!Matinee - a Plex, Jellyfin and DLNA client for RISC OS     0.1.2-test4
 =========================================================================
 
 Matinee browses the films and TV programmes on a Plex Media Server (or
@@ -346,7 +346,9 @@ it's still wanted.
 
 A log of what the player did can go to <Wimp$ScrapDir>.MatineeLog: it's
 off unless you *Set Matinee$Log on (or to a file's name) before starting
-Matinee. Send it with a report of a problem while playing.
+Matinee. Send it with a report of a problem while playing. It also says
+how long each request to the server took while browsing, and whether the
+desktop had to wait for it: send it if browsing feels slow.
 
 ReelEGL or Reel: if it's running, it gets the video at once; if not,
 Matinee starts it. The Filer must have seen the player's application
@@ -456,7 +458,7 @@ Needs
 
 !Run loads the modules it needs. PThreadTicker 0.03 (UnixLib's thread
 timer) is in the application directory. Matinee is built with UnixLib
-5.0.3.3 (riscos-unixlib) and FFmpeg 5.1.10-riscos20 with Reel 0.1.27's
+5.0.3.3 (riscos-unixlib) and FFmpeg 5.1.10-riscos23 with Reel 0.1.29's
 player core (riscos-ffmpeg).
 
 If you used an earlier test build, Matinee starts with the built-in

@@ -66,7 +66,10 @@ int jf_play_queue(plex_ctx *c, const plex_item *it, plex_playing *pl);
 int jf_timeline(plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms, int64_t duration_ms,
                 const plex_playing *pl);
 int jf_transcode_call(plex_ctx *c, const char *what, const char *session);
-int jf_poster(plex_ctx *c, const char *thumb, int w, int h, char **jpeg, size_t *len);
+/* plex_timeline_request's, for Jellyfin: a progress report once the start
+   has been sent; -1 for the others */
+int jf_timeline_request(const plex_ctx *c, const plex_item *it, const char *state, int64_t time_ms,
+                        const plex_playing *pl, plex_request *rq);
 int jf_mark(plex_ctx *c, const plex_item *it, int watched);
 /* caps_play_at's, for a Jellyfin server */
 int jf_play(const plex_ctx *c, const plex_item *it, const caps_t *k, int allow_direct, long offset_s,

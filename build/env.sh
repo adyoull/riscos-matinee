@@ -1,6 +1,6 @@
 # env.sh - where the build finds its tools and libraries (sourced by
 # build.sh and package.sh). Each can be set from outside.
-TOP=$(cd "$(dirname "$0")/.." && pwd)
+TOP=${TOP:-$(cd "$(dirname "$0")/.." && pwd)}
 # The toolchain: riscos-crossdev's (RISCOS_TOOLCHAIN, as its container
 # image and `make prebuilt` set it: GCCSDK GCC 10.2 with riscos-unixlib),
 # else a GCCSDK environment in ~/gccsdk/env.
@@ -16,8 +16,8 @@ ELF2AIF=${ELF2AIF:-elf2aif}
 # ci/riscos-deps-hook.sh moves these lines when a new release comes.
 FFDEV_VER=5.1.10-riscos23
 FFDEV_SHA256=1aefaa47169814b6b0301b30111b8f1542265e60feb80d0d23c547b1052dfe0d
-MESADEV_VER=20.3.5-16
-MESADEV_SHA256=069de4126d43b055d9712325d5727e336c03ce084ad87a495ccff79ed26956a4
+MESADEV_VER=20.3.5-17
+MESADEV_SHA256=e0bea16a604265cde8d360055d2cb57dc38f4c7442954e599c393acd4c1395b8
 DL=${DL:-$TOP/build/dl}
 # riscos-ffmpeg's devkit: FFmpeg's libraries, Reel's player core (reelcore)
 # and ReelHWAccel's vcdec and hevcdec

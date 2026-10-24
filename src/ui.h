@@ -55,6 +55,10 @@ int matinee_main(int argc, char **argv);
 int ui_test_tile_xy(int i, int *x, int *y);     /* a tile's middle, screen OS units; 0 = ok */
 int ui_test_items(void);                        /* items in the list shown */
 extern int ui_test_free_reports;                /* reports sent without waiting (bgreq.c) */
+extern int ui_test_pictures_free, ui_test_pictures_waited;    /* pictures fetched without waiting, and the old way */
+void ui_test_pf_settle(void);                   /* a picture on its way: let it arrive (real time) */
+int ui_test_pf_waiting(void);
+void ui_test_rows_settle(void);                  /* a row's list on its way: let it arrive */                   /* a picture on its way? */
 const char *ui_test_item(int i, int line);      /* a tile's text (line 0 or 1), as shown */
 const char *ui_test_status(void);
 const char *ui_test_path(void);
@@ -74,6 +78,9 @@ int ui_test_signin_mode(void);                  /* SI_*, or -1 if it isn't the s
 int ui_test_jf_servers(void);                   /* Jellyfin servers saved */
 int ui_test_dl_servers(void);                   /* DLNA servers kept */
 void ui_test_window_state(int w, int *st);      /* window_state() itself */
+/* The posters' corners and the backdrop's fade, on a picture (0x00BBGGRR) and its mask */
+void ui_test_sprite_fade(unsigned *pixels, int w, int h);
+void ui_test_sprite_round(unsigned *pixels, unsigned *mask, int w, int h, int round);
 int ui_test_dlna_found(void);                   /* the DLNA page's servers found (-1: not on it) */
 int ui_test_server_kind(void);                  /* SRV_* of the server in use */
 int ui_test_field(void);
@@ -85,6 +92,9 @@ int ui_test_upnext(void);
 const char *ui_test_query(void);               /* the search field's text ("": not searching) */                      /* the Up next card is counting down */
 const char *ui_test_det(int what);              /* 0 title, 1 year etc., 2 how it plays, 3 summary */
 int ui_test_psize(void);
+/* Choices read as at the start; v: overlay, picture, quality, poster size,
+   direct play, image cache MB, server kind, server local */
+void ui_test_choices_read(int v[8]);
 int ui_test_badge(int i);                       /* item i's badge: 1 a tick, 2 a count, 0 none */
 int ui_test_show(int *season);
 int ui_test_tab(int *current);

@@ -14,6 +14,7 @@
 #include <strings.h>
 #include <stdarg.h>
 #include <time.h>
+#include <signal.h>
 #include "kernel.h"
 #if defined(__riscos__) && !defined(MATINEE_TEST)
 #include <pthread.h>
@@ -134,8 +135,9 @@ static int now_cs(void)
     return swi(OS_ReadMonotonicTime, &r) ? (int)(clock() * 100 / CLOCKS_PER_SEC) : r.r[0];
 }
 
-/* <Wimp$ScrapDir>.MatineeLog while playing (Matinee$Log: "on", another file, or
-   "off", as !Run sets it unless it's set already) */
+/* <Wimp$ScrapDir>.MatineeLog (Matinee$Log: "on", another file, or "off", as
+   !Run sets it unless it's set already): what the player does, and the
+   requests made while browsing. Kept open while playing; one file a run. */
 static void lg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lg(const char *fmt, ...)
 {
@@ -168,8 +170,13 @@ static void log_open(void)
 #endif
     else
         return;
-    P.log = fopen(path, "w");
-    P.log_cs = now_cs();
+    {
+        static int before;          /* one log for the whole run: started afresh once */
+        P.log = fopen(path, before ? "a" : "w");
+        if (!before)
+            P.log_cs = now_cs();
+        before = P.log != NULL;
+    }
 }
 
 /* A line in the log from ui.c */
@@ -177,6 +184,8 @@ void player_log(const char *fmt, ...)
 {
     char t[400];
     va_list a;
+    if (!P.log)
+        log_open();                 /* (browsing too, if Matinee$Log asks for it) */
     if (!P.log)
         return;
     va_start(a, fmt);
@@ -1059,10 +1068,24 @@ static void update_box(box_t bx)
     draw_all(w, b, r.r[0], 1);
 }
 
+/* What a new picture redraws (the sprite path): the picture's box, but
+   not under the bar while it shows over the picture (full screen), so the
+   bar isn't drawn again, text and all, for every picture. When the bar
+   hides, its box is redrawn, picture and all. */
+static box_t pic_update_box(void)
+{
+    box_t bx = P.pic;
+    if (bar_visible() && P.bar.y1 > bx.y0 && P.bar.y0 < bx.y1 && P.bar.x0 <= bx.x0 && P.bar.x1 >= bx.x1)
+        bx.y0 = P.bar.y1;
+    return bx;
+}
+
 static void show_frame_now(void)
 {
+    box_t bx = pic_update_box();
     pic_refresh();
-    update_box(P.pic);
+    if (bx.y1 > bx.y0)
+        update_box(bx);
 }
 
 static void show_pending(void)
@@ -1590,8 +1613,25 @@ static void mini_keep_on_top(int t)
 
 /* ---- opening, closing ------------------------------------------------------- */
 
+/* A crash (a damaged stream that trips a decoder up, say): the hardware
+   decoders closed first (RISC OS doesn't free them: one left open holds the
+   VideoCore's memory until a restart, and every later hardware decode
+   fails, in Reel too), and the log written out; then as before. As Reel
+   does (riscos-ffmpeg riscos23's reelcore_hw_close_all). */
+static void on_crash(int sig)
+{
+    reelcore_hw_close_all();
+    if (P.log)
+        fflush(P.log);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
 void player_init(int task, int overlay, int pic_mode, double volume)
 {
+    static const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT };
+    for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++)
+        signal(sigs[i], on_crash);
     P.task = task;
     if (!P.mini_w)
         player_set_mini_place(MINI_W, MINI_EDGE, -1);
@@ -2445,6 +2485,13 @@ int player_test_panel_rows(void) { return P.stats ? G.pp.rows : 0; }
 const char *player_test_panel(int row, int value)
 {
     return row >= 0 && row < G.pp.rows ? (value ? G.pp.value[row] : G.pp.label[row]) : "";
+}
+int player_test_update_box(int *y0, int *y1)
+{
+    box_t bx = pic_update_box();
+    *y0 = bx.y0;
+    *y1 = bx.y1;
+    return P.bar.y1;
 }
 int player_test_sprite_plots(void) { return (int)P.sprite_plots; }
 int player_test_idle(void) { return P.idle_cs; }

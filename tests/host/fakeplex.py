@@ -28,6 +28,7 @@ HOME_USERS = [
 RATED = {}                      # rating key -> the user's rating (PUT /:/rate)
 LOG = []
 LOCK = threading.Lock()
+PHOTOS = {"delay": 0, "chunked": False}
 PIN_POLLS = {"n": 0}
 PART = bytes((i * 7 + (i >> 11)) & 255 for i in range(5 * 1024 * 1024))
 # a small valid baseline JPEG would do for the tests' purposes; the bytes
@@ -516,8 +517,13 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n)
         p = urlsplit(self.path).path
+        if p == "/_photos":                      # pictures slow (delay_ms) and/or chunked, for ui_test
+            PHOTOS["delay"] = int((parse_qs(urlsplit(self.path).query).get("delay_ms") or ["0"])[0]) / 1000.0
+            PHOTOS["chunked"] = (parse_qs(urlsplit(self.path).query).get("chunked") or ["0"])[0] == "1"
+            return self.send(200, {})
         if p == "/_reset":
             with LOCK:
+                PHOTOS.update({"delay": 0, "chunked": False})
                 LOG.clear()
                 JF_PLAYED.clear()
                 JF_PLAYED.add("jm3")
@@ -755,7 +761,23 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, {"MediaContainer": {"title1": "On Deck",
                                                       "Metadata": [e] if "213" not in ONDECK_GONE else []}})
         if p == "/photo/:/transcode":
-            return self.send(200, raw=jpeg((q.get("url") or [""])[0]), ctype="image/jpeg")
+            data = jpeg((q.get("url") or [""])[0])
+            # slow and chunked for the small pictures (posters, photos: fetched
+            # without waiting); the backdrops, fetched waiting, as they were
+            later = int((q.get("width") or ["0"])[0]) <= 300
+            if PHOTOS["delay"] and later:
+                time.sleep(PHOTOS["delay"])
+            if PHOTOS["chunked"] and later:     # as some servers send a picture they make as they go
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                for i in range(0, len(data), 1000):
+                    part = data[i:i + 1000]
+                    self.wfile.write(b"%x\r\n" % len(part) + part + b"\r\n")
+                self.wfile.write(b"0\r\n\r\n")
+                return
+            return self.send(200, raw=data, ctype="image/jpeg")
         if p.startswith("/library/metadata/") and p.count("/") == 3:
             rk = p.rsplit("/", 1)[1]
             for m in MOVIES + episodes() + episodes(2):
