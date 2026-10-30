@@ -5,5 +5,5 @@
 # with them. riscos-crossdev also chooses the container image the build
 # runs in: GCCSDK GCC 10.2 with riscos-unixlib.
 riscos-crossdev v1.8.2
-riscos-ffmpeg v5.1.10-riscos23
+riscos-ffmpeg v5.1.10-riscos24
 riscos-mesa v20.3.5-17
