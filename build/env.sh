@@ -16,8 +16,8 @@ ELF2AIF=${ELF2AIF:-elf2aif}
 # ci/riscos-deps-hook.sh moves these lines when a new release comes.
 FFDEV_VER=5.1.10-riscos24
 FFDEV_SHA256=0b368c247f9b724cc17bd4af04190f892ea740100f21f282d0464d9f6828bfa4
-MESADEV_VER=20.3.5-17
-MESADEV_SHA256=e0bea16a604265cde8d360055d2cb57dc38f4c7442954e599c393acd4c1395b8
+MESADEV_VER=20.3.5-22
+MESADEV_SHA256=8559f004f13192b2d0438e0c9fe707057f49c0b24fe042ba7575c8ae31daf68f
 DL=${DL:-$TOP/build/dl}
 # riscos-ffmpeg's devkit: FFmpeg's libraries, Reel's player core (reelcore)
 # and ReelHWAccel's vcdec and hevcdec
